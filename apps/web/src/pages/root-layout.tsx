@@ -1,9 +1,12 @@
+import { createClient } from '@snap/api-client'
+import { useQuery } from '@tanstack/react-query'
 import { useEffect } from 'react'
-import { Link, Outlet } from 'react-router'
+import { Link, Outlet, useNavigate } from 'react-router'
 
+import { Command, CommandDialog, CommandInput } from '@/components/ui/command'
 import { useChromeStore } from '../chrome-store'
 
-const sections = ['පුවත්', 'දේශපාලන', 'ආර්ථික', 'ක්‍රීඩා', 'ලෝක']
+const client = createClient()
 
 function colomboDateLine() {
   const formatted = new Intl.DateTimeFormat('si-LK', {
@@ -17,9 +20,13 @@ function colomboDateLine() {
 }
 
 export function RootLayout() {
+  const navigate = useNavigate()
   const condensed = useChromeStore((state) => state.condensed)
   const setCondensed = useChromeStore((state) => state.setCondensed)
+  const searchOpen = useChromeStore((state) => state.searchOpen)
   const setSearchOpen = useChromeStore((state) => state.setSearchOpen)
+  const categories = useQuery({ queryKey: ['categories'], queryFn: () => client.categories() })
+  const breaking = useQuery({ queryKey: ['breaking'], queryFn: () => client.breaking() })
 
   useEffect(() => {
     const onScroll = () => setCondensed(window.scrollY > 300)
@@ -27,6 +34,8 @@ export function RootLayout() {
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [setCondensed])
+
+  const nav = categories.data?.items.filter((item) => item.slug !== 'latest') ?? []
 
   return (
     <div className="min-h-screen bg-paper text-ink">
@@ -38,45 +47,57 @@ export function RootLayout() {
           <Link to="/" className="font-headline text-lg font-bold">
             ලංකා පුවත්
           </Link>
-          <nav className="hidden gap-4 text-[0.8125rem] md:flex" aria-label="කොටස්">
-            {sections.map((section) => (
-              <span key={section}>{section}</span>
-            ))}
-          </nav>
+        </div>
+      ) : null}
+      {breaking.data?.items[0] ? (
+        <div className="bg-ink px-6 py-2 text-center text-sm text-paper">
+          විශේෂ පුවත්:{' '}
+          <Link className="underline" to={`/e/${breaking.data.items[0].id}`}>
+            {breaking.data.items[0].title}
+          </Link>
         </div>
       ) : null}
       <header className="mx-auto max-w-[1280px] px-6 py-8 text-center md:px-12">
         <div className="h-px bg-rule" />
-        <p className="font-headline mt-6 text-[length:var(--text-masthead)] leading-[1.1] font-bold">
-          ලංකා පුවත්
-        </p>
-        <p className="mt-2 text-[0.8125rem] text-[color:var(--ink-tertiary)]">{colomboDateLine()}</p>
+        <p className="font-headline mt-6 text-[length:var(--text-masthead)] leading-[1.1] font-bold">ලංකා පුවත්</p>
+        <p className="mt-2 text-[0.8125rem] text-muted-foreground">{colomboDateLine()}</p>
         <div className="mt-4 flex flex-col gap-[3px]">
           <div className="h-[3px] bg-ink" />
           <div className="h-px bg-ink" />
         </div>
         <div className="relative mt-3 flex items-center">
-          <nav
-            className="flex flex-1 gap-5 overflow-x-auto text-[0.8125rem] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-            aria-label="කොටස්"
-          >
-            {sections.map((section) => (
-              <span key={section} className="shrink-0">
-                {section}
-              </span>
+          <nav className="flex flex-1 gap-5 overflow-x-auto text-[0.8125rem] [scrollbar-width:none]" aria-label="කොටස්">
+            <Link to="/" className="shrink-0">
+              පුවත්
+            </Link>
+            {nav.map((item) => (
+              <Link key={item.slug} to={`/c/${item.slug}`} className="shrink-0">
+                {item.name_si}
+              </Link>
             ))}
+            <Link to="/brief" className="shrink-0">
+              උදෑසන සංග්‍රහය
+            </Link>
           </nav>
-          <button
-            type="button"
-            className="ms-3 size-11 shrink-0 border border-ink"
-            aria-label="සොයන්න"
-            onClick={() => setSearchOpen(true)}
-          >
+          <button type="button" className="ms-3 size-11 shrink-0 border border-ink" aria-label="සොයන්න" onClick={() => setSearchOpen(true)}>
             සොයන්න
           </button>
         </div>
         <div className="mt-3 h-px bg-rule" />
       </header>
+      <CommandDialog open={searchOpen} onOpenChange={setSearchOpen} title="සොයන්න" description="ශීර්ෂපාඨ සොයන්න">
+        <Command>
+          <CommandInput
+            placeholder="සොයන්න"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                navigate(`/search?q=${encodeURIComponent(event.currentTarget.value)}`)
+                setSearchOpen(false)
+              }
+            }}
+          />
+        </Command>
+      </CommandDialog>
       <main id="main" className="mx-auto max-w-[1280px] px-6 pb-16 md:px-12">
         <Outlet />
       </main>
@@ -85,7 +106,13 @@ export function RootLayout() {
           <div className="h-[3px] bg-ink" />
           <div className="h-px bg-ink" />
         </div>
-        <p className="text-[0.75rem] text-[color:var(--ink-tertiary)]">මූලාශ්‍ර වෙත යොමු කරන සොයාගැනීමේ වේදිකාවකි.</p>
+        <nav className="flex flex-wrap gap-4 text-[0.75rem] text-muted-foreground">
+          <Link to="/about">අප ගැන</Link>
+          <Link to="/privacy">රහස්‍යතාව</Link>
+          <Link to="/corrections">නිවැරදි කිරීම්</Link>
+          <Link to="/contact">සම්බන්ධ වන්න</Link>
+          <Link to="/sources">මූලාශ්‍ර</Link>
+        </nav>
       </footer>
     </div>
   )
