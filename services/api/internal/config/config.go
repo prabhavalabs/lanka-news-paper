@@ -12,7 +12,21 @@ const (
 	defaultAddress         = "127.0.0.1:8090"
 	defaultEnvironment     = "local"
 	defaultShutdownTimeout = 10 * time.Second
+	defaultSessionTTL      = 12 * time.Hour
 )
+
+type Config struct {
+	Address                 string
+	AllowedOrigins          []string
+	BootstrapAdminEmail     string
+	BootstrapAdminPassword  string
+	DatabaseURL             string
+	Environment             string
+	MigrationsPath          string
+	SessionSecret           string
+	SessionTTL              time.Duration
+	ShutdownTimeout         time.Duration
+}
 
 var defaultAllowedOrigins = []string{
 	"http://127.0.0.1:5173",
@@ -20,15 +34,6 @@ var defaultAllowedOrigins = []string{
 }
 
 type LookupFunc func(key string) string
-
-type Config struct {
-	Address         string
-	AllowedOrigins  []string
-	DatabaseURL     string
-	Environment     string
-	MigrationsPath  string
-	ShutdownTimeout time.Duration
-}
 
 func FromEnvironment() (Config, error) {
 	return Load(os.Getenv)
@@ -55,12 +60,16 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	return Config{
-		Address:         valueOrDefault(lookup("SNAP_API_ADDRESS"), defaultAddress),
-		AllowedOrigins:  allowedOrigins,
-		DatabaseURL:     databaseURL,
-		Environment:     valueOrDefault(lookup("SNAP_ENV"), defaultEnvironment),
-		MigrationsPath:  valueOrDefault(lookup("SNAP_MIGRATIONS_PATH"), "migrations"),
-		ShutdownTimeout: shutdownTimeout,
+		Address:                valueOrDefault(lookup("SNAP_API_ADDRESS"), defaultAddress),
+		AllowedOrigins:         allowedOrigins,
+		BootstrapAdminEmail:    strings.TrimSpace(lookup("SNAP_BOOTSTRAP_ADMIN_EMAIL")),
+		BootstrapAdminPassword: strings.TrimSpace(lookup("SNAP_BOOTSTRAP_ADMIN_PASSWORD")),
+		DatabaseURL:            databaseURL,
+		Environment:            valueOrDefault(lookup("SNAP_ENV"), defaultEnvironment),
+		MigrationsPath:         valueOrDefault(lookup("SNAP_MIGRATIONS_PATH"), "migrations"),
+		SessionSecret:          valueOrDefault(lookup("SNAP_SESSION_SECRET"), "local-dev-session-secret-change"),
+		SessionTTL:             defaultSessionTTL,
+		ShutdownTimeout:        shutdownTimeout,
 	}, nil
 }
 
