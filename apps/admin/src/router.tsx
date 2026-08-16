@@ -1,7 +1,12 @@
 import { createBrowserRouter } from 'react-router'
 
+import { ComplaintsPage } from './pages/complaints-page'
+import { DashboardPage } from './pages/dashboard-page'
 import { LoginPage } from './pages/login-page'
+import { QueuePage } from './pages/queue-page'
+import { RoutingPage } from './pages/routing-page'
 import { ShellLayout } from './pages/shell-layout'
+import { SourceDetailPage } from './pages/source-detail-page'
 import { SourcesPage } from './pages/sources-page'
 
 export const router = createBrowserRouter([
@@ -9,6 +14,13 @@ export const router = createBrowserRouter([
   {
     path: '/',
     element: <ShellLayout />,
-    children: [{ index: true, element: <SourcesPage /> }],
+    children: [
+      { index: true, element: <DashboardPage /> },
+      { path: 'sources', element: <SourcesPage /> },
+      { path: 'sources/:id', element: <SourceDetailPage /> },
+      { path: 'queue', element: <QueuePage /> },
+      { path: 'complaints', element: <ComplaintsPage /> },
+      { path: 'routing', element: <RoutingPage /> },
+    ],
   },
 ])
