@@ -6,6 +6,7 @@ import { Link } from 'react-router'
 import { toast } from 'sonner'
 
 import { DataTablePagination, DataTableToolbar } from '@/components/data-table-controls'
+import { SourceAvatar } from '@/components/source-avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import {
@@ -275,10 +276,15 @@ export function SourcesPage() {
               {sources.data?.items.map((source) => (
                 <TableRow key={source.id}>
                   <TableCell className="whitespace-normal">
-                    <Link to={`/sources/${source.id}`} className="font-medium hover:underline">
-                      {source.name}
-                    </Link>
-                    <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{source.legal_name}</p>
+                    <div className="flex items-center gap-3">
+                      <SourceAvatar name={source.name} website={source.website} />
+                      <div className="min-w-0">
+                        <Link to={`/sources/${source.id}`} className="font-medium hover:underline">
+                          {source.name}
+                        </Link>
+                        <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{source.legal_name}</p>
+                      </div>
+                    </div>
                   </TableCell>
                   <TableCell>
                     <Badge variant="secondary">{label(source.source_type)}</Badge>

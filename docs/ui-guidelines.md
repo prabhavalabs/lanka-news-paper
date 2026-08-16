@@ -256,7 +256,7 @@ Reject any generated UI that contains:
 - Emoji in UI copy
 - Gradient text, glassmorphism, neumorphism
 - More than two font families on a page
-- Colored favicons/logos of publishers (MVP is text attribution only, per rights profiles)
+- Colored favicons/logos on public pages (the admin source registry may use publisher-hosted favicons for identification)
 
 ## 10. Page Inventory (public)
 

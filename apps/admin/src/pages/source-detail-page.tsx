@@ -5,6 +5,7 @@ import { useParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { DataTablePagination, DataTableToolbar } from '@/components/data-table-controls'
+import { SourceAvatar } from '@/components/source-avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -124,9 +125,14 @@ export function SourceDetailPage() {
   return (
     <section className="flex flex-col gap-8">
       <div>
-        <p className="text-sm text-muted-foreground">{source.data?.source_type}</p>
-        <h1 className="text-xl font-medium">{source.data?.name ?? 'Source'}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{source.data?.legal_name}</p>
+        <div className="flex items-center gap-3">
+          <SourceAvatar name={source.data?.name ?? 'Source'} website={source.data?.website} />
+          <div>
+            <p className="text-sm text-muted-foreground">{source.data?.source_type}</p>
+            <h1 className="text-xl font-medium">{source.data?.name ?? 'Source'}</h1>
+            <p className="mt-1 text-sm text-muted-foreground">{source.data?.legal_name}</p>
+          </div>
+        </div>
         <Button
           className="mt-3"
           variant="outline"
