@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mmcdole/gofeed"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pagination"
 )
 
@@ -237,8 +237,13 @@ func (store *Store) CreateRights(ctx context.Context, item Rights) (Rights, erro
 }
 
 func (store *Store) TestEndpoint(ctx context.Context, endpointID string) (map[string]any, error) {
-	var rawURL string
-	if err := store.pool.QueryRow(ctx, `SELECT url FROM source_endpoints WHERE id = $1`, endpointID).Scan(&rawURL); err != nil {
+	var rawURL, endpointType, website string
+	if err := store.pool.QueryRow(ctx, `
+		SELECT endpoint.url, endpoint.endpoint_type, COALESCE(source.website, '')
+		FROM source_endpoints AS endpoint
+		JOIN sources AS source ON source.id = endpoint.source_id
+		WHERE endpoint.id = $1
+	`, endpointID).Scan(&rawURL, &endpointType, &website); err != nil {
 		return nil, err
 	}
 	if !strings.HasPrefix(rawURL, "https://") {
@@ -265,7 +270,7 @@ func (store *Store) TestEndpoint(ctx context.Context, endpointID string) (map[st
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 5<<20))
 	parseable := false
 	latest := ""
-	if feed, err := gofeed.NewParser().ParseString(string(body)); err == nil && feed != nil {
+	if feed, err := ingest.ParseEndpoint(endpointType, website, body); err == nil && feed != nil {
 		parseable = true
 		if len(feed.Items) > 0 && feed.Items[0].PublishedParsed != nil {
 			latest = feed.Items[0].PublishedParsed.UTC().Format(time.RFC3339)

@@ -58,13 +58,13 @@ func (poller *Poller) PollAll(ctx context.Context) error {
 	`)
 	rows, err := poller.pool.Query(ctx, `
 		SELECT DISTINCT ON (e.id)
-		       e.id::text, e.source_id::text, e.url, COALESCE(e.etag, ''), COALESCE(e.last_modified, ''),
-		       r.id::text, r.mode, s.active
+		       e.id::text, e.source_id::text, e.endpoint_type, e.url, COALESCE(e.etag, ''), COALESCE(e.last_modified, ''),
+		       r.id::text, r.mode, COALESCE(s.website, ''), s.active
 		FROM source_endpoints e
 		JOIN sources s ON s.id = e.source_id
 		JOIN rights_profiles r ON r.endpoint_id = e.id
 		WHERE NOT e.paused
-		  AND e.endpoint_type IN ('rss', 'atom')
+		  AND e.endpoint_type IN ('rss', 'atom', 'rest_api')
 		  AND r.mode NOT IN ('disabled', 'internal_verification')
 		  AND (r.expires_at IS NULL OR r.expires_at > clock_timestamp())
 		  AND (e.backoff_until IS NULL OR e.backoff_until < clock_timestamp())
@@ -78,13 +78,13 @@ func (poller *Poller) PollAll(ctx context.Context) error {
 	defer rows.Close()
 
 	type target struct {
-		endpointID, sourceID, rawURL, etag, lastModified, rightsID, mode string
-		active                                                           bool
+		endpointID, sourceID, endpointType, rawURL, etag, lastModified, rightsID, mode, website string
+		active                                                                                  bool
 	}
 	var targets []target
 	for rows.Next() {
 		var item target
-		if err := rows.Scan(&item.endpointID, &item.sourceID, &item.rawURL, &item.etag, &item.lastModified, &item.rightsID, &item.mode, &item.active); err != nil {
+		if err := rows.Scan(&item.endpointID, &item.sourceID, &item.endpointType, &item.rawURL, &item.etag, &item.lastModified, &item.rightsID, &item.mode, &item.website, &item.active); err != nil {
 			return err
 		}
 		targets = append(targets, item)
@@ -93,14 +93,14 @@ func (poller *Poller) PollAll(ctx context.Context) error {
 		return err
 	}
 	for _, item := range targets {
-		if err := poller.pollOne(ctx, item.endpointID, item.sourceID, item.rawURL, item.etag, item.lastModified, item.rightsID, item.mode, item.active); err != nil {
+		if err := poller.pollOne(ctx, item.endpointID, item.sourceID, item.endpointType, item.rawURL, item.etag, item.lastModified, item.rightsID, item.mode, item.website, item.active); err != nil {
 			poller.logger.Error("poll failed", "endpoint", item.endpointID, "error", err)
 		}
 	}
 	return nil
 }
 
-func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, rawURL, etag, lastModified, rightsID, mode string, sourceActive bool) error {
+func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, endpointType, rawURL, etag, lastModified, rightsID, mode, website string, sourceActive bool) error {
 	if !strings.HasPrefix(rawURL, "https://") {
 		return poller.mark(ctx, endpointID, "failed", "only https endpoints are allowed", "", "")
 	}
@@ -136,7 +136,7 @@ func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, rawURL,
 	if err != nil {
 		return poller.mark(ctx, endpointID, "failed", err.Error(), "", "")
 	}
-	feed, err := gofeed.NewParser().ParseString(string(body))
+	feed, err := ParseEndpoint(endpointType, website, body)
 	if err != nil {
 		sample := string(body)
 		if len(sample) > 500 {
@@ -272,20 +272,20 @@ func (poller *Poller) mark(ctx context.Context, endpointID, state, detail, etag,
 }
 
 func (poller *Poller) PollEndpoint(ctx context.Context, endpointID string) error {
-	var sourceID, rawURL, etag, lastModified, rightsID, mode string
+	var sourceID, endpointType, rawURL, etag, lastModified, rightsID, mode, website string
 	var active bool
 	err := poller.pool.QueryRow(ctx, `
-		SELECT e.source_id::text, e.url, COALESCE(e.etag, ''), COALESCE(e.last_modified, ''),
-		       r.id::text, r.mode, s.active
+		SELECT e.source_id::text, e.endpoint_type, e.url, COALESCE(e.etag, ''), COALESCE(e.last_modified, ''),
+		       r.id::text, r.mode, COALESCE(s.website, ''), s.active
 		FROM source_endpoints e
 		JOIN sources s ON s.id = e.source_id
 		JOIN rights_profiles r ON r.endpoint_id = e.id
 		WHERE e.id = $1
 		ORDER BY r.version DESC
 		LIMIT 1
-	`, endpointID).Scan(&sourceID, &rawURL, &etag, &lastModified, &rightsID, &mode, &active)
+	`, endpointID).Scan(&sourceID, &endpointType, &rawURL, &etag, &lastModified, &rightsID, &mode, &website, &active)
 	if err != nil {
 		return err
 	}
-	return poller.pollOne(ctx, endpointID, sourceID, rawURL, etag, lastModified, rightsID, mode, active)
+	return poller.pollOne(ctx, endpointID, sourceID, endpointType, rawURL, etag, lastModified, rightsID, mode, website, active)
 }
