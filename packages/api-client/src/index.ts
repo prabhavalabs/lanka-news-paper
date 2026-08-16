@@ -103,11 +103,18 @@ export type Overview = {
   sources: number;
 };
 
+export type OverviewTrendPoint = {
+  date: string;
+  published: number;
+  received: number;
+};
+
 export type QueueItem = {
   id: string;
   headline: string;
   public_status: string;
   source: string;
+  received_at: string;
   confidence: number | null;
   model: string | null;
   category: string | null;
@@ -191,6 +198,10 @@ export function createClient(baseUrl = "") {
         url("/api/admin/me")
       ),
     overview: () => request<Overview>(url("/api/admin/overview")),
+    overviewTrends: (days: 7 | 30 | 90 = 90) =>
+      request<{ items: OverviewTrendPoint[] }>(
+        url(`/api/admin/overview/trends?days=${days}`)
+      ),
     queue: () => request<{ items: QueueItem[] }>(url("/api/admin/queue")),
     quarantine: () =>
       request<{

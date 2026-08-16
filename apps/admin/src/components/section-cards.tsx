@@ -1,6 +1,7 @@
-"use client"
+import type { Overview } from '@snap/api-client'
+import { CircleAlert, ListChecks, Newspaper, RadioTower } from 'lucide-react'
 
-import { Badge } from "@/components/ui/badge"
+import { Badge } from '@/components/ui/badge'
 import {
   Card,
   CardAction,
@@ -8,104 +9,81 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card"
-import { TrendingUpIcon, TrendingDownIcon } from "lucide-react"
+} from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 
-export function SectionCards() {
+type SectionCardsProps = {
+  data?: Overview
+  isLoading: boolean
+}
+
+export function SectionCards({ data, isLoading }: SectionCardsProps) {
+  const queueTotal = data ? data.held + data.quarantined : undefined
+  const alertsTotal = data ? data.complaints + data.sick_feeds + data.stale_feeds : undefined
+  const cards = [
+    {
+      title: 'Published articles',
+      value: data?.published,
+      icon: Newspaper,
+      badge: 'Public corpus',
+      detail: 'Available to readers right now',
+      subdetail: 'Live publishing total',
+    },
+    {
+      title: 'Editorial queue',
+      value: queueTotal,
+      icon: ListChecks,
+      badge: 'Needs review',
+      detail: `${data?.held ?? 0} held · ${data?.quarantined ?? 0} quarantined`,
+      subdetail: 'Prioritized for desk review',
+    },
+    {
+      title: 'Source network',
+      value: data?.sources,
+      icon: RadioTower,
+      badge: 'Monitoring',
+      detail: `${data?.sick_feeds ?? 0} failed · ${data?.stale_feeds ?? 0} stale feeds`,
+      subdetail: 'Registered active sources',
+    },
+    {
+      title: 'Operational alerts',
+      value: alertsTotal,
+      icon: CircleAlert,
+      badge: alertsTotal ? 'Attention' : 'All clear',
+      detail: `${data?.complaints ?? 0} open complaints`,
+      subdetail: 'Complaints and feed health signals',
+      alert: Boolean(alertsTotal),
+    },
+  ]
+
   return (
-    <div className="grid grid-cols-1 gap-4 px-4 *:data-[slot=card]:bg-linear-to-t *:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card *:data-[slot=card]:shadow-xs lg:px-6 @xl/main:grid-cols-2 @5xl/main:grid-cols-4 dark:*:data-[slot=card]:bg-card">
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription>Total Revenue</CardDescription>
-          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            $1,250.00
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline">
-              <TrendingUpIcon
-              />
-              +12.5%
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">
-            Trending up this month{" "}
-            <TrendingUpIcon className="size-4" />
-          </div>
-          <div className="text-muted-foreground">
-            Visitors for the last 6 months
-          </div>
-        </CardFooter>
-      </Card>
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription>New Customers</CardDescription>
-          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            1,234
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline">
-              <TrendingDownIcon
-              />
-              -20%
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">
-            Down 20% this period{" "}
-            <TrendingDownIcon className="size-4" />
-          </div>
-          <div className="text-muted-foreground">
-            Acquisition needs attention
-          </div>
-        </CardFooter>
-      </Card>
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription>Active Accounts</CardDescription>
-          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            45,678
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline">
-              <TrendingUpIcon
-              />
-              +12.5%
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">
-            Strong user retention{" "}
-            <TrendingUpIcon className="size-4" />
-          </div>
-          <div className="text-muted-foreground">Engagement exceed targets</div>
-        </CardFooter>
-      </Card>
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription>Growth Rate</CardDescription>
-          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            4.5%
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline">
-              <TrendingUpIcon
-              />
-              +4.5%
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">
-            Steady performance increase{" "}
-            <TrendingUpIcon className="size-4" />
-          </div>
-          <div className="text-muted-foreground">Meets growth projections</div>
-        </CardFooter>
-      </Card>
+    <div className="grid grid-cols-1 gap-4 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
+      {cards.map((card) => {
+        const Icon = card.icon
+        return (
+          <Card
+            key={card.title}
+            className="@container/card bg-linear-to-b from-card to-primary/[0.035] shadow-sm transition-shadow hover:shadow-md dark:to-primary/[0.06]"
+          >
+            <CardHeader>
+              <CardDescription>{card.title}</CardDescription>
+              <CardTitle className="text-3xl font-semibold tabular-nums">
+                {isLoading ? <Skeleton className="h-9 w-20" /> : (card.value ?? '—').toLocaleString()}
+              </CardTitle>
+              <CardAction>
+                <Badge variant={card.alert ? 'destructive' : 'outline'}>
+                  <Icon />
+                  {card.badge}
+                </Badge>
+              </CardAction>
+            </CardHeader>
+            <CardFooter className="flex-col items-start gap-1">
+              <p className="font-medium">{card.detail}</p>
+              <p className="text-muted-foreground">{card.subdetail}</p>
+            </CardFooter>
+          </Card>
+        )
+      })}
     </div>
   )
 }
