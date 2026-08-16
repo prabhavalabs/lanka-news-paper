@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "@snap/ui/tokens.css";
 @import "@fontsource/noto-sans-sinhala/400.css";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
 @source "../../packages/ui/src";
 
