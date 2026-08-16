@@ -129,6 +129,34 @@ export type AdminComplaint = {
   status: string;
 };
 
+export type PaginationMeta = {
+  page: number;
+  per_page: number;
+  total: number;
+  total_pages: number;
+};
+
+export type PageResponse<T> = {
+  items: T[];
+  pagination: PaginationMeta;
+};
+
+export type AdminTableQuery = {
+  page?: number;
+  per_page?: number;
+  search?: string;
+  [filter: string]: string | number | undefined;
+};
+
+function withQuery(path: string, params: AdminTableQuery = {}) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") search.set(key, String(value));
+  }
+  const suffix = search.toString();
+  return suffix ? `${path}?${suffix}` : path;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = init?.method?.toUpperCase() ?? "GET";
   const response = await fetch(path, {
@@ -234,8 +262,10 @@ export function createClient(baseUrl = "") {
         method: "POST",
         body: JSON.stringify({ status, resolution })
       }),
-    adminSources: () =>
-      request<{ items: AdminSource[] }>(url("/api/admin/sources")),
+    adminSources: (params: AdminTableQuery = {}) =>
+      request<PageResponse<AdminSource>>(
+        url(withQuery("/api/admin/sources", params))
+      ),
     adminSource: (id: string) =>
       request<AdminSource>(url(`/api/admin/sources/${id}`)),
     createSource: (body: Omit<AdminSource, "id">) =>
