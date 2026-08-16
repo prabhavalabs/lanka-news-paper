@@ -1,0 +1,87 @@
+:root {
+  --paper: #f7f5f0;
+  --paper-raised: #fdfcf9;
+  --ink: #141414;
+  --ink-secondary: #4a4a4a;
+  --ink-tertiary: #767470;
+  --rule: #d8d5cd;
+  --rule-strong: #141414;
+  --tint: #eeebe3;
+  --link-visited: #5a5650;
+  --error: #8b2500;
+
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: var(--paper-raised);
+  --card-foreground: var(--ink);
+  --popover: var(--paper-raised);
+  --popover-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: var(--paper);
+  --secondary: var(--tint);
+  --secondary-foreground: var(--ink);
+  --muted: var(--tint);
+  --muted-foreground: var(--ink-tertiary);
+  --accent: var(--tint);
+  --accent-foreground: var(--ink);
+  --destructive: var(--error);
+  --border: var(--rule);
+  --input: var(--rule);
+  --ring: var(--ink);
+  --radius: 0rem;
+
+  --font-headline: "Abhaya Libre", "Noto Serif Sinhala", serif;
+  --font-body: "Noto Serif Sinhala", serif;
+  --font-ui: "Noto Sans Sinhala", system-ui, sans-serif;
+  --text-masthead: clamp(2.5rem, 6vw, 4.25rem);
+  --text-h1: 2.125rem;
+  --text-h2: 1.625rem;
+  --text-h3: 1.3125rem;
+  --text-body: 1.0625rem;
+  --text-meta: 0.8125rem;
+}
+
+.dark {
+  --paper: #191917;
+  --paper-raised: #211f1d;
+  --ink: #e8e6e1;
+  --ink-secondary: #b3b0aa;
+  --ink-tertiary: #807d77;
+  --rule: #33312e;
+  --rule-strong: #e8e6e1;
+  --tint: #232220;
+  --link-visited: #8f8b84;
+  --error: #d9744f;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+  --color-rule: var(--rule);
+  --color-tint: var(--tint);
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --font-headline: var(--font-headline);
+  --font-body: var(--font-body);
+  --font-ui: var(--font-ui);
+}
