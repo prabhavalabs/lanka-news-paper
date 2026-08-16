@@ -7,6 +7,7 @@
     "build": "vite build && tsc -b",
     "dev": "vite --host 127.0.0.1 --port 5174",
     "preview": "vite preview --host 127.0.0.1 --port 4174",
+    "test": "node --test src/lib/pagination.test.ts",
     "typecheck": "tsc -b"
   },
   "dependencies": {

@@ -1,18 +1,20 @@
 import type { PaginationMeta } from '@snap/api-client'
 import { Search, X } from 'lucide-react'
-import { useId } from 'react'
+import { Fragment, useId } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   Pagination,
   PaginationContent,
+  PaginationEllipsis,
   PaginationItem,
   PaginationLink,
   PaginationNext,
   PaginationPrevious,
 } from '@/components/ui/pagination'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { getPaginationPages } from '@/lib/pagination'
 import { cn } from '@/lib/utils'
 
 type DataTableToolbarProps = {
@@ -81,15 +83,14 @@ export function DataTablePagination({
   const { page, per_page: perPage, total, total_pages: totalPages } = pagination
   const start = total === 0 ? 0 : (page - 1) * perPage + 1
   const end = Math.min(page * perPage, total)
+  const pageCount = Math.max(1, totalPages)
+  const pages = getPaginationPages(page, pageCount)
   const previousDisabled = page <= 1
-  const nextDisabled = page >= totalPages
+  const nextDisabled = page >= pageCount
 
   return (
-    <div className="flex flex-col gap-4 border-t px-5 py-4 text-sm text-muted-foreground lg:flex-row lg:items-center lg:justify-between">
-      <p className="tabular-nums">
-        {start}–{end} of {total} results
-      </p>
-      <div className="flex flex-wrap items-center gap-4">
+    <div className="grid gap-4 border-t px-5 py-4 text-sm text-muted-foreground lg:grid-cols-[1fr_auto_1fr] lg:items-center">
+      <div className="flex flex-wrap items-center justify-center gap-4 lg:justify-start">
         <div className="flex items-center gap-2">
           <span className="whitespace-nowrap">Rows per page</span>
           <Select
@@ -111,34 +112,46 @@ export function DataTablePagination({
           </Select>
         </div>
         <span className="whitespace-nowrap tabular-nums">
-          Page {page} of {totalPages}
+          {start}–{end} of {total} results
         </span>
-        <Pagination className="w-auto">
-          <PaginationContent>
-            <PaginationItem>
-              <PaginationPrevious
-                to={pageHref(Math.max(1, page - 1))}
-                aria-disabled={previousDisabled}
-                tabIndex={previousDisabled ? -1 : undefined}
-                className={cn(previousDisabled && 'pointer-events-none opacity-50')}
-              />
-            </PaginationItem>
-            <PaginationItem>
-              <PaginationLink to={pageHref(page)} isActive aria-label={`Page ${page}`}>
-                {page}
-              </PaginationLink>
-            </PaginationItem>
-            <PaginationItem>
-              <PaginationNext
-                to={pageHref(Math.min(totalPages, page + 1))}
-                aria-disabled={nextDisabled}
-                tabIndex={nextDisabled ? -1 : undefined}
-                className={cn(nextDisabled && 'pointer-events-none opacity-50')}
-              />
-            </PaginationItem>
-          </PaginationContent>
-        </Pagination>
       </div>
+      <Pagination className="w-auto">
+        <PaginationContent className="flex-wrap justify-center">
+          <PaginationItem>
+            <PaginationPrevious
+              to={pageHref(Math.max(1, page - 1))}
+              aria-disabled={previousDisabled}
+              tabIndex={previousDisabled ? -1 : undefined}
+              className={cn(previousDisabled && 'pointer-events-none opacity-50')}
+            />
+          </PaginationItem>
+          {pages.map((number, index) => (
+            <Fragment key={number}>
+              {index > 0 && pages[index - 1] !== number - 1 ? (
+                <PaginationItem>
+                  <PaginationEllipsis />
+                </PaginationItem>
+              ) : null}
+              <PaginationItem>
+                <PaginationLink to={pageHref(number)} isActive={number === page} aria-label={`Page ${number}`}>
+                  {number}
+                </PaginationLink>
+              </PaginationItem>
+            </Fragment>
+          ))}
+          <PaginationItem>
+            <PaginationNext
+              to={pageHref(Math.min(pageCount, page + 1))}
+              aria-disabled={nextDisabled}
+              tabIndex={nextDisabled ? -1 : undefined}
+              className={cn(nextDisabled && 'pointer-events-none opacity-50')}
+            />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
+      <p className="text-center whitespace-nowrap tabular-nums lg:text-right">
+        Page {page} of {pageCount}
+      </p>
     </div>
   )
 }
