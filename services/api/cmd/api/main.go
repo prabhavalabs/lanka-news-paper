@@ -50,7 +50,7 @@ func run(logger *slog.Logger) error {
 	defer pool.Close()
 
 	users := iam.NewStore(pool)
-	if err := users.Bootstrap(processContext, loaded.BootstrapAdminEmail, loaded.BootstrapAdminPassword); err != nil {
+	if err := users.Bootstrap(processContext, loaded.BootstrapAdminEmail, loaded.BootstrapAdminPasswordHash); err != nil {
 		return fmt.Errorf("bootstrap admin: %w", err)
 	}
 
@@ -64,6 +64,7 @@ func run(logger *slog.Logger) error {
 		Addr: loaded.Address,
 		Handler: httpapi.NewRouter(httpapi.Dependencies{
 			AllowedOrigins: loaded.AllowedOrigins,
+			CookieSecure:   loaded.SessionCookieSecure,
 			Database:       pool,
 			Desk:           deskStore,
 			IAM:            users,
@@ -77,6 +78,7 @@ func run(logger *slog.Logger) error {
 		ReadTimeout:       20 * time.Second,
 		WriteTimeout:      45 * time.Second,
 		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	serverErrors := make(chan error, 1)

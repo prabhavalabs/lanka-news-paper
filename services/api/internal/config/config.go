@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -16,16 +17,17 @@ const (
 )
 
 type Config struct {
-	Address                 string
-	AllowedOrigins          []string
-	BootstrapAdminEmail     string
-	BootstrapAdminPassword  string
-	DatabaseURL             string
-	Environment             string
-	MigrationsPath          string
-	SessionSecret           string
-	SessionTTL              time.Duration
-	ShutdownTimeout         time.Duration
+	Address                    string
+	AllowedOrigins             []string
+	BootstrapAdminEmail        string
+	BootstrapAdminPasswordHash string
+	DatabaseURL                string
+	Environment                string
+	MigrationsPath             string
+	SessionCookieSecure        bool
+	SessionSecret              string
+	SessionTTL                 time.Duration
+	ShutdownTimeout            time.Duration
 }
 
 var defaultAllowedOrigins = []string{
@@ -58,18 +60,27 @@ func Load(lookup LookupFunc) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	environment := valueOrDefault(lookup("SNAP_ENV"), defaultEnvironment)
+	secureCookie := environment != "local"
+	if configured := strings.TrimSpace(lookup("SNAP_SESSION_COOKIE_SECURE")); configured != "" {
+		secureCookie, err = strconv.ParseBool(configured)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse SNAP_SESSION_COOKIE_SECURE: expected true or false")
+		}
+	}
 
 	return Config{
-		Address:                valueOrDefault(lookup("SNAP_API_ADDRESS"), defaultAddress),
-		AllowedOrigins:         allowedOrigins,
-		BootstrapAdminEmail:    strings.TrimSpace(lookup("SNAP_BOOTSTRAP_ADMIN_EMAIL")),
-		BootstrapAdminPassword: strings.TrimSpace(lookup("SNAP_BOOTSTRAP_ADMIN_PASSWORD")),
-		DatabaseURL:            databaseURL,
-		Environment:            valueOrDefault(lookup("SNAP_ENV"), defaultEnvironment),
-		MigrationsPath:         valueOrDefault(lookup("SNAP_MIGRATIONS_PATH"), "migrations"),
-		SessionSecret:          valueOrDefault(lookup("SNAP_SESSION_SECRET"), "local-dev-session-secret-change"),
-		SessionTTL:             defaultSessionTTL,
-		ShutdownTimeout:        shutdownTimeout,
+		Address:                    valueOrDefault(lookup("SNAP_API_ADDRESS"), defaultAddress),
+		AllowedOrigins:             allowedOrigins,
+		BootstrapAdminEmail:        strings.TrimSpace(lookup("SNAP_BOOTSTRAP_ADMIN_EMAIL")),
+		BootstrapAdminPasswordHash: strings.TrimSpace(lookup("SNAP_BOOTSTRAP_ADMIN_PASSWORD_HASH")),
+		DatabaseURL:                databaseURL,
+		Environment:                environment,
+		MigrationsPath:             valueOrDefault(lookup("SNAP_MIGRATIONS_PATH"), "migrations"),
+		SessionCookieSecure:        secureCookie,
+		SessionSecret:              valueOrDefault(lookup("SNAP_SESSION_SECRET"), "local-dev-session-secret-change"),
+		SessionTTL:                 defaultSessionTTL,
+		ShutdownTimeout:            shutdownTimeout,
 	}, nil
 }
 

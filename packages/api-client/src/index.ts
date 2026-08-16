@@ -123,11 +123,13 @@ export type AdminComplaint = {
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = init?.method?.toUpperCase() ?? "GET";
   const response = await fetch(path, {
     credentials: "include",
     ...init,
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(method !== "GET" && method !== "HEAD" ? { "X-SNAP-CSRF": "1" } : {}),
       ...init?.headers
     }
   });
@@ -176,19 +178,11 @@ export function createClient(baseUrl = "") {
       }),
     login: (email: string, password: string) =>
       request<{
-        mfa_required: boolean;
-        mfa_setup: boolean;
-        mfa_token: string;
-        otpauth_url?: string;
-        otpauth_qr?: string;
+        ok: boolean;
+        user: { id: string; email: string; name: string; role: string };
       }>(url("/api/admin/login"), {
         method: "POST",
         body: JSON.stringify({ email, password })
-      }),
-    verifyMfa: (mfa_token: string, code: string) =>
-      request<{ ok: boolean }>(url("/api/admin/mfa"), {
-        method: "POST",
-        body: JSON.stringify({ mfa_token, code })
       }),
     logout: () =>
       request<{ ok: boolean }>(url("/api/admin/logout"), { method: "POST" }),

@@ -14,6 +14,7 @@ import (
 
 type Dependencies struct {
 	AllowedOrigins []string
+	CookieSecure   bool
 	Database       DatabaseChecker
 	Desk           *desk.Store
 	IAM            *iam.Store
@@ -28,7 +29,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux := http.NewServeMux()
 	health := healthHandler{database: dependencies.Database}
 	news := newsHandler{reader: dependencies.News}
-	auth := newAuthHandler(dependencies.IAM, dependencies.SessionTTL)
+	auth := newAuthHandler(dependencies.IAM, dependencies.SessionTTL, dependencies.CookieSecure)
 	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk}
 
 	mux.HandleFunc("GET /api/v1/health/live", health.liveness)
@@ -44,9 +45,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/breaking", news.breaking)
 	mux.HandleFunc("GET /api/v1/brief", news.brief)
 	mux.HandleFunc("POST /api/v1/complaints", news.complain)
-	mux.HandleFunc("POST /api/admin/login", auth.login)
-	mux.HandleFunc("POST /api/admin/mfa", auth.verifyMFA)
-	mux.HandleFunc("POST /api/admin/logout", auth.logout)
+	mux.Handle("POST /api/admin/login", withCSRF(http.HandlerFunc(auth.login)))
+	mux.Handle("POST /api/admin/logout", withCSRF(http.HandlerFunc(auth.logout)))
 
 	protected := http.NewServeMux()
 	protected.HandleFunc("GET /api/admin/me", auth.me)
@@ -78,7 +78,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("POST /api/admin/llm/providers", admin.providers)
 	protected.HandleFunc("GET /api/admin/llm/profiles", admin.profiles)
 	protected.HandleFunc("POST /api/admin/llm/profiles", admin.profiles)
-	mux.Handle("/api/admin/", auth.requireAuth(protected))
+	mux.Handle("/api/admin/", withCSRF(auth.requireAuth(protected)))
 
-	return withRecovery(withRequestID(withSecurityHeaders(withCORS(mux, dependencies.AllowedOrigins))))
+	return withRecovery(withRequestID(withSecurityHeaders(withCORS(http.MaxBytesHandler(mux, 1<<20), dependencies.AllowedOrigins))))
 }

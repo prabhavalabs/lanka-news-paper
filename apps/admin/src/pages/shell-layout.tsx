@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { createClient } from '@snap/api-client'
 
+import { ThemeToggle } from '@/components/theme-toggle'
+
 const client = createClient()
 
 export function ShellLayout() {
@@ -19,6 +21,10 @@ export function ShellLayout() {
     return <p className="p-8 text-sm text-muted-foreground">Loading…</p>
   }
 
+  if (me.isError) {
+    return null
+  }
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="flex h-12 items-center justify-between border-b border-border px-6">
@@ -29,7 +35,8 @@ export function ShellLayout() {
           <Link to="/queue">Queue</Link>
           <Link to="/complaints">Complaints</Link>
           <Link to="/routing">AI & Routing</Link>
-          <span className="text-muted-foreground">{me.data?.email}</span>
+          <span className="text-muted-foreground">{me.data?.name} · {me.data?.role === 'administrator' ? 'Administrator' : me.data?.role}</span>
+          <ThemeToggle />
           <button
             type="button"
             className="text-muted-foreground underline"

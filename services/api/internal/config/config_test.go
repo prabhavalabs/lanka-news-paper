@@ -23,6 +23,22 @@ func TestLoadUsesDefaults(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "127.0.0.1:8090", loaded.Address)
 	require.Equal(t, "local", loaded.Environment)
+	require.False(t, loaded.SessionCookieSecure)
 	require.Equal(t, 10*time.Second, loaded.ShutdownTimeout)
 	require.Equal(t, []string{"http://127.0.0.1:5173", "http://127.0.0.1:5174"}, loaded.AllowedOrigins)
+}
+
+func TestLoadSecureCookieOverride(t *testing.T) {
+	loaded, err := Load(func(key string) string {
+		switch key {
+		case "SNAP_DATABASE_URL":
+			return "postgres://snap:snap@127.0.0.1:55432/snap?sslmode=disable"
+		case "SNAP_SESSION_COOKIE_SECURE":
+			return "true"
+		default:
+			return ""
+		}
+	})
+	require.NoError(t, err)
+	require.True(t, loaded.SessionCookieSecure)
 }
