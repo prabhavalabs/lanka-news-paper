@@ -1,0 +1,24 @@
+{
+  "name": "lanka-news-paper",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@11.21.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "api:dev": "cd services/api && go run ./cmd/api",
+    "api:test": "cd services/api && go test ./...",
+    "api:vet": "cd services/api && go vet ./...",
+    "build": "pnpm -r --if-present build",
+    "dev:admin": "pnpm --filter @snap/admin dev",
+    "dev:web": "pnpm --filter @snap/web dev",
+    "lint": "pnpm -r --if-present lint",
+    "local:down": "docker compose -f infra/local/compose.yaml down",
+    "local:up": "docker compose -f infra/local/compose.yaml up -d",
+    "migrate": "cd services/api && go run ./cmd/migrate",
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "worker:dev": "cd services/api && go run ./cmd/worker"
+  }
+}
