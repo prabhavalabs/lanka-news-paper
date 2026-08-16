@@ -34,12 +34,27 @@ func (handler adminHandler) sources(w http.ResponseWriter, request *http.Request
 		writeJSON(w, http.StatusCreated, item)
 		return
 	}
-	items, err := handler.registry.ListSources(request.Context())
+	params, err := parsePagination(request)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	sourceType, err := parseFilter(request, "type", "private_media", "state_owned", "government", "independent", "international", "other")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	status, err := parseFilter(request, "status", "active", "held")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	items, total, err := handler.registry.ListSources(request.Context(), params, sourceType, status)
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not list sources.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writePage(w, items, total, params)
 }
 
 func (handler adminHandler) source(w http.ResponseWriter, request *http.Request) {

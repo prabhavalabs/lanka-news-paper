@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mmcdole/gofeed"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pagination"
 )
 
 type Source struct {
@@ -52,24 +53,48 @@ func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
-func (store *Store) ListSources(ctx context.Context) ([]Source, error) {
+func (store *Store) ListSources(ctx context.Context, params pagination.Params, sourceType, status string) ([]Source, int, error) {
+	var total int
+	err := store.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM sources
+		WHERE archived_at IS NULL
+		  AND ($1 = '' OR name ILIKE '%' || $1 || '%' OR legal_name ILIKE '%' || $1 || '%'
+		       OR COALESCE(website, '') ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR source_type = $2)
+		  AND ($3 = '' OR ($3 = 'active' AND active) OR ($3 = 'held' AND NOT active))
+	`, params.Search, sourceType, status).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count sources: %w", err)
+	}
+
 	rows, err := store.pool.Query(ctx, `
 		SELECT id::text, name, legal_name, source_type, COALESCE(website, ''), COALESCE(description, ''), active
-		FROM sources WHERE archived_at IS NULL ORDER BY name
-	`)
+		FROM sources
+		WHERE archived_at IS NULL
+		  AND ($1 = '' OR name ILIKE '%' || $1 || '%' OR legal_name ILIKE '%' || $1 || '%'
+		       OR COALESCE(website, '') ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR source_type = $2)
+		  AND ($3 = '' OR ($3 = 'active' AND active) OR ($3 = 'held' AND NOT active))
+		ORDER BY name, id
+		LIMIT $4 OFFSET $5
+	`, params.Search, sourceType, status, params.Limit(), params.Offset())
 	if err != nil {
-		return nil, err
+		return nil, 0, fmt.Errorf("list sources: %w", err)
 	}
 	defer rows.Close()
 	items := make([]Source, 0)
 	for rows.Next() {
 		var item Source
 		if err := rows.Scan(&item.ID, &item.Name, &item.LegalName, &item.SourceType, &item.Website, &item.Description, &item.Active); err != nil {
-			return nil, err
+			return nil, 0, fmt.Errorf("scan source: %w", err)
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate sources: %w", err)
+	}
+	return items, total, nil
 }
 
 func (store *Store) GetSource(ctx context.Context, id string) (Source, error) {
