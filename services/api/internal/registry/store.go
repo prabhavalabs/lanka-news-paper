@@ -1,0 +1,250 @@
+package registry
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mmcdole/gofeed"
+)
+
+type Source struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	LegalName   string `json:"legal_name"`
+	SourceType  string `json:"source_type"`
+	Website     string `json:"website"`
+	Description string `json:"description"`
+	Active      bool   `json:"active"`
+}
+
+type Endpoint struct {
+	ID              string  `json:"id"`
+	SourceID        string  `json:"source_id"`
+	EndpointType    string  `json:"endpoint_type"`
+	URL             string  `json:"url"`
+	Paused          bool    `json:"paused"`
+	HealthState     string  `json:"health_state"`
+	LastError       *string `json:"last_error"`
+	LastSuccessAt   *string `json:"last_success_at"`
+	IntervalSeconds int     `json:"polling_interval_seconds"`
+	Verified        bool    `json:"verified_official"`
+}
+
+type Rights struct {
+	ID          string `json:"id"`
+	SourceID    string `json:"source_id"`
+	EndpointID  string `json:"endpoint_id"`
+	Mode        string `json:"mode"`
+	Attribution string `json:"attribution"`
+}
+
+type Store struct {
+	pool *pgxpool.Pool
+}
+
+func NewStore(pool *pgxpool.Pool) *Store {
+	return &Store{pool: pool}
+}
+
+func (store *Store) ListSources(ctx context.Context) ([]Source, error) {
+	rows, err := store.pool.Query(ctx, `
+		SELECT id::text, name, legal_name, source_type, COALESCE(website, ''), COALESCE(description, ''), active
+		FROM sources WHERE archived_at IS NULL ORDER BY name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]Source, 0)
+	for rows.Next() {
+		var item Source
+		if err := rows.Scan(&item.ID, &item.Name, &item.LegalName, &item.SourceType, &item.Website, &item.Description, &item.Active); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (store *Store) GetSource(ctx context.Context, id string) (Source, error) {
+	var item Source
+	err := store.pool.QueryRow(ctx, `
+		SELECT id::text, name, legal_name, source_type, COALESCE(website, ''), COALESCE(description, ''), active
+		FROM sources WHERE id = $1 AND archived_at IS NULL
+	`, id).Scan(&item.ID, &item.Name, &item.LegalName, &item.SourceType, &item.Website, &item.Description, &item.Active)
+	return item, err
+}
+
+func (store *Store) SetActive(ctx context.Context, id string, active bool) error {
+	_, err := store.pool.Exec(ctx, `UPDATE sources SET active = $2 WHERE id = $1 AND archived_at IS NULL`, id, active)
+	return err
+}
+
+func (store *Store) CreateSource(ctx context.Context, item Source) (Source, error) {
+	err := store.pool.QueryRow(ctx, `
+		INSERT INTO sources (name, legal_name, source_type, website, description, active)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id::text
+	`, item.Name, item.LegalName, item.SourceType, item.Website, item.Description, item.Active).Scan(&item.ID)
+	return item, err
+}
+
+func (store *Store) ListEndpoints(ctx context.Context, sourceID string) ([]Endpoint, error) {
+	rows, err := store.pool.Query(ctx, `
+		SELECT id::text, source_id::text, endpoint_type, url, paused, health_state, last_error,
+		       last_success_at::text, polling_interval_seconds, verified_official
+		FROM source_endpoints WHERE source_id = $1 ORDER BY created_at
+	`, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]Endpoint, 0)
+	for rows.Next() {
+		var item Endpoint
+		if err := rows.Scan(&item.ID, &item.SourceID, &item.EndpointType, &item.URL, &item.Paused, &item.HealthState, &item.LastError, &item.LastSuccessAt, &item.IntervalSeconds, &item.Verified); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (store *Store) CreateEndpoint(ctx context.Context, item Endpoint) (Endpoint, error) {
+	if !strings.HasPrefix(item.URL, "https://") {
+		return item, fmt.Errorf("endpoint must use https")
+	}
+	id := uuid.New()
+	_, err := store.pool.Exec(ctx, `
+		INSERT INTO source_endpoints (id, source_id, endpoint_type, url, paused)
+		VALUES ($1, $2, $3, $4, true)
+	`, id, item.SourceID, item.EndpointType, item.URL)
+	item.ID = id.String()
+	item.Paused = true
+	return item, err
+}
+
+func (store *Store) SetPaused(ctx context.Context, endpointID string, paused bool) error {
+	_, err := store.pool.Exec(ctx, `UPDATE source_endpoints SET paused = $2 WHERE id = $1`, endpointID, paused)
+	return err
+}
+
+func (store *Store) ListRights(ctx context.Context, sourceID string) ([]Rights, error) {
+	rows, err := store.pool.Query(ctx, `
+		SELECT id::text, source_id::text, endpoint_id::text, mode, attribution
+		FROM rights_profiles WHERE source_id = $1 ORDER BY version DESC
+	`, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]Rights, 0)
+	for rows.Next() {
+		var item Rights
+		if err := rows.Scan(&item.ID, &item.SourceID, &item.EndpointID, &item.Mode, &item.Attribution); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (store *Store) CreateRights(ctx context.Context, item Rights) (Rights, error) {
+	err := store.pool.QueryRow(ctx, `
+		INSERT INTO rights_profiles (source_id, endpoint_id, mode, attribution, effective_from, approved_by, approved_at)
+		VALUES ($1, $2, $3, $4, clock_timestamp(), 'admin', clock_timestamp())
+		RETURNING id::text
+	`, item.SourceID, item.EndpointID, item.Mode, item.Attribution).Scan(&item.ID)
+	return item, err
+}
+
+func (store *Store) TestEndpoint(ctx context.Context, endpointID string) (map[string]any, error) {
+	var rawURL string
+	if err := store.pool.QueryRow(ctx, `SELECT url FROM source_endpoints WHERE id = $1`, endpointID).Scan(&rawURL); err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(rawURL, "https://") {
+		return nil, fmt.Errorf("endpoint must use https")
+	}
+	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 3 {
+			return fmt.Errorf("too many redirects")
+		}
+		if via[0].URL.Host != req.URL.Host {
+			return fmt.Errorf("redirect to unapproved host")
+		}
+		return nil
+	}}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 5<<20))
+	parseable := false
+	latest := ""
+	if feed, err := gofeed.NewParser().ParseString(string(body)); err == nil && feed != nil {
+		parseable = true
+		if len(feed.Items) > 0 && feed.Items[0].PublishedParsed != nil {
+			latest = feed.Items[0].PublishedParsed.UTC().Format(time.RFC3339)
+		}
+	}
+	return map[string]any{
+		"status":      response.StatusCode,
+		"contentType": response.Header.Get("Content-Type"),
+		"encoding":    response.Header.Get("Content-Type"),
+		"parseable":   parseable,
+		"latest":      latest,
+		"sample":      string(body[:min(500, len(body))]),
+	}, nil
+}
+
+func (store *Store) Audit(ctx context.Context, actor string, action string, target string, result string) {
+	_, _ = store.pool.Exec(ctx, `
+		INSERT INTO audit_logs (action, target_type, target_id, result)
+		VALUES ($1, 'source', $2, $3)
+	`, action, target, result)
+}
+
+func (store *Store) Pool() *pgxpool.Pool { return store.pool }
+
+func (store *Store) UpdateSource(ctx context.Context, item Source) error {
+	_, err := store.pool.Exec(ctx, `
+		UPDATE sources SET name = $2, legal_name = $3, source_type = $4, website = $5, description = $6
+		WHERE id = $1 AND archived_at IS NULL
+	`, item.ID, item.Name, item.LegalName, item.SourceType, item.Website, item.Description)
+	return err
+}
+
+func (store *Store) Archive(ctx context.Context, id string) error {
+	_, err := store.pool.Exec(ctx, `UPDATE sources SET archived_at = clock_timestamp(), active = false WHERE id = $1`, id)
+	return err
+}
+
+func (store *Store) UpdateEndpoint(ctx context.Context, id string, interval int, verified bool) error {
+	if interval < 60 {
+		interval = 60
+	}
+	_, err := store.pool.Exec(ctx, `
+		UPDATE source_endpoints SET polling_interval_seconds = $2, verified_official = $3 WHERE id = $1
+	`, id, interval, verified)
+	return err
+}
+
+func ParseUUID(value string) (uuid.UUID, error) {
+	id, err := uuid.Parse(value)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("invalid id")
+	}
+	return id, nil
+}
