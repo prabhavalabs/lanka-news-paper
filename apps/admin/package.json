@@ -1,0 +1,35 @@
+{
+  "name": "@snap/admin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build && tsc -b",
+    "dev": "vite --host 127.0.0.1 --port 5174",
+    "preview": "vite preview --host 127.0.0.1 --port 4174",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@fontsource/noto-sans-sinhala": "^5.2.8",
+    "@hookform/resolvers": "^5.2.2",
+    "@snap/api-client": "workspace:*",
+    "@snap/ui": "workspace:*",
+    "@tanstack/react-query": "^5.90.19",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-hook-form": "^7.71.1",
+    "react-router": "^7.13.0",
+    "zod": "^4.3.6",
+    "zustand": "^5.0.10"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.2",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}
