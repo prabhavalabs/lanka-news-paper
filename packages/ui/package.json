@@ -8,23 +8,9 @@
   ],
   "exports": {
     "./tokens.css": "./src/tokens.css",
-    "./utils": "./src/utils.ts",
-    "./button": "./src/button.tsx",
-    "./table": "./src/table.tsx",
-    "./input": "./src/input.tsx"
-  },
-  "peerDependencies": {
-    "react": "^19",
-    "react-dom": "^19"
-  },
-  "devDependencies": {
-    "@types/react": "^19.2.7",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "./utils": "./src/utils.ts"
   },
   "dependencies": {
-    "@base-ui/react": "1.7.0",
-    "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "tailwind-merge": "3.6.0"
   }
