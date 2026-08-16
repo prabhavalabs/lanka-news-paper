@@ -11,10 +11,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/cluster"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/config"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/database"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/desk"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/httpapi"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/iam"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/registry"
 )
 
 func main() {
@@ -43,16 +49,33 @@ func run(logger *slog.Logger) error {
 	}
 	defer pool.Close()
 
+	users := iam.NewStore(pool)
+	if err := users.Bootstrap(processContext, loaded.BootstrapAdminEmail, loaded.BootstrapAdminPassword); err != nil {
+		return fmt.Errorf("bootstrap admin: %w", err)
+	}
+
+	clusters := cluster.NewStore(pool)
+	gateway := llm.NewGateway(pool)
+	poller := ingest.NewPoller(pool, logger, clusters, gateway)
+	news := publish.NewStore(pool)
+	deskStore := desk.NewStore(pool)
+
 	server := &http.Server{
 		Addr: loaded.Address,
 		Handler: httpapi.NewRouter(httpapi.Dependencies{
 			AllowedOrigins: loaded.AllowedOrigins,
 			Database:       pool,
-			News:           publish.NewStore(pool),
+			Desk:           deskStore,
+			IAM:            users,
+			LLM:            gateway,
+			News:           news,
+			Poller:         poller,
+			Registry:       registry.NewStore(pool),
+			SessionTTL:     loaded.SessionTTL,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		ReadTimeout:       20 * time.Second,
+		WriteTimeout:      45 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 
