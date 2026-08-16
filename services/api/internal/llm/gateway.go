@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/classify"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pagination"
 )
 
 type Request struct {
@@ -144,24 +145,44 @@ type Provider struct {
 	KeySet  bool   `json:"key_set"`
 }
 
-func (gateway *Gateway) ListProviders(ctx context.Context) ([]Provider, error) {
+func (gateway *Gateway) ListProviders(ctx context.Context, params pagination.Params, state string) ([]Provider, int, error) {
+	var total int
+	err := gateway.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM llm_providers
+		WHERE ($1 = '' OR id ILIKE '%' || $1 || '%' OR kind ILIKE '%' || $1 || '%'
+		       OR COALESCE(base_url, '') ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR ($2 = 'enabled' AND enabled) OR ($2 = 'disabled' AND NOT enabled))
+	`, params.Search, state).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count LLM providers: %w", err)
+	}
+
 	rows, err := gateway.pool.Query(ctx, `
 		SELECT id, kind, COALESCE(base_url, ''), enabled, status, api_key_ref IS NOT NULL AND api_key_ref <> ''
-		FROM llm_providers ORDER BY id
-	`)
+		FROM llm_providers
+		WHERE ($1 = '' OR id ILIKE '%' || $1 || '%' OR kind ILIKE '%' || $1 || '%'
+		       OR COALESCE(base_url, '') ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR ($2 = 'enabled' AND enabled) OR ($2 = 'disabled' AND NOT enabled))
+		ORDER BY id
+		LIMIT $3 OFFSET $4
+	`, params.Search, state, params.Limit(), params.Offset())
 	if err != nil {
-		return nil, err
+		return nil, 0, fmt.Errorf("list LLM providers: %w", err)
 	}
 	defer rows.Close()
 	items := make([]Provider, 0)
 	for rows.Next() {
 		var item Provider
 		if err := rows.Scan(&item.ID, &item.Kind, &item.BaseURL, &item.Enabled, &item.Status, &item.KeySet); err != nil {
-			return nil, err
+			return nil, 0, fmt.Errorf("scan LLM provider: %w", err)
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate LLM providers: %w", err)
+	}
+	return items, total, nil
 }
 
 func (gateway *Gateway) UpsertProvider(ctx context.Context, item Provider, keyRef string) error {
@@ -183,24 +204,44 @@ type TaskProfile struct {
 	Enabled  bool   `json:"enabled"`
 }
 
-func (gateway *Gateway) ListProfiles(ctx context.Context) ([]TaskProfile, error) {
+func (gateway *Gateway) ListProfiles(ctx context.Context, params pagination.Params, state string) ([]TaskProfile, int, error) {
+	var total int
+	err := gateway.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM llm_task_profiles
+		WHERE ($1 = '' OR task ILIKE '%' || $1 || '%' OR provider_id ILIKE '%' || $1 || '%'
+		       OR model ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR ($2 = 'enabled' AND enabled) OR ($2 = 'disabled' AND NOT enabled))
+	`, params.Search, state).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count LLM profiles: %w", err)
+	}
+
 	rows, err := gateway.pool.Query(ctx, `
 		SELECT task, priority, provider_id, model, timeout_seconds, enabled
-		FROM llm_task_profiles ORDER BY task, priority
-	`)
+		FROM llm_task_profiles
+		WHERE ($1 = '' OR task ILIKE '%' || $1 || '%' OR provider_id ILIKE '%' || $1 || '%'
+		       OR model ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR ($2 = 'enabled' AND enabled) OR ($2 = 'disabled' AND NOT enabled))
+		ORDER BY task, priority
+		LIMIT $3 OFFSET $4
+	`, params.Search, state, params.Limit(), params.Offset())
 	if err != nil {
-		return nil, err
+		return nil, 0, fmt.Errorf("list LLM profiles: %w", err)
 	}
 	defer rows.Close()
 	items := make([]TaskProfile, 0)
 	for rows.Next() {
 		var item TaskProfile
 		if err := rows.Scan(&item.Task, &item.Priority, &item.Provider, &item.Model, &item.Timeout, &item.Enabled); err != nil {
-			return nil, err
+			return nil, 0, fmt.Errorf("scan LLM profile: %w", err)
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate LLM profiles: %w", err)
+	}
+	return items, total, nil
 }
 
 func (gateway *Gateway) UpsertProfile(ctx context.Context, item TaskProfile) error {

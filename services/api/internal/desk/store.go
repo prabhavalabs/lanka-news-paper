@@ -2,9 +2,11 @@ package desk
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pagination"
 )
 
 type Store struct {
@@ -100,31 +102,50 @@ type QueueItem struct {
 	Category   *string   `json:"category"`
 }
 
-func (store *Store) Queue(ctx context.Context) ([]QueueItem, error) {
+func (store *Store) Queue(ctx context.Context, params pagination.Params, status string) ([]QueueItem, int, error) {
+	var total int
+	err := store.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM articles a
+		JOIN sources s ON s.id = a.source_id
+		WHERE ($1 = '' OR a.headline ILIKE '%' || $1 || '%' OR s.name ILIKE '%' || $1 || '%')
+		  AND (($2 = '' AND (a.public_status IN ('held', 'quarantined') OR COALESCE(a.classify_confidence, 1) < 0.45))
+		    OR ($2 IN ('held', 'quarantined') AND a.public_status = $2)
+		    OR ($2 = 'low_confidence' AND COALESCE(a.classify_confidence, 1) < 0.45))
+	`, params.Search, status).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count editorial queue: %w", err)
+	}
+
 	rows, err := store.pool.Query(ctx, `
 		SELECT a.id::text, a.headline, a.public_status, s.name, a.received_at,
 		       a.classify_confidence, a.classify_model, c.slug
 		FROM articles a
 		JOIN sources s ON s.id = a.source_id
 		LEFT JOIN categories c ON c.id = a.category_id
-		WHERE a.public_status IN ('held', 'quarantined')
-		   OR COALESCE(a.classify_confidence, 1) < 0.45
-		ORDER BY a.received_at DESC
-		LIMIT 100
-	`)
+		WHERE ($1 = '' OR a.headline ILIKE '%' || $1 || '%' OR s.name ILIKE '%' || $1 || '%')
+		  AND (($2 = '' AND (a.public_status IN ('held', 'quarantined') OR COALESCE(a.classify_confidence, 1) < 0.45))
+		    OR ($2 IN ('held', 'quarantined') AND a.public_status = $2)
+		    OR ($2 = 'low_confidence' AND COALESCE(a.classify_confidence, 1) < 0.45))
+		ORDER BY a.received_at DESC, a.id
+		LIMIT $3 OFFSET $4
+	`, params.Search, status, params.Limit(), params.Offset())
 	if err != nil {
-		return nil, err
+		return nil, 0, fmt.Errorf("list editorial queue: %w", err)
 	}
 	defer rows.Close()
 	items := make([]QueueItem, 0)
 	for rows.Next() {
 		var item QueueItem
 		if err := rows.Scan(&item.ID, &item.Headline, &item.Status, &item.Source, &item.ReceivedAt, &item.Confidence, &item.Model, &item.Category); err != nil {
-			return nil, err
+			return nil, 0, fmt.Errorf("scan editorial queue item: %w", err)
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate editorial queue: %w", err)
+	}
+	return items, total, nil
 }
 
 func (store *Store) SetStatus(ctx context.Context, id, status, actor, reason string) error {
@@ -165,24 +186,44 @@ type Complaint struct {
 	Status  string  `json:"status"`
 }
 
-func (store *Store) Complaints(ctx context.Context) ([]Complaint, error) {
+func (store *Store) Complaints(ctx context.Context, params pagination.Params, status string) ([]Complaint, int, error) {
+	var total int
+	err := store.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM complaints
+		WHERE ($1 = '' OR reason ILIKE '%' || $1 || '%' OR entity_type ILIKE '%' || $1 || '%'
+		       OR COALESCE(requester_contact, '') ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR status = $2)
+	`, params.Search, status).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count complaints: %w", err)
+	}
+
 	rows, err := store.pool.Query(ctx, `
 		SELECT id::text, entity_type, entity_id::text, reason, requester_contact, status
-		FROM complaints ORDER BY created_at DESC LIMIT 100
-	`)
+		FROM complaints
+		WHERE ($1 = '' OR reason ILIKE '%' || $1 || '%' OR entity_type ILIKE '%' || $1 || '%'
+		       OR COALESCE(requester_contact, '') ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR status = $2)
+		ORDER BY created_at DESC, id
+		LIMIT $3 OFFSET $4
+	`, params.Search, status, params.Limit(), params.Offset())
 	if err != nil {
-		return nil, err
+		return nil, 0, fmt.Errorf("list complaints: %w", err)
 	}
 	defer rows.Close()
 	items := make([]Complaint, 0)
 	for rows.Next() {
 		var item Complaint
 		if err := rows.Scan(&item.ID, &item.Type, &item.Entity, &item.Reason, &item.Contact, &item.Status); err != nil {
-			return nil, err
+			return nil, 0, fmt.Errorf("scan complaint: %w", err)
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate complaints: %w", err)
+	}
+	return items, total, nil
 }
 
 func (store *Store) ResolveComplaint(ctx context.Context, id, status, resolution string) error {

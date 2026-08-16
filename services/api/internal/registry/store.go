@@ -120,25 +120,47 @@ func (store *Store) CreateSource(ctx context.Context, item Source) (Source, erro
 	return item, err
 }
 
-func (store *Store) ListEndpoints(ctx context.Context, sourceID string) ([]Endpoint, error) {
+func (store *Store) ListEndpoints(ctx context.Context, sourceID string, params pagination.Params, health, status string) ([]Endpoint, int, error) {
+	var total int
+	err := store.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM source_endpoints
+		WHERE source_id = $1
+		  AND ($2 = '' OR url ILIKE '%' || $2 || '%' OR endpoint_type ILIKE '%' || $2 || '%')
+		  AND ($3 = '' OR health_state = $3)
+		  AND ($4 = '' OR ($4 = 'paused' AND paused) OR ($4 = 'active' AND NOT paused))
+	`, sourceID, params.Search, health, status).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count endpoints: %w", err)
+	}
+
 	rows, err := store.pool.Query(ctx, `
 		SELECT id::text, source_id::text, endpoint_type, url, paused, health_state, last_error,
 		       last_success_at::text, polling_interval_seconds, verified_official
-		FROM source_endpoints WHERE source_id = $1 ORDER BY created_at
-	`, sourceID)
+		FROM source_endpoints
+		WHERE source_id = $1
+		  AND ($2 = '' OR url ILIKE '%' || $2 || '%' OR endpoint_type ILIKE '%' || $2 || '%')
+		  AND ($3 = '' OR health_state = $3)
+		  AND ($4 = '' OR ($4 = 'paused' AND paused) OR ($4 = 'active' AND NOT paused))
+		ORDER BY created_at, id
+		LIMIT $5 OFFSET $6
+	`, sourceID, params.Search, health, status, params.Limit(), params.Offset())
 	if err != nil {
-		return nil, err
+		return nil, 0, fmt.Errorf("list endpoints: %w", err)
 	}
 	defer rows.Close()
 	items := make([]Endpoint, 0)
 	for rows.Next() {
 		var item Endpoint
 		if err := rows.Scan(&item.ID, &item.SourceID, &item.EndpointType, &item.URL, &item.Paused, &item.HealthState, &item.LastError, &item.LastSuccessAt, &item.IntervalSeconds, &item.Verified); err != nil {
-			return nil, err
+			return nil, 0, fmt.Errorf("scan endpoint: %w", err)
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate endpoints: %w", err)
+	}
+	return items, total, nil
 }
 
 func (store *Store) CreateEndpoint(ctx context.Context, item Endpoint) (Endpoint, error) {
@@ -160,24 +182,44 @@ func (store *Store) SetPaused(ctx context.Context, endpointID string, paused boo
 	return err
 }
 
-func (store *Store) ListRights(ctx context.Context, sourceID string) ([]Rights, error) {
+func (store *Store) ListRights(ctx context.Context, sourceID string, params pagination.Params, mode string) ([]Rights, int, error) {
+	var total int
+	err := store.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM rights_profiles
+		WHERE source_id = $1
+		  AND ($2 = '' OR attribution ILIKE '%' || $2 || '%' OR mode ILIKE '%' || $2 || '%')
+		  AND ($3 = '' OR mode = $3)
+	`, sourceID, params.Search, mode).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count rights profiles: %w", err)
+	}
+
 	rows, err := store.pool.Query(ctx, `
 		SELECT id::text, source_id::text, endpoint_id::text, mode, attribution
-		FROM rights_profiles WHERE source_id = $1 ORDER BY version DESC
-	`, sourceID)
+		FROM rights_profiles
+		WHERE source_id = $1
+		  AND ($2 = '' OR attribution ILIKE '%' || $2 || '%' OR mode ILIKE '%' || $2 || '%')
+		  AND ($3 = '' OR mode = $3)
+		ORDER BY version DESC, id
+		LIMIT $4 OFFSET $5
+	`, sourceID, params.Search, mode, params.Limit(), params.Offset())
 	if err != nil {
-		return nil, err
+		return nil, 0, fmt.Errorf("list rights profiles: %w", err)
 	}
 	defer rows.Close()
 	items := make([]Rights, 0)
 	for rows.Next() {
 		var item Rights
 		if err := rows.Scan(&item.ID, &item.SourceID, &item.EndpointID, &item.Mode, &item.Attribution); err != nil {
-			return nil, err
+			return nil, 0, fmt.Errorf("scan rights profile: %w", err)
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate rights profiles: %w", err)
+	}
+	return items, total, nil
 }
 
 func (store *Store) CreateRights(ctx context.Context, item Rights) (Rights, error) {
