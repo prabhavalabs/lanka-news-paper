@@ -42,3 +42,47 @@ Focused-region comparison was not needed because the requested change is isolate
 No actionable P0, P1, or P2 differences remain for the requested removal.
 
 final result: passed
+
+---
+
+# Dashboard design QA
+
+- Current-state reference: `/var/folders/4c/_xd1rpdd3w1cxmr2qscmyxkr0000gn/T/codex-clipboard-5e913106-f811-4ef6-aa39-f49af2acac63.png`
+- ShadCN target reference: `/var/folders/4c/_xd1rpdd3w1cxmr2qscmyxkr0000gn/T/codex-clipboard-277bf501-129f-4b23-b3fa-eca47c288124.png`
+- Implementation: `http://127.0.0.1:5174/`
+- Captures checked: 1600 × 900 wide dark, 1280 × 720 desktop dark, 1280 × 720 desktop light, and 390 × 844 mobile dark
+
+## Side-by-side comparison
+
+The implementation matches the reference hierarchy: inset collapsible sidebar, compact sticky header, four metric cards, a large interactive area chart, and an operational table. The generic ShadCN demo labels and fake revenue data were replaced with newsroom navigation, live publishing metrics, source health, editorial activity, and the real review queue.
+
+The wide layout renders four equal cards in one row and the main chart beneath them. At the normal desktop width the cards form a balanced two-column grid, and on mobile they stack without horizontal page overflow. The typography, rounded surfaces, subtle gradients, blue primary action, quiet borders, and restrained shadows follow the installed preset in both light and dark themes.
+
+## Interaction and responsive checks
+
+- System theme is the default; light and dark modes both render correctly.
+- Trend controls load real 7, 30, and 90-day API ranges; mobile defaults to 7 days.
+- Queue search, status filter, column visibility menu, and pagination controls render and respond correctly.
+- Sidebar collapses out of the mobile viewport; mobile document width remains within the viewport.
+- One page-level `h1`; all icon-only controls have accessible names.
+- Fresh browser load reports no console warnings or errors.
+
+## QA fixes
+
+1. Linked buttons initially emitted Base UI accessibility warnings.
+   - Fix: declared non-native button rendering for link-backed actions.
+2. The mobile columns trigger had no accessible name.
+   - Fix: added an explicit control label.
+3. Opening the column menu initially failed because its label lacked a menu group.
+   - Fix: wrapped the label and checkbox items in the required group and retested column hiding.
+
+## Verification
+
+- `pnpm --filter @snap/admin build`
+- `go test -race ./...`
+- `go vet ./...`
+- Wide, desktop, light-theme, mobile, interaction, and clean-console browser checks
+
+No actionable P0, P1, or P2 differences remain for this dashboard revamp.
+
+final result: passed

@@ -37,6 +37,7 @@ export function NavMain({ items }: { items: NavItem[] }) {
             </SidebarMenuButton>
             <Button
               render={<Link to="/sources" />}
+              nativeButton={false}
               size="icon"
               className="size-8 group-data-[collapsible=icon]:opacity-0"
               variant="outline"

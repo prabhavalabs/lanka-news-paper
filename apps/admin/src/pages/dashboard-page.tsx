@@ -33,7 +33,7 @@ export function DashboardPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" render={<Link to="/queue" />}>
+          <Button variant="outline" nativeButton={false} render={<Link to="/queue" />}>
             Review queue
             <ArrowRight data-icon="inline-end" />
           </Button>

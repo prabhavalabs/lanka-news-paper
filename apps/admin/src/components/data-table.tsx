@@ -25,6 +25,7 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
@@ -144,24 +145,28 @@ export function DataTable({ data, isLoading, isError }: DataTableProps) {
               </SelectContent>
             </Select>
             <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="outline" size="sm" />}>
+              <DropdownMenuTrigger
+                render={<Button variant="outline" size="sm" aria-label="Choose table columns" />}
+              >
                 <Columns3 data-icon="inline-start" />
                 <span className="hidden sm:inline">Columns</span>
                 <ChevronDown data-icon="inline-end" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-40">
-                <DropdownMenuLabel>Show columns</DropdownMenuLabel>
-                {(Object.keys(columnLabels) as (keyof VisibleColumns)[]).map((column) => (
-                  <DropdownMenuCheckboxItem
-                    key={column}
-                    checked={visible[column]}
-                    onCheckedChange={(checked) =>
-                      setVisible((current) => ({ ...current, [column]: Boolean(checked) }))
-                    }
-                  >
-                    {columnLabels[column]}
-                  </DropdownMenuCheckboxItem>
-                ))}
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>Show columns</DropdownMenuLabel>
+                  {(Object.keys(columnLabels) as (keyof VisibleColumns)[]).map((column) => (
+                    <DropdownMenuCheckboxItem
+                      key={column}
+                      checked={visible[column]}
+                      onCheckedChange={(checked) =>
+                        setVisible((current) => ({ ...current, [column]: Boolean(checked) }))
+                      }
+                    >
+                      {columnLabels[column]}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                </DropdownMenuGroup>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -241,7 +246,7 @@ export function DataTable({ data, isLoading, isError }: DataTableProps) {
                       </TableCell>
                     ) : null}
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" render={<Link to="/queue" />}>
+                      <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/queue" />}>
                         Review
                       </Button>
                     </TableCell>
