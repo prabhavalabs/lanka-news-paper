@@ -1,13 +1,45 @@
-import { Link, Outlet } from 'react-router'
+import { Link, Outlet, useNavigate } from 'react-router'
+import { useQuery } from '@tanstack/react-query'
+import { useEffect } from 'react'
+import { createClient } from '@snap/api-client'
+
+const client = createClient()
 
 export function ShellLayout() {
+  const navigate = useNavigate()
+  const me = useQuery({ queryKey: ['me'], queryFn: () => client.me(), retry: false })
+
+  useEffect(() => {
+    if (me.isError) {
+      navigate('/login')
+    }
+  }, [me.isError, navigate])
+
+  if (me.isPending) {
+    return <p className="p-8 text-sm text-muted-foreground">Loading…</p>
+  }
+
   return (
-    <div className="min-h-screen bg-paper text-ink">
-      <header className="flex h-12 items-center justify-between border-b border-rule px-6">
+    <div className="min-h-screen bg-background text-foreground">
+      <header className="flex h-12 items-center justify-between border-b border-border px-6">
         <p className="text-sm font-medium">SNAP newsroom</p>
-        <nav className="flex gap-4 text-sm">
-          <Link to="/">Sources</Link>
-          <Link to="/login">Sign in</Link>
+        <nav className="flex items-center gap-4 text-sm">
+          <Link to="/">Desk</Link>
+          <Link to="/sources">Sources</Link>
+          <Link to="/queue">Queue</Link>
+          <Link to="/complaints">Complaints</Link>
+          <Link to="/routing">AI & Routing</Link>
+          <span className="text-muted-foreground">{me.data?.email}</span>
+          <button
+            type="button"
+            className="text-muted-foreground underline"
+            onClick={async () => {
+              await client.logout()
+              navigate('/login')
+            }}
+          >
+            Sign out
+          </button>
         </nav>
       </header>
       <main className="mx-auto max-w-5xl px-6 py-8">
