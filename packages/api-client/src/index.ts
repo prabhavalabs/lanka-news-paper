@@ -51,6 +51,7 @@ export type AdminSource = {
   legal_name: string;
   source_type: SourceType;
   website: string;
+  icon_url: string;
   description: string;
   active: boolean;
 };

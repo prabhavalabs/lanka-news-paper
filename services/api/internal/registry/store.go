@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ type Source struct {
 	LegalName   string `json:"legal_name"`
 	SourceType  string `json:"source_type"`
 	Website     string `json:"website"`
+	IconURL     string `json:"icon_url"`
 	Description string `json:"description"`
 	Active      bool   `json:"active"`
 }
@@ -69,7 +71,7 @@ func (store *Store) ListSources(ctx context.Context, params pagination.Params, s
 	}
 
 	rows, err := store.pool.Query(ctx, `
-		SELECT id::text, name, legal_name, source_type, COALESCE(website, ''), COALESCE(description, ''), active
+		SELECT id::text, name, legal_name, source_type, COALESCE(website, ''), COALESCE(icon_url, ''), COALESCE(description, ''), active
 		FROM sources
 		WHERE archived_at IS NULL
 		  AND ($1 = '' OR name ILIKE '%' || $1 || '%' OR legal_name ILIKE '%' || $1 || '%'
@@ -86,7 +88,7 @@ func (store *Store) ListSources(ctx context.Context, params pagination.Params, s
 	items := make([]Source, 0)
 	for rows.Next() {
 		var item Source
-		if err := rows.Scan(&item.ID, &item.Name, &item.LegalName, &item.SourceType, &item.Website, &item.Description, &item.Active); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.LegalName, &item.SourceType, &item.Website, &item.IconURL, &item.Description, &item.Active); err != nil {
 			return nil, 0, fmt.Errorf("scan source: %w", err)
 		}
 		items = append(items, item)
@@ -100,9 +102,9 @@ func (store *Store) ListSources(ctx context.Context, params pagination.Params, s
 func (store *Store) GetSource(ctx context.Context, id string) (Source, error) {
 	var item Source
 	err := store.pool.QueryRow(ctx, `
-		SELECT id::text, name, legal_name, source_type, COALESCE(website, ''), COALESCE(description, ''), active
+		SELECT id::text, name, legal_name, source_type, COALESCE(website, ''), COALESCE(icon_url, ''), COALESCE(description, ''), active
 		FROM sources WHERE id = $1 AND archived_at IS NULL
-	`, id).Scan(&item.ID, &item.Name, &item.LegalName, &item.SourceType, &item.Website, &item.Description, &item.Active)
+	`, id).Scan(&item.ID, &item.Name, &item.LegalName, &item.SourceType, &item.Website, &item.IconURL, &item.Description, &item.Active)
 	return item, err
 }
 
@@ -112,11 +114,14 @@ func (store *Store) SetActive(ctx context.Context, id string, active bool) error
 }
 
 func (store *Store) CreateSource(ctx context.Context, item Source) (Source, error) {
+	if err := validateIconURL(item.IconURL); err != nil {
+		return item, err
+	}
 	err := store.pool.QueryRow(ctx, `
-		INSERT INTO sources (name, legal_name, source_type, website, description, active)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO sources (name, legal_name, source_type, website, icon_url, description, active)
+		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7)
 		RETURNING id::text
-	`, item.Name, item.LegalName, item.SourceType, item.Website, item.Description, item.Active).Scan(&item.ID)
+	`, item.Name, item.LegalName, item.SourceType, item.Website, item.IconURL, item.Description, item.Active).Scan(&item.ID)
 	return item, err
 }
 
@@ -286,11 +291,25 @@ func (store *Store) Audit(ctx context.Context, actor string, action string, targ
 func (store *Store) Pool() *pgxpool.Pool { return store.pool }
 
 func (store *Store) UpdateSource(ctx context.Context, item Source) error {
+	if err := validateIconURL(item.IconURL); err != nil {
+		return err
+	}
 	_, err := store.pool.Exec(ctx, `
-		UPDATE sources SET name = $2, legal_name = $3, source_type = $4, website = $5, description = $6
+		UPDATE sources SET name = $2, legal_name = $3, source_type = $4, website = $5, icon_url = NULLIF($6, ''), description = $7
 		WHERE id = $1 AND archived_at IS NULL
-	`, item.ID, item.Name, item.LegalName, item.SourceType, item.Website, item.Description)
+	`, item.ID, item.Name, item.LegalName, item.SourceType, item.Website, item.IconURL, item.Description)
 	return err
+}
+
+func validateIconURL(value string) error {
+	if value == "" {
+		return nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		return fmt.Errorf("icon URL must be a valid HTTPS URL")
+	}
+	return nil
 }
 
 func (store *Store) Archive(ctx context.Context, id string) error {

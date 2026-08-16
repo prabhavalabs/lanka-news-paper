@@ -126,7 +126,11 @@ export function SourceDetailPage() {
     <section className="flex flex-col gap-8">
       <div>
         <div className="flex items-center gap-3">
-          <SourceAvatar name={source.data?.name ?? 'Source'} website={source.data?.website} />
+          <SourceAvatar
+            name={source.data?.name ?? 'Source'}
+            website={source.data?.website}
+            iconUrl={source.data?.icon_url}
+          />
           <div>
             <p className="text-sm text-muted-foreground">{source.data?.source_type}</p>
             <h1 className="text-xl font-medium">{source.data?.name ?? 'Source'}</h1>

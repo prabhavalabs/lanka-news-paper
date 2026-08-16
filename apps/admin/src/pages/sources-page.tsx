@@ -69,6 +69,7 @@ export function SourcesPage() {
   const [legalName, setLegalName] = useState('')
   const [sourceType, setSourceType] = useState<SourceType>('private_media')
   const [website, setWebsite] = useState('')
+  const [iconUrl, setIconUrl] = useState('')
   const [active, setActive] = useState(false)
   const create = useMutation({
     mutationFn: () =>
@@ -77,6 +78,7 @@ export function SourcesPage() {
         legal_name: legalName,
         source_type: sourceType,
         website,
+        icon_url: iconUrl,
         description: '',
         active,
       }),
@@ -86,6 +88,7 @@ export function SourcesPage() {
       setName('')
       setLegalName('')
       setWebsite('')
+      setIconUrl('')
       void queryClient.invalidateQueries({ queryKey: ['admin-sources'] })
     },
     onError: () => toast.error('Could not create source'),
@@ -165,6 +168,16 @@ export function SourcesPage() {
                     type="url"
                     value={website}
                     onChange={(event) => setWebsite(event.target.value)}
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="icon">Icon URL</FieldLabel>
+                  <Input
+                    id="icon"
+                    type="url"
+                    placeholder="https://publisher.example/icon.png"
+                    value={iconUrl}
+                    onChange={(event) => setIconUrl(event.target.value)}
                   />
                 </Field>
                 <label className="flex items-center gap-2 text-sm">
@@ -277,7 +290,7 @@ export function SourcesPage() {
                 <TableRow key={source.id}>
                   <TableCell className="whitespace-normal">
                     <div className="flex items-center gap-3">
-                      <SourceAvatar name={source.name} website={source.website} />
+                      <SourceAvatar name={source.name} website={source.website} iconUrl={source.icon_url} />
                       <div className="min-w-0">
                         <Link to={`/sources/${source.id}`} className="font-medium hover:underline">
                           {source.name}

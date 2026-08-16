@@ -3,13 +3,14 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 type SourceAvatarProps = {
   name: string
   website?: string | null
+  iconUrl?: string | null
 }
 
-export function SourceAvatar({ name, website }: SourceAvatarProps) {
+export function SourceAvatar({ name, website, iconUrl }: SourceAvatarProps) {
   let favicon: string | undefined
 
   try {
-    favicon = website ? new URL('/favicon.ico', website).toString() : undefined
+    favicon = iconUrl || (website ? new URL('/favicon.ico', website).toString() : undefined)
   } catch {
     favicon = undefined
   }
