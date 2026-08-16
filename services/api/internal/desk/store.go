@@ -2,6 +2,7 @@ package desk
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -41,19 +42,67 @@ func (store *Store) Overview(ctx context.Context) (Overview, error) {
 	return item, err
 }
 
+// TrendPoint contains one day of dashboard publishing activity.
+type TrendPoint struct {
+	Date      string `json:"date"`
+	Published int    `json:"published"`
+	Received  int    `json:"received"`
+}
+
+// Trends returns publishing activity for the requested number of days.
+func (store *Store) Trends(ctx context.Context, days int) ([]TrendPoint, error) {
+	rows, err := store.pool.Query(ctx, `
+		WITH days AS (
+		  SELECT generate_series(current_date - ($1::int - 1), current_date, interval '1 day')::date AS day
+		), published AS (
+		  SELECT published_at::date AS day, count(*) AS total
+		  FROM articles
+		  WHERE public_status = 'published'
+		    AND published_at >= current_date - ($1::int - 1)
+		  GROUP BY published_at::date
+		), received AS (
+		  SELECT received_at::date AS day, count(*) AS total
+		  FROM articles
+		  WHERE received_at >= current_date - ($1::int - 1)
+		  GROUP BY received_at::date
+		)
+		SELECT to_char(days.day, 'YYYY-MM-DD'),
+		       COALESCE(published.total, 0), COALESCE(received.total, 0)
+		FROM days
+		LEFT JOIN published USING (day)
+		LEFT JOIN received USING (day)
+		ORDER BY days.day
+	`, days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]TrendPoint, 0, days)
+	for rows.Next() {
+		var item TrendPoint
+		if err := rows.Scan(&item.Date, &item.Published, &item.Received); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 type QueueItem struct {
-	ID         string   `json:"id"`
-	Headline   string   `json:"headline"`
-	Status     string   `json:"public_status"`
-	Source     string   `json:"source"`
-	Confidence *float64 `json:"confidence"`
-	Model      *string  `json:"model"`
-	Category   *string  `json:"category"`
+	ID         string    `json:"id"`
+	Headline   string    `json:"headline"`
+	Status     string    `json:"public_status"`
+	Source     string    `json:"source"`
+	ReceivedAt time.Time `json:"received_at"`
+	Confidence *float64  `json:"confidence"`
+	Model      *string   `json:"model"`
+	Category   *string   `json:"category"`
 }
 
 func (store *Store) Queue(ctx context.Context) ([]QueueItem, error) {
 	rows, err := store.pool.Query(ctx, `
-		SELECT a.id::text, a.headline, a.public_status, s.name,
+		SELECT a.id::text, a.headline, a.public_status, s.name, a.received_at,
 		       a.classify_confidence, a.classify_model, c.slug
 		FROM articles a
 		JOIN sources s ON s.id = a.source_id
@@ -70,7 +119,7 @@ func (store *Store) Queue(ctx context.Context) ([]QueueItem, error) {
 	items := make([]QueueItem, 0)
 	for rows.Next() {
 		var item QueueItem
-		if err := rows.Scan(&item.ID, &item.Headline, &item.Status, &item.Source, &item.Confidence, &item.Model, &item.Category); err != nil {
+		if err := rows.Scan(&item.ID, &item.Headline, &item.Status, &item.Source, &item.ReceivedAt, &item.Confidence, &item.Model, &item.Category); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/desk"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
@@ -178,6 +180,36 @@ func (handler adminHandler) overview(w http.ResponseWriter, request *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, item)
+}
+
+func (handler adminHandler) trends(w http.ResponseWriter, request *http.Request) {
+	days, err := parseTrendDays(request.URL.Query().Get("days"))
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	items, err := handler.desk.Trends(request.Context(), days)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func parseTrendDays(value string) (int, error) {
+	if value == "" {
+		return 90, nil
+	}
+	days, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, errors.New("days must be 7, 30, or 90")
+	}
+	switch days {
+	case 7, 30, 90:
+		return days, nil
+	default:
+		return 0, errors.New("days must be 7, 30, or 90")
+	}
 }
 
 func (handler adminHandler) queue(w http.ResponseWriter, request *http.Request) {
