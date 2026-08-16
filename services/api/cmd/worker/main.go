@@ -9,9 +9,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/cluster"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/config"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/database"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/jobs"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 )
 
 func main() {
@@ -40,7 +44,12 @@ func run(logger *slog.Logger) error {
 	}
 	defer pool.Close()
 
-	client, err := jobs.NewClient(pool, logger)
+	if err := jobs.Migrate(processContext, pool); err != nil {
+		return err
+	}
+	news := publish.NewStore(pool)
+	poller := ingest.NewPoller(pool, logger, cluster.NewStore(pool), llm.NewGateway(pool))
+	client, err := jobs.NewClient(pool, logger, poller, news)
 	if err != nil {
 		return err
 	}
