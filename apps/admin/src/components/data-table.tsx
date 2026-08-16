@@ -1,26 +1,14 @@
-import type { QueueItem } from '@snap/api-client'
-import {
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Columns3,
-  Inbox,
-  Search,
-} from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { createClient } from '@snap/api-client'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ChevronDown, Columns3, Inbox } from 'lucide-react'
+import { useState } from 'react'
 import { Link } from 'react-router'
+import { toast } from 'sonner'
 
+import { DataTablePagination, DataTableToolbar } from '@/components/data-table-controls'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -29,12 +17,12 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { useTableQuery } from '@/hooks/use-table-query'
 
-const PAGE_SIZE = 6
+const client = createClient()
 const dateFormatter = new Intl.DateTimeFormat('en', {
   month: 'short',
   day: 'numeric',
@@ -42,7 +30,6 @@ const dateFormatter = new Intl.DateTimeFormat('en', {
   minute: '2-digit',
 })
 
-type QueueFilter = 'all' | 'held' | 'quarantined' | 'low-confidence'
 type VisibleColumns = {
   source: boolean
   category: boolean
@@ -58,38 +45,39 @@ const columnLabels: Record<keyof VisibleColumns, string> = {
 }
 
 type DataTableProps = {
-  data: QueueItem[]
-  isLoading: boolean
-  isError: boolean
+  prefix?: string
+  editable?: boolean
 }
 
-export function DataTable({ data, isLoading, isError }: DataTableProps) {
-  const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<QueueFilter>('all')
-  const [page, setPage] = useState(0)
+export function DataTable({ prefix = 'queue', editable = false }: DataTableProps) {
+  const queryClient = useQueryClient()
+  const table = useTableQuery(prefix)
+  const status = table.filter('status')
+  const queue = useQuery({
+    queryKey: ['queue', prefix, table.page, table.perPage, table.search, status],
+    queryFn: () =>
+      client.queue({
+        page: table.page,
+        per_page: table.perPage,
+        search: table.search,
+        status,
+      }),
+    placeholderData: keepPreviousData,
+  })
+  const updateStatus = useMutation({
+    mutationFn: ({ id, nextStatus }: { id: string; nextStatus: string }) =>
+      client.setArticleStatus(id, nextStatus, 'desk review'),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['queue'] }),
+    onError: () => toast.error('Could not update article'),
+  })
   const [visible, setVisible] = useState<VisibleColumns>({
     source: true,
     category: true,
     confidence: true,
     received: true,
   })
-
-  const filtered = useMemo(() => {
-    const query = search.trim().toLowerCase()
-    return data.filter((item) => {
-      const matchesSearch = !query || `${item.headline} ${item.source}`.toLowerCase().includes(query)
-      const matchesFilter =
-        filter === 'all' ||
-        (filter === 'low-confidence'
-          ? item.confidence != null && item.confidence < 0.45
-          : item.public_status === filter)
-      return matchesSearch && matchesFilter
-    })
-  }, [data, filter, search])
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const currentPage = Math.min(page, pageCount - 1)
-  const rows = filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE)
+  const rows = queue.data?.items ?? []
+  const pagination = queue.data?.pagination
   const visibleColumnCount = Object.values(visible).filter(Boolean).length + 3
 
   return (
@@ -98,79 +86,57 @@ export function DataTable({ data, isLoading, isError }: DataTableProps) {
         <CardTitle>Editorial queue</CardTitle>
         <CardDescription>Review held, quarantined, and low-confidence articles.</CardDescription>
         <CardAction>
-          <Badge variant="secondary">{data.length} items</Badge>
+          <Badge variant="secondary">{pagination?.total ?? 0} items</Badge>
         </CardAction>
       </CardHeader>
       <CardContent className="px-0">
-        <div className="flex flex-col gap-3 border-b px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative w-full sm:max-w-sm">
-            <label htmlFor="queue-search" className="sr-only">
-              Search editorial queue
-            </label>
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              id="queue-search"
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value)
-                setPage(0)
-              }}
-              placeholder="Search headline or source…"
-              className="pl-9"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Select
-              value={filter}
-              onValueChange={(value) => {
-                if (
-                  value === 'all' ||
-                  value === 'held' ||
-                  value === 'quarantined' ||
-                  value === 'low-confidence'
-                ) {
-                  setFilter(value)
-                  setPage(0)
-                }
-              }}
-            >
-              <SelectTrigger className="min-w-36" size="sm" aria-label="Filter queue">
-                <SelectValue placeholder="All items" />
-              </SelectTrigger>
-              <SelectContent align="end">
-                <SelectItem value="all">All items</SelectItem>
-                <SelectItem value="held">Held</SelectItem>
-                <SelectItem value="quarantined">Quarantined</SelectItem>
-                <SelectItem value="low-confidence">Low confidence</SelectItem>
-              </SelectContent>
-            </Select>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={<Button variant="outline" size="sm" aria-label="Choose table columns" />}
-              >
-                <Columns3 data-icon="inline-start" />
-                <span className="hidden sm:inline">Columns</span>
-                <ChevronDown data-icon="inline-end" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40">
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel>Show columns</DropdownMenuLabel>
-                  {(Object.keys(columnLabels) as (keyof VisibleColumns)[]).map((column) => (
-                    <DropdownMenuCheckboxItem
-                      key={column}
-                      checked={visible[column]}
-                      onCheckedChange={(checked) =>
-                        setVisible((current) => ({ ...current, [column]: Boolean(checked) }))
-                      }
-                    >
-                      {columnLabels[column]}
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </DropdownMenuGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
+        <DataTableToolbar
+          search={table.search}
+          searchPlaceholder="Search headline or source…"
+          onSearch={table.setSearch}
+        >
+          <Select
+            value={status || 'all'}
+            onValueChange={(value) => {
+              if (value !== null) table.setFilter('status', value === 'all' ? '' : value)
+            }}
+          >
+            <SelectTrigger className="min-w-40" size="sm" aria-label="Filter queue">
+              <SelectValue>
+                {() => (status ? status.replaceAll('_', ' ') : 'All items')}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectItem value="all">All items</SelectItem>
+              <SelectItem value="held">Held</SelectItem>
+              <SelectItem value="quarantined">Quarantined</SelectItem>
+              <SelectItem value="low_confidence">Low confidence</SelectItem>
+            </SelectContent>
+          </Select>
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="outline" size="sm" aria-label="Choose table columns" />}>
+              <Columns3 data-icon="inline-start" />
+              <span className="hidden sm:inline">Columns</span>
+              <ChevronDown data-icon="inline-end" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Show columns</DropdownMenuLabel>
+                {(Object.keys(columnLabels) as (keyof VisibleColumns)[]).map((column) => (
+                  <DropdownMenuCheckboxItem
+                    key={column}
+                    checked={visible[column]}
+                    onCheckedChange={(checked) =>
+                      setVisible((current) => ({ ...current, [column]: Boolean(checked) }))
+                    }
+                  >
+                    {columnLabels[column]}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </DataTableToolbar>
 
         <Table className="min-w-[820px]">
           <TableHeader className="bg-muted/30">
@@ -185,7 +151,7 @@ export function DataTable({ data, isLoading, isError }: DataTableProps) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading
+            {queue.isPending
               ? Array.from({ length: 4 }, (_, index) => (
                   <TableRow key={index}>
                     {Array.from({ length: visibleColumnCount }, (_, cell) => (
@@ -196,14 +162,14 @@ export function DataTable({ data, isLoading, isError }: DataTableProps) {
                   </TableRow>
                 ))
               : null}
-            {!isLoading && isError ? (
+            {queue.isError ? (
               <TableRow>
                 <TableCell colSpan={visibleColumnCount} className="h-40 text-center text-muted-foreground">
                   The editorial queue is temporarily unavailable.
                 </TableCell>
               </TableRow>
             ) : null}
-            {!isLoading && !isError && rows.length === 0 ? (
+            {!queue.isPending && !queue.isError && rows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={visibleColumnCount} className="h-48 text-center">
                   <div className="flex flex-col items-center gap-2 text-muted-foreground">
@@ -214,7 +180,7 @@ export function DataTable({ data, isLoading, isError }: DataTableProps) {
                 </TableCell>
               </TableRow>
             ) : null}
-            {!isLoading && !isError
+            {!queue.isPending && !queue.isError
               ? rows.map((item) => (
                   <TableRow key={item.id}>
                     <TableCell className="max-w-96 whitespace-normal">
@@ -223,7 +189,9 @@ export function DataTable({ data, isLoading, isError }: DataTableProps) {
                     </TableCell>
                     {visible.source ? <TableCell>{item.source}</TableCell> : null}
                     {visible.category ? (
-                      <TableCell className="capitalize">{item.category?.replaceAll('-', ' ') ?? 'Unassigned'}</TableCell>
+                      <TableCell className="capitalize">
+                        {item.category?.replaceAll('-', ' ') ?? 'Unassigned'}
+                      </TableCell>
                     ) : null}
                     <TableCell>
                       <Badge variant={item.public_status === 'quarantined' ? 'destructive' : 'outline'}>
@@ -246,46 +214,43 @@ export function DataTable({ data, isLoading, isError }: DataTableProps) {
                       </TableCell>
                     ) : null}
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/queue" />}>
-                        Review
-                      </Button>
+                      {editable ? (
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            size="sm"
+                            disabled={updateStatus.isPending}
+                            onClick={() => updateStatus.mutate({ id: item.id, nextStatus: 'published' })}
+                          >
+                            Publish
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={updateStatus.isPending}
+                            onClick={() => updateStatus.mutate({ id: item.id, nextStatus: 'unpublished' })}
+                          >
+                            Unpublish
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/queue" />}>
+                          Review
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))
               : null}
           </TableBody>
         </Table>
+        {pagination ? (
+          <DataTablePagination
+            pagination={pagination}
+            pageHref={table.pageHref}
+            onPerPageChange={table.setPerPage}
+          />
+        ) : null}
       </CardContent>
-      <CardFooter className="justify-between gap-4 border-t py-4">
-        <p className="text-sm text-muted-foreground">
-          {filtered.length === 0
-            ? '0 results'
-            : `${currentPage * PAGE_SIZE + 1}–${Math.min((currentPage + 1) * PAGE_SIZE, filtered.length)} of ${filtered.length}`}
-        </p>
-        <div className="flex items-center gap-2">
-          <span className="hidden text-sm text-muted-foreground sm:inline">
-            Page {currentPage + 1} of {pageCount}
-          </span>
-          <Button
-            variant="outline"
-            size="icon-sm"
-            aria-label="Previous page"
-            disabled={currentPage === 0}
-            onClick={() => setPage(currentPage - 1)}
-          >
-            <ChevronLeft />
-          </Button>
-          <Button
-            variant="outline"
-            size="icon-sm"
-            aria-label="Next page"
-            disabled={currentPage >= pageCount - 1}
-            onClick={() => setPage(currentPage + 1)}
-          >
-            <ChevronRight />
-          </Button>
-        </div>
-      </CardFooter>
     </Card>
   )
 }

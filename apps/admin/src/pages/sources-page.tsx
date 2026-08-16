@@ -146,7 +146,7 @@ export function SourcesPage() {
                   <FieldLabel htmlFor="source-type">Type</FieldLabel>
                   <Select value={sourceType} onValueChange={(value) => setSourceType(value as SourceType)}>
                     <SelectTrigger id="source-type" className="w-full">
-                      <SelectValue />
+                      <SelectValue>{(value) => label(String(value))}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {types.map((type) => (
@@ -204,7 +204,7 @@ export function SourcesPage() {
               }}
             >
               <SelectTrigger size="sm" className="min-w-40" aria-label="Filter by source type">
-                <SelectValue placeholder="All source types" />
+                <SelectValue>{() => (typeFilter ? label(typeFilter) : 'All source types')}</SelectValue>
               </SelectTrigger>
               <SelectContent align="end">
                 <SelectItem value="all">All source types</SelectItem>
@@ -222,7 +222,7 @@ export function SourcesPage() {
               }}
             >
               <SelectTrigger size="sm" className="min-w-32" aria-label="Filter by source status">
-                <SelectValue placeholder="All statuses" />
+                <SelectValue>{() => (statusFilter ? label(statusFilter) : 'All statuses')}</SelectValue>
               </SelectTrigger>
               <SelectContent align="end">
                 <SelectItem value="all">All statuses</SelectItem>

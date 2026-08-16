@@ -230,7 +230,10 @@ export function createClient(baseUrl = "") {
       request<{ items: OverviewTrendPoint[] }>(
         url(`/api/admin/overview/trends?days=${days}`)
       ),
-    queue: () => request<{ items: QueueItem[] }>(url("/api/admin/queue")),
+    queue: (params: AdminTableQuery = {}) =>
+      request<PageResponse<QueueItem>>(
+        url(withQuery("/api/admin/queue", params))
+      ),
     quarantine: () =>
       request<{
         items: {
@@ -255,8 +258,10 @@ export function createClient(baseUrl = "") {
         method: "POST",
         body: JSON.stringify({ note })
       }),
-    complaints: () =>
-      request<{ items: AdminComplaint[] }>(url("/api/admin/complaints")),
+    complaints: (params: AdminTableQuery = {}) =>
+      request<PageResponse<AdminComplaint>>(
+        url(withQuery("/api/admin/complaints", params))
+      ),
     resolveComplaint: (id: string, status: string, resolution: string) =>
       request<{ ok: boolean }>(url(`/api/admin/complaints/${id}`), {
         method: "POST",
@@ -287,9 +292,9 @@ export function createClient(baseUrl = "") {
         method: "POST",
         body: JSON.stringify({ active })
       }),
-    adminEndpoints: (sourceId: string) =>
-      request<{ items: AdminEndpoint[] }>(
-        url(`/api/admin/sources/${sourceId}/endpoints`)
+    adminEndpoints: (sourceId: string, params: AdminTableQuery = {}) =>
+      request<PageResponse<AdminEndpoint>>(
+        url(withQuery(`/api/admin/sources/${sourceId}/endpoints`, params))
       ),
     createEndpoint: (
       sourceId: string,
@@ -307,9 +312,9 @@ export function createClient(baseUrl = "") {
         method: "POST",
         body: JSON.stringify(body)
       }),
-    adminRights: (sourceId: string) =>
-      request<{ items: AdminRights[] }>(
-        url(`/api/admin/sources/${sourceId}/rights`)
+    adminRights: (sourceId: string, params: AdminTableQuery = {}) =>
+      request<PageResponse<AdminRights>>(
+        url(withQuery(`/api/admin/sources/${sourceId}/rights`, params))
       ),
     createRights: (
       sourceId: string,
@@ -335,8 +340,10 @@ export function createClient(baseUrl = "") {
       request<{ ok: boolean }>(url(`/api/admin/endpoints/${endpointId}/run`), {
         method: "POST"
       }),
-    llmProviders: () =>
-      request<{ items: LlmProvider[] }>(url("/api/admin/llm/providers")),
+    llmProviders: (params: AdminTableQuery = {}) =>
+      request<PageResponse<LlmProvider>>(
+        url(withQuery("/api/admin/llm/providers", params))
+      ),
     upsertProvider: (body: {
       id: string;
       kind: string;
@@ -348,8 +355,10 @@ export function createClient(baseUrl = "") {
         method: "POST",
         body: JSON.stringify(body)
       }),
-    llmProfiles: () =>
-      request<{ items: LlmProfile[] }>(url("/api/admin/llm/profiles")),
+    llmProfiles: (params: AdminTableQuery = {}) =>
+      request<PageResponse<LlmProfile>>(
+        url(withQuery("/api/admin/llm/profiles", params))
+      ),
     upsertProfile: (body: LlmProfile) =>
       request<{ ok: boolean }>(url("/api/admin/llm/profiles"), {
         method: "POST",

@@ -14,8 +14,7 @@ const client = createClient()
 export function DashboardPage() {
   const queryClient = useQueryClient()
   const overview = useQuery({ queryKey: ['overview'], queryFn: () => client.overview() })
-  const queue = useQuery({ queryKey: ['queue'], queryFn: () => client.queue() })
-  const isRefreshing = overview.isFetching || queue.isFetching
+  const isRefreshing = overview.isFetching
 
   return (
     <section className="flex flex-col gap-6">
@@ -56,7 +55,7 @@ export function DashboardPage() {
 
       <SectionCards data={overview.data} isLoading={overview.isPending} />
       <ChartAreaInteractive />
-      <DataTable data={queue.data?.items ?? []} isLoading={queue.isPending} isError={queue.isError} />
+      <DataTable />
     </section>
   )
 }
