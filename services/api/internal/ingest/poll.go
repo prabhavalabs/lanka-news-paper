@@ -145,25 +145,27 @@ func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, endpoin
 		_, _ = poller.pool.Exec(ctx, `INSERT INTO quarantine_payloads (endpoint_id, reason, sample) VALUES ($1, $2, $3)`, endpointID, err.Error(), sample)
 		return poller.mark(ctx, endpointID, "failed", err.Error(), response.Header.Get("ETag"), response.Header.Get("Last-Modified"))
 	}
-	published := 0
+	newItems := 0
 	for _, item := range feed.Items {
-		if err := poller.storeItem(ctx, endpointID, sourceID, rightsID, mode, sourceActive, item); err != nil {
-			poller.logger.Error("item failed", "guid", item.GUID, "error", err)
-			continue
+		inserted, err := poller.storeItem(ctx, endpointID, sourceID, rightsID, mode, sourceActive, item)
+		if inserted {
+			newItems++
 		}
-		published++
+		if err != nil {
+			poller.logger.Error("item failed", "guid", item.GUID, "error", err)
+		}
 	}
 	_, _ = poller.pool.Exec(ctx, `
 		INSERT INTO ingestion_runs (endpoint_id, ended_at, status, http_status, item_count, new_item_count)
-		VALUES ($1, clock_timestamp(), 'ok', $2, $3, $3)
-	`, endpointID, response.StatusCode, published)
+		VALUES ($1, clock_timestamp(), 'ok', $2, $3, $4)
+	`, endpointID, response.StatusCode, len(feed.Items), newItems)
 	return poller.mark(ctx, endpointID, "healthy", "", response.Header.Get("ETag"), response.Header.Get("Last-Modified"))
 }
 
-func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, rightsID, mode string, sourceActive bool, item *gofeed.Item) error {
+func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, rightsID, mode string, sourceActive bool, item *gofeed.Item) (bool, error) {
 	headline := sinhala.NFC(item.Title)
 	if headline == "" || !sinhala.Predominant(headline) {
-		return nil
+		return false, nil
 	}
 	link := item.Link
 	if link == "" && len(item.Links) > 0 {
@@ -201,10 +203,10 @@ func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, right
 		LIMIT 1
 	`, sourceID, headline).Scan(&near)
 	if err == nil {
-		return nil
+		return false, nil
 	}
 	if err != pgx.ErrNoRows {
-		return err
+		return false, err
 	}
 	status := "held"
 	if sourceActive && (mode == "discovery_only" || mode == "licensed_excerpt" || mode == "licensed_media" || mode == "full_syndication") {
@@ -233,21 +235,21 @@ func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, right
 	`, sourceID, endpointID, rightsID, itemID, link, canonical, headline, item.Title, item.Description, fingerprint, publishedAt, status, publisherCat, confidence, model, author, slug).Scan(&articleID, &inserted)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
 	if !inserted {
 		_, _ = poller.pool.Exec(ctx, `
 			INSERT INTO article_versions (article_id, version, changed_fields)
 			SELECT $1, COALESCE((SELECT max(version) FROM article_versions WHERE article_id = $1), 0) + 1, '{"headline":true}'::jsonb
 		`, articleID)
-		return nil
+		return false, nil
 	}
 	if status == "published" && poller.clusters != nil {
-		return poller.clusters.Attach(ctx, articleID.String(), headline, publishedAt)
+		return true, poller.clusters.Attach(ctx, articleID.String(), headline, publishedAt)
 	}
-	return nil
+	return true, nil
 }
 
 func (poller *Poller) mark(ctx context.Context, endpointID, state, detail, etag, lastModified string) error {
