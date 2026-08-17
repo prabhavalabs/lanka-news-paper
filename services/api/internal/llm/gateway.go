@@ -23,6 +23,7 @@ type Request struct {
 	Input            string
 	JSONSchema       map[string]any
 	DisableReasoning bool
+	MaxTokens        int
 }
 
 type Response struct {
@@ -126,6 +127,9 @@ func (gateway *Gateway) callProvider(ctx context.Context, kind, baseURL, keyRef,
 	}
 	if request.DisableReasoning {
 		payloadValue["reasoning_effort"] = "none"
+	}
+	if request.MaxTokens > 0 {
+		payloadValue["max_tokens"] = request.MaxTokens
 	}
 	payload, err := json.Marshal(payloadValue)
 	if err != nil {

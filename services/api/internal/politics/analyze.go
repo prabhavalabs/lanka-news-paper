@@ -111,7 +111,7 @@ func (store *Store) Backfill(ctx context.Context, limit int) error {
 			return err
 		}
 		response, err := store.model.Complete(ctx, llm.Request{
-			Task: task, System: systemPrompt, Input: string(input), JSONSchema: schema, DisableReasoning: true,
+			Task: task, System: systemPrompt, Input: string(input), JSONSchema: schema, DisableReasoning: true, MaxTokens: 512,
 		})
 		if err != nil {
 			failures = append(failures, fmt.Errorf("analyze article %s: %w", article.id, err))
