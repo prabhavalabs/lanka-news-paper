@@ -127,6 +127,49 @@ export type OverviewTrendPoint = {
   received: number;
 };
 
+export type KnowledgeArticle = {
+  id: string;
+  headline: string;
+  source_id: string;
+  source: string;
+  source_icon: string;
+  original_url: string;
+  published_at: string;
+};
+
+export type KnowledgeEvent = {
+  id: string;
+  title: string;
+  category: string;
+  category_name_si: string;
+  confidence: number;
+  is_breaking: boolean;
+  locked: boolean;
+  algorithm_version: string;
+  first_seen_at: string;
+  last_update_at: string;
+  articles: KnowledgeArticle[];
+};
+
+export type KnowledgeGraph = {
+  generated_at: string;
+  days: number;
+  summary: {
+    articles: number;
+    events: number;
+    multi_source_events: number;
+    sources: number;
+  };
+  categories: {
+    slug: string;
+    name_si: string;
+    name_en: string;
+    articles: number;
+    events: number;
+  }[];
+  events: KnowledgeEvent[];
+};
+
 export type QueueItem = {
   id: string;
   headline: string;
@@ -247,6 +290,10 @@ export function createClient(baseUrl = "") {
     overviewTrends: (days: 7 | 30 | 90 = 90) =>
       request<{ items: OverviewTrendPoint[] }>(
         url(`/api/admin/overview/trends?days=${days}`)
+      ),
+    knowledgeGraph: (days: 1 | 7 | 30 = 1, category = "") =>
+      request<KnowledgeGraph>(
+        url(withQuery("/api/admin/knowledge-graph", { days, category }))
       ),
     queue: (params: AdminTableQuery = {}) =>
       request<PageResponse<QueueItem>>(

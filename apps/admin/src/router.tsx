@@ -3,6 +3,7 @@ import { createBrowserRouter } from 'react-router'
 import { ComplaintsPage } from './pages/complaints-page'
 import { DashboardPage } from './pages/dashboard-page'
 import { LoginPage } from './pages/login-page'
+import { KnowledgeGraphPage } from './pages/knowledge-graph-page'
 import { QueuePage } from './pages/queue-page'
 import { RoutingPage } from './pages/routing-page'
 import { ShellLayout } from './pages/shell-layout'
@@ -18,6 +19,7 @@ export const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: 'sources', element: <SourcesPage /> },
       { path: 'sources/:id', element: <SourceDetailPage /> },
+      { path: 'knowledge', element: <KnowledgeGraphPage /> },
       { path: 'queue', element: <QueuePage /> },
       { path: 'complaints', element: <ComplaintsPage /> },
       { path: 'routing', element: <RoutingPage /> },
