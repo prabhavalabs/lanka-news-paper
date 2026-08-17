@@ -690,7 +690,7 @@ function PoliticalSpectrum({ data }: { data?: KnowledgeGraph }) {
                     )}
                   </div>
                   {!source.qualified ? (
-                    <p className="text-[10px] text-muted-foreground">{source.mentioned_articles} relevant events; insufficient confident evidence</p>
+                    <p className="text-[10px] text-muted-foreground">{source.relevant_events} relevant events; insufficient confident evidence</p>
                   ) : null}
                 </div>
               )) : (

@@ -205,7 +205,7 @@ export type KnowledgeGraph = {
       source_icon: string;
       economic_frame: number;
       confidence: number;
-      mentioned_articles: number;
+      relevant_events: number;
       scored_articles: number;
       qualified: boolean;
     }[];

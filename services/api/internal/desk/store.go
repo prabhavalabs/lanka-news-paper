@@ -111,14 +111,14 @@ type PoliticalParty struct {
 }
 
 type SourcePoliticalAnalysis struct {
-	SourceID          string  `json:"source_id"`
-	Source            string  `json:"source"`
-	SourceIcon        string  `json:"source_icon"`
-	EconomicFrame     float64 `json:"economic_frame"`
-	Confidence        float64 `json:"confidence"`
-	MentionedArticles int     `json:"mentioned_articles"`
-	ScoredArticles    int     `json:"scored_articles"`
-	Qualified         bool    `json:"qualified"`
+	SourceID       string  `json:"source_id"`
+	Source         string  `json:"source"`
+	SourceIcon     string  `json:"source_icon"`
+	EconomicFrame  float64 `json:"economic_frame"`
+	Confidence     float64 `json:"confidence"`
+	RelevantEvents int     `json:"relevant_events"`
+	ScoredArticles int     `json:"scored_articles"`
+	Qualified      bool    `json:"qualified"`
 }
 
 type PoliticalIntelligence struct {
@@ -379,7 +379,7 @@ func (store *Store) politicalIntelligence(ctx context.Context, start, end time.T
 			FROM scoped
 			GROUP BY source_id, sample_id
 		), aggregate AS (
-			SELECT source_id, count(*) mentioned_articles,
+			SELECT source_id, count(*) relevant_events,
 			       count(*) FILTER (WHERE confidence >= 0.6) scored_articles,
 			       COALESCE(
 			         sum(economic_frame * confidence) FILTER (WHERE confidence >= 0.6)
@@ -391,7 +391,7 @@ func (store *Store) politicalIntelligence(ctx context.Context, start, end time.T
 		SELECT s.id::text, s.name, COALESCE(s.icon_url, ''),
 		       (aggregate.raw_frame * aggregate.scored_articles / (aggregate.scored_articles + 5.0))::float8,
 		       (aggregate.raw_confidence * aggregate.scored_articles / (aggregate.scored_articles + 5.0))::float8,
-		       aggregate.mentioned_articles, aggregate.scored_articles,
+		       aggregate.relevant_events, aggregate.scored_articles,
 		       aggregate.scored_articles >= $5
 		FROM aggregate JOIN sources s ON s.id = aggregate.source_id
 		ORDER BY aggregate.scored_articles DESC, s.name
@@ -404,7 +404,7 @@ func (store *Store) politicalIntelligence(ctx context.Context, start, end time.T
 		var item SourcePoliticalAnalysis
 		if err := rows.Scan(
 			&item.SourceID, &item.Source, &item.SourceIcon, &item.EconomicFrame,
-			&item.Confidence, &item.MentionedArticles, &item.ScoredArticles, &item.Qualified,
+			&item.Confidence, &item.RelevantEvents, &item.ScoredArticles, &item.Qualified,
 		); err != nil {
 			return PoliticalIntelligence{}, err
 		}
