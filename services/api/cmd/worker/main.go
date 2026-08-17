@@ -15,6 +15,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/jobs"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 )
 
@@ -49,7 +50,7 @@ func run(logger *slog.Logger) error {
 	}
 	news := publish.NewStore(pool)
 	poller := ingest.NewPoller(pool, logger, cluster.NewStore(pool), llm.NewGateway(pool))
-	client, err := jobs.NewClient(pool, logger, poller, news)
+	client, err := jobs.NewClient(pool, logger, poller, politics.NewStore(pool), news)
 	if err != nil {
 		return err
 	}

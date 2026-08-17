@@ -135,6 +135,17 @@ export type KnowledgeArticle = {
   source_icon: string;
   original_url: string;
   published_at: string;
+  political?: {
+    model: string;
+    economic_frame: number;
+    confidence: number;
+    mentions: {
+      party_slug: string;
+      stance: number;
+      confidence: number;
+      terms: string[];
+    }[];
+  };
 };
 
 export type KnowledgeEvent = {
@@ -168,6 +179,31 @@ export type KnowledgeGraph = {
     events: number;
   }[];
   events: KnowledgeEvent[];
+  political: {
+    axis: string;
+    model: string;
+    minimum_sample: number;
+    parties: {
+      slug: string;
+      short_name: string;
+      name_en: string;
+      name_si: string;
+      economic_position: number;
+      confidence: number;
+      rationale: string;
+      evidence_urls: string[];
+    }[];
+    sources: {
+      source_id: string;
+      source: string;
+      source_icon: string;
+      economic_frame: number;
+      confidence: number;
+      mentioned_articles: number;
+      scored_articles: number;
+      qualified: boolean;
+    }[];
+  };
 };
 
 export type QueueItem = {

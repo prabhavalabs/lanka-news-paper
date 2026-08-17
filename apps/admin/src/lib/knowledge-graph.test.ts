@@ -10,6 +10,7 @@ test('lays out category, event, and source relationships', () => {
     generated_at: '2026-08-17T12:00:00Z',
     days: 1,
     summary: { articles: 2, events: 1, multi_source_events: 1, sources: 2 },
+    political: { axis: 'Economic policy', model: 'rules-v1', minimum_sample: 5, parties: [], sources: [] },
     categories: [{ slug: 'politics', name_si: 'දේශපාලන', name_en: 'Politics', articles: 2, events: 1 }],
     events: [{
       id: 'event-1', title: 'Shared event', category: 'politics', category_name_si: 'දේශපාලන',

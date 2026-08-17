@@ -13,6 +13,7 @@ import (
 	"github.com/riverqueue/river/rivermigrate"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 )
 
@@ -22,13 +23,19 @@ func (PollArgs) Kind() string { return "ingest.poll" }
 
 type PollWorker struct {
 	river.WorkerDefaults[PollArgs]
-	Poller *ingest.Poller
-	News   *publish.Store
+	Poller   *ingest.Poller
+	Politics *politics.Store
+	News     *publish.Store
 }
 
 func (worker *PollWorker) Work(ctx context.Context, _ *river.Job[PollArgs]) error {
 	if worker.Poller != nil {
 		if err := worker.Poller.PollAll(ctx); err != nil {
+			return err
+		}
+	}
+	if worker.Politics != nil {
+		if err := worker.Politics.Backfill(ctx, 1000); err != nil {
 			return err
 		}
 	}
@@ -65,9 +72,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
-func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, news *publish.Store) (*river.Client[pgx.Tx], error) {
+func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, politicsStore *politics.Store, news *publish.Store) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
-	river.AddWorker(workers, &PollWorker{Poller: poller, News: news})
+	river.AddWorker(workers, &PollWorker{Poller: poller, Politics: politicsStore, News: news})
 	river.AddWorker(workers, &BriefWorker{News: news})
 
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{

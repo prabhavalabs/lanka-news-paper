@@ -2,6 +2,7 @@ package desk
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -67,13 +68,58 @@ type KnowledgeCategory struct {
 }
 
 type KnowledgeArticle struct {
-	ID          string    `json:"id"`
-	Headline    string    `json:"headline"`
-	SourceID    string    `json:"source_id"`
-	Source      string    `json:"source"`
-	SourceIcon  string    `json:"source_icon"`
-	OriginalURL string    `json:"original_url"`
-	PublishedAt time.Time `json:"published_at"`
+	ID          string                    `json:"id"`
+	Headline    string                    `json:"headline"`
+	SourceID    string                    `json:"source_id"`
+	Source      string                    `json:"source"`
+	SourceIcon  string                    `json:"source_icon"`
+	OriginalURL string                    `json:"original_url"`
+	PublishedAt time.Time                 `json:"published_at"`
+	Political   *ArticlePoliticalAnalysis `json:"political,omitempty"`
+}
+
+type PoliticalMention struct {
+	PartySlug  string   `json:"party_slug"`
+	Stance     float64  `json:"stance"`
+	Confidence float64  `json:"confidence"`
+	Terms      []string `json:"terms"`
+}
+
+type ArticlePoliticalAnalysis struct {
+	Model         string             `json:"model"`
+	EconomicFrame float64            `json:"economic_frame"`
+	Confidence    float64            `json:"confidence"`
+	Mentions      []PoliticalMention `json:"mentions"`
+}
+
+type PoliticalParty struct {
+	Slug             string   `json:"slug"`
+	ShortName        string   `json:"short_name"`
+	NameEN           string   `json:"name_en"`
+	NameSI           string   `json:"name_si"`
+	EconomicPosition float64  `json:"economic_position"`
+	Confidence       float64  `json:"confidence"`
+	Rationale        string   `json:"rationale"`
+	EvidenceURLs     []string `json:"evidence_urls"`
+}
+
+type SourcePoliticalAnalysis struct {
+	SourceID          string  `json:"source_id"`
+	Source            string  `json:"source"`
+	SourceIcon        string  `json:"source_icon"`
+	EconomicFrame     float64 `json:"economic_frame"`
+	Confidence        float64 `json:"confidence"`
+	MentionedArticles int     `json:"mentioned_articles"`
+	ScoredArticles    int     `json:"scored_articles"`
+	Qualified         bool    `json:"qualified"`
+}
+
+type PoliticalIntelligence struct {
+	Axis          string                    `json:"axis"`
+	Model         string                    `json:"model"`
+	MinimumSample int                       `json:"minimum_sample"`
+	Parties       []PoliticalParty          `json:"parties"`
+	Sources       []SourcePoliticalAnalysis `json:"sources"`
 }
 
 type KnowledgeEvent struct {
@@ -91,11 +137,12 @@ type KnowledgeEvent struct {
 }
 
 type KnowledgeGraph struct {
-	GeneratedAt time.Time           `json:"generated_at"`
-	Days        int                 `json:"days"`
-	Summary     KnowledgeSummary    `json:"summary"`
-	Categories  []KnowledgeCategory `json:"categories"`
-	Events      []KnowledgeEvent    `json:"events"`
+	GeneratedAt time.Time             `json:"generated_at"`
+	Days        int                   `json:"days"`
+	Summary     KnowledgeSummary      `json:"summary"`
+	Categories  []KnowledgeCategory   `json:"categories"`
+	Events      []KnowledgeEvent      `json:"events"`
+	Political   PoliticalIntelligence `json:"political"`
 }
 
 func (store *Store) KnowledgeGraph(ctx context.Context, days int, category string) (KnowledgeGraph, error) {
@@ -178,12 +225,14 @@ func (store *Store) KnowledgeGraph(ctx context.Context, days int, category strin
 		       COALESCE(ec.confidence, 0), ec.is_breaking, ec.locked,
 		       ec.algorithm_version, ec.first_seen_at, ec.last_update_at,
 		       a.id::text, a.headline, s.id::text, s.name, COALESCE(s.icon_url, ''),
-		       a.original_url, a.published_at
+		       a.original_url, a.published_at,
+		       analysis.model, analysis.economic_frame, analysis.confidence, analysis.mentions
 		FROM scope
 		JOIN event_clusters ec ON ec.id = scope.event_id
 		LEFT JOIN categories c ON c.id = ec.category_id
 		JOIN articles a ON a.event_id = ec.id
 		JOIN sources s ON s.id = a.source_id
+		LEFT JOIN article_political_analysis analysis ON analysis.article_id = a.id
 		WHERE a.public_status = 'published'
 		  AND a.published_at >= clock_timestamp() - make_interval(days => $1)
 		ORDER BY scope.latest DESC, a.published_at DESC
@@ -196,14 +245,30 @@ func (store *Store) KnowledgeGraph(ctx context.Context, days int, category strin
 	for rows.Next() {
 		var event KnowledgeEvent
 		var article KnowledgeArticle
+		var politicalModel *string
+		var economicFrame, politicalConfidence *float64
+		var politicalMentions []byte
 		if err := rows.Scan(
 			&event.ID, &event.Title, &event.Category, &event.CategoryNameSI,
 			&event.Confidence, &event.IsBreaking, &event.Locked,
 			&event.AlgorithmVersion, &event.FirstSeenAt, &event.LastUpdateAt,
 			&article.ID, &article.Headline, &article.SourceID, &article.Source,
 			&article.SourceIcon, &article.OriginalURL, &article.PublishedAt,
+			&politicalModel, &economicFrame, &politicalConfidence, &politicalMentions,
 		); err != nil {
 			return KnowledgeGraph{}, err
+		}
+		if politicalModel != nil && economicFrame != nil && politicalConfidence != nil {
+			analysis := ArticlePoliticalAnalysis{
+				Model: *politicalModel, EconomicFrame: *economicFrame,
+				Confidence: *politicalConfidence, Mentions: make([]PoliticalMention, 0),
+			}
+			if err := json.Unmarshal(politicalMentions, &analysis.Mentions); err != nil {
+				return KnowledgeGraph{}, fmt.Errorf("decode political analysis for article %s: %w", article.ID, err)
+			}
+			if len(analysis.Mentions) > 0 {
+				article.Political = &analysis
+			}
 		}
 		position, ok := index[event.ID]
 		if !ok {
@@ -217,7 +282,94 @@ func (store *Store) KnowledgeGraph(ctx context.Context, days int, category strin
 	if err := rows.Err(); err != nil {
 		return KnowledgeGraph{}, err
 	}
+	rows.Close()
+	political, err := store.politicalIntelligence(ctx, days, category)
+	if err != nil {
+		return KnowledgeGraph{}, err
+	}
+	result.Political = political
 	return result, nil
+}
+
+func (store *Store) politicalIntelligence(ctx context.Context, days int, category string) (PoliticalIntelligence, error) {
+	const minimumSample = 5
+	result := PoliticalIntelligence{
+		Axis: "Economic policy: state-led to market-led", Model: "political-framing-rules-v1",
+		MinimumSample: minimumSample, Parties: make([]PoliticalParty, 0), Sources: make([]SourcePoliticalAnalysis, 0),
+	}
+	rows, err := store.pool.Query(ctx, `
+		SELECT slug, short_name, name_en, name_si, economic_position, confidence, rationale, evidence_urls
+		FROM political_parties WHERE active ORDER BY economic_position, short_name
+	`)
+	if err != nil {
+		return PoliticalIntelligence{}, fmt.Errorf("list political spectrum: %w", err)
+	}
+	for rows.Next() {
+		var item PoliticalParty
+		var evidence []byte
+		if err := rows.Scan(
+			&item.Slug, &item.ShortName, &item.NameEN, &item.NameSI,
+			&item.EconomicPosition, &item.Confidence, &item.Rationale, &evidence,
+		); err != nil {
+			rows.Close()
+			return PoliticalIntelligence{}, err
+		}
+		if err := json.Unmarshal(evidence, &item.EvidenceURLs); err != nil {
+			rows.Close()
+			return PoliticalIntelligence{}, fmt.Errorf("decode political evidence for %s: %w", item.Slug, err)
+		}
+		result.Parties = append(result.Parties, item)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return PoliticalIntelligence{}, err
+	}
+
+	rows, err = store.pool.Query(ctx, `
+		WITH scoped AS (
+			SELECT a.source_id, analysis.economic_frame::float8 economic_frame,
+			       analysis.confidence::float8 confidence
+			FROM articles a
+			LEFT JOIN categories c ON c.id = a.category_id
+			JOIN article_political_analysis analysis ON analysis.article_id = a.id
+			WHERE a.public_status = 'published'
+			  AND a.published_at >= clock_timestamp() - make_interval(days => $1)
+			  AND ($2 = '' OR c.slug = $2)
+			  AND jsonb_array_length(analysis.mentions) > 0
+		), aggregate AS (
+			SELECT source_id, count(*) mentioned_articles,
+			       count(*) FILTER (WHERE confidence >= 0.45) scored_articles,
+			       COALESCE(
+			         sum(economic_frame * confidence) FILTER (WHERE confidence >= 0.45)
+			         / NULLIF(sum(confidence) FILTER (WHERE confidence >= 0.45), 0), 0
+			       ) raw_frame,
+			       COALESCE(avg(confidence) FILTER (WHERE confidence >= 0.45), 0) raw_confidence
+			FROM scoped GROUP BY source_id
+		)
+		SELECT s.id::text, s.name, COALESCE(s.icon_url, ''),
+		       (aggregate.raw_frame * aggregate.scored_articles / (aggregate.scored_articles + 5.0))::float8,
+		       (aggregate.raw_confidence * aggregate.scored_articles / (aggregate.scored_articles + 5.0))::float8,
+		       aggregate.mentioned_articles, aggregate.scored_articles,
+		       aggregate.scored_articles >= $3
+		FROM aggregate JOIN sources s ON s.id = aggregate.source_id
+		ORDER BY aggregate.scored_articles DESC, s.name
+	`, days, category, minimumSample)
+	if err != nil {
+		return PoliticalIntelligence{}, fmt.Errorf("aggregate source political framing: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item SourcePoliticalAnalysis
+		if err := rows.Scan(
+			&item.SourceID, &item.Source, &item.SourceIcon, &item.EconomicFrame,
+			&item.Confidence, &item.MentionedArticles, &item.ScoredArticles, &item.Qualified,
+		); err != nil {
+			return PoliticalIntelligence{}, err
+		}
+		result.Sources = append(result.Sources, item)
+	}
+	return result, rows.Err()
 }
 
 // Trends returns publishing activity for the requested number of days.
