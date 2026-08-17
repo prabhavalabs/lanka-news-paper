@@ -66,7 +66,7 @@ func (worker *NarrationWorker) Work(ctx context.Context, _ *river.Job[NarrationA
 	if worker.Politics == nil {
 		return nil
 	}
-	return worker.Politics.Backfill(ctx, 10)
+	return worker.Politics.Backfill(ctx, 20)
 }
 
 func (worker *NarrationWorker) Timeout(*river.Job[NarrationArgs]) time.Duration {
