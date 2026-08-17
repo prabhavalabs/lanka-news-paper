@@ -10,6 +10,8 @@ import {
   PlusIcon,
   RadioTowerIcon,
   RotateCcwIcon,
+  ScaleIcon,
+  ShieldCheckIcon,
 } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
@@ -42,6 +44,7 @@ import {
 const client = createClient()
 const dayOptions = [1, 7, 30] as const
 const dateFormatter = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' })
+type PoliticalParty = KnowledgeGraph['political']['parties'][number]
 
 export function KnowledgeGraphPage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -115,12 +118,12 @@ export function KnowledgeGraphPage() {
       <SummaryCards data={graph.data} loading={graph.isPending} />
 
       <Card className="gap-0 py-0 shadow-sm">
-        <CardHeader className="border-b py-6">
+        <CardHeader className="grid-cols-1! border-b py-6 sm:grid-cols-[1fr_auto]!">
           <CardTitle>Live event map</CardTitle>
           <CardDescription>
             Categories feed events; events connect to every publisher reporting the story.
           </CardDescription>
-          <CardAction className="flex items-center gap-3 text-xs text-muted-foreground">
+          <CardAction className="col-start-1 row-span-1 row-start-3 mt-2 flex items-center gap-3 justify-self-start text-xs text-muted-foreground sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:justify-self-end">
             <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-primary" />Multi-source</span>
             <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-muted-foreground/50" />Single report</span>
           </CardAction>
@@ -142,10 +145,11 @@ export function KnowledgeGraphPage() {
               <EventGraph data={graph.data} selectedID={selected?.id ?? ''} onSelect={setSelectedID} />
             ) : null}
           </div>
-          <EventArticleRail event={selected} />
+          <EventArticleRail event={selected} parties={graph.data?.political.parties ?? []} />
         </CardContent>
       </Card>
 
+      <PoliticalSpectrum data={graph.data} />
       <CategoryBreakdown data={graph.data} />
     </section>
   )
@@ -339,8 +343,9 @@ function EventGraph({
   )
 }
 
-function EventArticleRail({ event }: { event?: KnowledgeEvent }) {
+function EventArticleRail({ event, parties }: { event?: KnowledgeEvent; parties: PoliticalParty[] }) {
   const sourceCount = new Set(event?.articles.map((article) => article.source_id)).size
+  const partyNames = new Map(parties.map((party) => [party.slug, party.short_name]))
   return (
     <section className="border-t px-6 py-5" aria-label="Articles reporting the selected event">
       {!event ? <p className="text-sm text-muted-foreground">Select an event node to inspect it.</p> : (
@@ -375,6 +380,24 @@ function EventArticleRail({ event }: { event?: KnowledgeEvent }) {
                     <span className="mt-1 line-clamp-3 block text-sm font-medium leading-snug">{article.headline}</span>
                   </span>
                 </span>
+                {article.political ? (
+                  <span className="mt-3 flex flex-wrap items-center gap-1.5">
+                    {article.political.mentions.map((mention) => (
+                      <Badge
+                        key={mention.party_slug}
+                        variant="outline"
+                        title={`${partyNames.get(mention.party_slug) ?? mention.party_slug}: ${stanceLabel(mention.stance)}`}
+                      >
+                        {partyNames.get(mention.party_slug) ?? mention.party_slug.toUpperCase()}
+                      </Badge>
+                    ))}
+                    <span className="text-[11px] text-muted-foreground">
+                      {article.political.confidence >= 0.45
+                        ? frameLabel(article.political.economic_frame)
+                        : 'Framing unclear'}
+                    </span>
+                  </span>
+                ) : null}
                 <span className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
                   <span>{formatDate(article.published_at)}</span>
                   <ExternalLinkIcon className="size-3.5 group-hover:text-foreground" />
@@ -385,6 +408,115 @@ function EventArticleRail({ event }: { event?: KnowledgeEvent }) {
         </div>
       )}
     </section>
+  )
+}
+
+function PoliticalSpectrum({ data }: { data?: KnowledgeGraph }) {
+  const political = data?.political
+  const relatedArticles = data?.events.reduce(
+    (total, event) => total + event.articles.filter((article) => article.political).length,
+    0,
+  ) ?? 0
+  return (
+    <Card className="gap-0 py-0 shadow-sm">
+      <CardHeader className="grid-cols-1! border-b py-6 sm:grid-cols-[1fr_auto]!">
+        <CardTitle>Political framing monitor</CardTitle>
+        <CardDescription>
+          Compare an evidence-backed party baseline with how current reporting frames those parties.
+        </CardDescription>
+        <CardAction className="col-start-1 row-span-1 row-start-3 mt-2 flex items-center gap-2 justify-self-start sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:justify-self-end">
+          <Badge variant="outline" className="gap-1.5"><ScaleIcon />Economic axis</Badge>
+          <Badge variant="secondary">{relatedArticles} related reports</Badge>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="space-y-6 py-6">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+          <section className="rounded-2xl border bg-muted/20 p-5" aria-labelledby="party-spectrum-title">
+            <div className="space-y-1">
+              <h2 id="party-spectrum-title" className="font-heading font-semibold">Sri Lankan party baseline</h2>
+              <p className="text-xs text-muted-foreground">Provisional economic-policy position · hover or focus a party for its rationale</p>
+            </div>
+            <div className="relative mt-5 h-44" aria-label="Political parties arranged from far left to right">
+              <div className="absolute top-[78px] right-[5%] left-[5%] h-px bg-border" />
+              <div className="absolute top-[73px] left-1/2 h-3 w-px bg-foreground/50" />
+              {political?.parties.map((party, index) => (
+                <button
+                  key={party.slug}
+                  type="button"
+                  className="group absolute -translate-x-1/2 text-center outline-none"
+                  style={{
+                    left: spectrumPosition(party.economic_position),
+                    top: index % 2 === 0 ? 30 : 82,
+                  }}
+                  title={`${party.name_en}: ${party.rationale}`}
+                  aria-label={`${party.name_en}, ${spectrumPositionLabel(party.economic_position)}. ${party.rationale}`}
+                >
+                  <span className={index % 2 === 0 ? 'mb-2 block' : 'mt-2 block'}>
+                    <span className="inline-flex rounded-full border bg-background px-2 py-1 text-xs font-semibold shadow-xs group-focus-visible:ring-2 group-focus-visible:ring-ring">
+                      {party.short_name}
+                    </span>
+                    <span className="mt-1 block text-[10px] tabular-nums text-muted-foreground">{party.economic_position.toFixed(2)}</span>
+                  </span>
+                  <span className={index % 2 === 0 ? 'absolute top-[45px] left-1/2 h-3 w-px bg-primary' : 'absolute -top-[9px] left-1/2 h-3 w-px bg-primary'} />
+                  <span className={index % 2 === 0 ? 'absolute top-[54px] left-1/2 size-2 -translate-x-1/2 rounded-full bg-primary' : 'absolute -top-[14px] left-1/2 size-2 -translate-x-1/2 rounded-full bg-primary'} />
+                </button>
+              ))}
+              <div className="absolute right-[3%] bottom-0 left-[3%] flex justify-between text-[11px] text-muted-foreground">
+                <span>Far left · state-led</span><span>Center</span><span>Right · market-led</span>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border p-5" aria-labelledby="source-framing-title">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <h2 id="source-framing-title" className="font-heading font-semibold">Outlet framing tendency</h2>
+                <p className="text-xs text-muted-foreground">Only shown after {political?.minimum_sample ?? 5} scored reports</p>
+              </div>
+              <Badge variant="outline">Shrunk average</Badge>
+            </div>
+            <div className="mt-5 space-y-4">
+              {political?.sources.length ? political.sources.slice(0, 8).map((source) => (
+                <div key={source.source_id} className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <SourceAvatar name={source.source} iconUrl={source.source_icon} className="size-7" />
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium">{source.source}</span>
+                    <span className="text-[11px] tabular-nums text-muted-foreground">
+                      {source.qualified ? frameLabel(source.economic_frame) : `${source.scored_articles}/${political.minimum_sample} scored`}
+                    </span>
+                  </div>
+                  <div className="relative h-1.5 rounded-full bg-muted">
+                    <span className="absolute top-[-2px] left-1/2 h-2.5 w-px bg-border" />
+                    {source.qualified ? (
+                      <span
+                        className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-primary shadow-sm"
+                        style={{ left: spectrumPosition(source.economic_frame) }}
+                      />
+                    ) : (
+                      <span
+                        className="block h-full rounded-full bg-muted-foreground/25"
+                        style={{ width: `${Math.min(100, (source.scored_articles / political.minimum_sample) * 100)}%` }}
+                      />
+                    )}
+                  </div>
+                  {!source.qualified ? (
+                    <p className="text-[10px] text-muted-foreground">{source.mentioned_articles} party-related reports; insufficient directional evidence</p>
+                  ) : null}
+                </div>
+              )) : (
+                <p className="rounded-xl bg-muted/50 p-4 text-sm text-muted-foreground">No party-related reporting in this window yet.</p>
+              )}
+            </div>
+          </section>
+        </div>
+
+        <div className="grid gap-3 rounded-2xl border bg-primary/[0.035] p-4 text-xs text-muted-foreground md:grid-cols-3">
+          <p><strong className="text-foreground">Party position</strong><br />A curated economic-policy baseline with evidence and confidence—not a universal truth score.</p>
+          <p><strong className="text-foreground">Article framing</strong><br />Favorable or critical language near a party mention; mentioning a party alone does not imply bias.</p>
+          <p className="flex gap-2"><ShieldCheckIcon className="mt-0.5 size-4 shrink-0 text-primary" /><span><strong className="text-foreground">Outlet safeguard</strong><br />Low samples remain “insufficient” and the aggregate is pulled toward neutral to avoid premature labels.</span></p>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -419,4 +551,28 @@ function formatDate(value: string) {
 
 function truncate(value: string, length: number) {
   return value.length > length ? `${value.slice(0, length - 1)}…` : value
+}
+
+function spectrumPosition(value: number) {
+  return `${5 + ((value + 1) / 2) * 90}%`
+}
+
+function spectrumPositionLabel(value: number) {
+  if (value <= -0.65) return 'far left'
+  if (value < -0.15) return 'center-left'
+  if (value <= 0.15) return 'center'
+  if (value < 0.65) return 'center-right'
+  return 'right'
+}
+
+function stanceLabel(value: number) {
+  if (value > 0.2) return 'favorable framing'
+  if (value < -0.2) return 'critical framing'
+  return 'neutral or unclear framing'
+}
+
+function frameLabel(value: number) {
+  if (value < -0.15) return 'Left-framed'
+  if (value > 0.15) return 'Right-framed'
+  return 'Neutral / mixed'
 }
