@@ -51,6 +51,175 @@ type TrendPoint struct {
 	Received  int    `json:"received"`
 }
 
+type KnowledgeSummary struct {
+	Articles          int `json:"articles"`
+	Events            int `json:"events"`
+	MultiSourceEvents int `json:"multi_source_events"`
+	Sources           int `json:"sources"`
+}
+
+type KnowledgeCategory struct {
+	Slug     string `json:"slug"`
+	NameSI   string `json:"name_si"`
+	NameEN   string `json:"name_en"`
+	Articles int    `json:"articles"`
+	Events   int    `json:"events"`
+}
+
+type KnowledgeArticle struct {
+	ID          string    `json:"id"`
+	Headline    string    `json:"headline"`
+	SourceID    string    `json:"source_id"`
+	Source      string    `json:"source"`
+	SourceIcon  string    `json:"source_icon"`
+	OriginalURL string    `json:"original_url"`
+	PublishedAt time.Time `json:"published_at"`
+}
+
+type KnowledgeEvent struct {
+	ID               string             `json:"id"`
+	Title            string             `json:"title"`
+	Category         string             `json:"category"`
+	CategoryNameSI   string             `json:"category_name_si"`
+	Confidence       float64            `json:"confidence"`
+	IsBreaking       bool               `json:"is_breaking"`
+	Locked           bool               `json:"locked"`
+	AlgorithmVersion string             `json:"algorithm_version"`
+	FirstSeenAt      time.Time          `json:"first_seen_at"`
+	LastUpdateAt     time.Time          `json:"last_update_at"`
+	Articles         []KnowledgeArticle `json:"articles"`
+}
+
+type KnowledgeGraph struct {
+	GeneratedAt time.Time           `json:"generated_at"`
+	Days        int                 `json:"days"`
+	Summary     KnowledgeSummary    `json:"summary"`
+	Categories  []KnowledgeCategory `json:"categories"`
+	Events      []KnowledgeEvent    `json:"events"`
+}
+
+func (store *Store) KnowledgeGraph(ctx context.Context, days int, category string) (KnowledgeGraph, error) {
+	result := KnowledgeGraph{
+		GeneratedAt: time.Now().UTC(),
+		Days:        days,
+		Categories:  make([]KnowledgeCategory, 0),
+		Events:      make([]KnowledgeEvent, 0),
+	}
+	if err := store.pool.QueryRow(ctx, `
+		WITH scoped AS (
+			SELECT a.event_id, a.source_id
+			FROM articles a
+			LEFT JOIN categories c ON c.id = a.category_id
+			WHERE a.public_status = 'published'
+			  AND a.event_id IS NOT NULL
+			  AND a.published_at >= clock_timestamp() - make_interval(days => $1)
+			  AND ($2 = '' OR c.slug = $2)
+		), events AS (
+			SELECT event_id, count(DISTINCT source_id) source_count
+			FROM scoped GROUP BY event_id
+		)
+		SELECT (SELECT count(*) FROM scoped),
+		       count(*),
+		       count(*) FILTER (WHERE source_count > 1),
+		       (SELECT count(DISTINCT source_id) FROM scoped)
+		FROM events
+	`, days, category).Scan(
+		&result.Summary.Articles,
+		&result.Summary.Events,
+		&result.Summary.MultiSourceEvents,
+		&result.Summary.Sources,
+	); err != nil {
+		return KnowledgeGraph{}, fmt.Errorf("summarize knowledge graph: %w", err)
+	}
+
+	categoryRows, err := store.pool.Query(ctx, `
+		SELECT c.slug, c.name_si, c.name_en, count(*), count(DISTINCT a.event_id)
+		FROM articles a
+		JOIN categories c ON c.id = a.category_id
+		WHERE a.public_status = 'published'
+		  AND a.event_id IS NOT NULL
+		  AND a.published_at >= clock_timestamp() - make_interval(days => $1)
+		  AND ($2 = '' OR c.slug = $2)
+		GROUP BY c.id, c.slug, c.name_si, c.name_en
+		ORDER BY count(*) DESC, c.slug
+	`, days, category)
+	if err != nil {
+		return KnowledgeGraph{}, fmt.Errorf("list knowledge categories: %w", err)
+	}
+	for categoryRows.Next() {
+		var item KnowledgeCategory
+		if err := categoryRows.Scan(&item.Slug, &item.NameSI, &item.NameEN, &item.Articles, &item.Events); err != nil {
+			categoryRows.Close()
+			return KnowledgeGraph{}, err
+		}
+		result.Categories = append(result.Categories, item)
+	}
+	err = categoryRows.Err()
+	categoryRows.Close()
+	if err != nil {
+		return KnowledgeGraph{}, err
+	}
+
+	rows, err := store.pool.Query(ctx, `
+		WITH scope AS (
+			SELECT a.event_id, max(a.published_at) latest
+			FROM articles a
+			LEFT JOIN categories c ON c.id = a.category_id
+			WHERE a.public_status = 'published'
+			  AND a.event_id IS NOT NULL
+			  AND a.published_at >= clock_timestamp() - make_interval(days => $1)
+			  AND ($2 = '' OR c.slug = $2)
+			GROUP BY a.event_id
+			ORDER BY latest DESC
+			LIMIT 150
+		)
+		SELECT ec.id::text, ec.display_title,
+		       COALESCE(c.slug, 'latest'), COALESCE(c.name_si, 'නවතම'),
+		       COALESCE(ec.confidence, 0), ec.is_breaking, ec.locked,
+		       ec.algorithm_version, ec.first_seen_at, ec.last_update_at,
+		       a.id::text, a.headline, s.id::text, s.name, COALESCE(s.icon_url, ''),
+		       a.original_url, a.published_at
+		FROM scope
+		JOIN event_clusters ec ON ec.id = scope.event_id
+		LEFT JOIN categories c ON c.id = ec.category_id
+		JOIN articles a ON a.event_id = ec.id
+		JOIN sources s ON s.id = a.source_id
+		WHERE a.public_status = 'published'
+		  AND a.published_at >= clock_timestamp() - make_interval(days => $1)
+		ORDER BY scope.latest DESC, a.published_at DESC
+	`, days, category)
+	if err != nil {
+		return KnowledgeGraph{}, fmt.Errorf("load knowledge events: %w", err)
+	}
+	defer rows.Close()
+	index := make(map[string]int)
+	for rows.Next() {
+		var event KnowledgeEvent
+		var article KnowledgeArticle
+		if err := rows.Scan(
+			&event.ID, &event.Title, &event.Category, &event.CategoryNameSI,
+			&event.Confidence, &event.IsBreaking, &event.Locked,
+			&event.AlgorithmVersion, &event.FirstSeenAt, &event.LastUpdateAt,
+			&article.ID, &article.Headline, &article.SourceID, &article.Source,
+			&article.SourceIcon, &article.OriginalURL, &article.PublishedAt,
+		); err != nil {
+			return KnowledgeGraph{}, err
+		}
+		position, ok := index[event.ID]
+		if !ok {
+			event.Articles = make([]KnowledgeArticle, 0, 2)
+			result.Events = append(result.Events, event)
+			position = len(result.Events) - 1
+			index[event.ID] = position
+		}
+		result.Events[position].Articles = append(result.Events[position].Articles, article)
+	}
+	if err := rows.Err(); err != nil {
+		return KnowledgeGraph{}, err
+	}
+	return result, nil
+}
+
 // Trends returns publishing activity for the requested number of days.
 func (store *Store) Trends(ctx context.Context, days int) ([]TrendPoint, error) {
 	rows, err := store.pool.Query(ctx, `

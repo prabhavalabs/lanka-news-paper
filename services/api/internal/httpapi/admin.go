@@ -380,6 +380,41 @@ func (handler adminHandler) trends(w http.ResponseWriter, request *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+func (handler adminHandler) knowledgeGraph(w http.ResponseWriter, request *http.Request) {
+	days, err := parseKnowledgeDays(request.URL.Query().Get("days"))
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	category := request.URL.Query().Get("category")
+	if len(category) > 50 {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "category is too long")
+		return
+	}
+	item, err := handler.desk.KnowledgeGraph(request.Context(), days, category)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+func parseKnowledgeDays(value string) (int, error) {
+	if value == "" {
+		return 1, nil
+	}
+	days, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, errors.New("days must be 1, 7, or 30")
+	}
+	switch days {
+	case 1, 7, 30:
+		return days, nil
+	default:
+		return 0, errors.New("days must be 1, 7, or 30")
+	}
+}
+
 func parseTrendDays(value string) (int, error) {
 	if value == "" {
 		return 90, nil
