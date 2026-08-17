@@ -13,7 +13,7 @@ import {
   ScaleIcon,
   ShieldCheckIcon,
 } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 
 import { SourceAvatar } from '@/components/source-avatar'
@@ -196,14 +196,27 @@ function EventGraph({
   const events = useMemo(() => new Map(data.events.map((event) => [event.id, event])), [data.events])
   const [viewport, setViewport] = useState(initialGraphViewport)
   const drag = useRef<{ pointerID: number; x: number; y: number } | null>(null)
+  const svg = useRef<SVGSVGElement>(null)
 
-  function graphPoint(element: SVGSVGElement, clientX: number, clientY: number) {
-    const bounds = element.getBoundingClientRect()
-    return {
-      x: ((clientX - bounds.left) / bounds.width) * width,
-      y: ((clientY - bounds.top) / bounds.height) * height,
+  useEffect(() => {
+    const element = svg.current
+    if (!element) return
+    function handleWheel(event: WheelEvent) {
+      event.preventDefault()
+      const bounds = (event.currentTarget as SVGSVGElement).getBoundingClientRect()
+      const point = {
+        x: ((event.clientX - bounds.left) / bounds.width) * width,
+        y: ((event.clientY - bounds.top) / bounds.height) * height,
+      }
+      setViewport((current) => zoomGraphViewport(
+        current,
+        current.scale * (event.deltaY < 0 ? 1.12 : 0.89),
+        point,
+      ))
     }
-  }
+    element.addEventListener('wheel', handleWheel, { passive: false })
+    return () => element.removeEventListener('wheel', handleWheel)
+  }, [])
 
   function zoom(nextScale: number, point = { x: width / 2, y: height / 2 }) {
     setViewport((current) => zoomGraphViewport(current, nextScale, point))
@@ -229,16 +242,12 @@ function EventGraph({
         <MoveIcon className="size-3.5" /> Drag to move · Scroll to zoom
       </div>
       <svg
+        ref={svg}
         viewBox={`0 0 ${width} ${height}`}
-        className="h-[560px] w-full cursor-grab select-none active:cursor-grabbing"
+        className="h-[560px] w-full cursor-grab touch-none overscroll-contain select-none active:cursor-grabbing"
         style={{ touchAction: 'none' }}
         role="img"
         aria-label="Interactive knowledge graph of news categories, events, and sources. Drag to pan and scroll to zoom."
-        onWheel={(event) => {
-          event.preventDefault()
-          const point = graphPoint(event.currentTarget, event.clientX, event.clientY)
-          zoom(viewport.scale * (event.deltaY < 0 ? 1.12 : 0.89), point)
-        }}
         onPointerDown={(event) => {
           if ((event.target as SVGElement).closest('[data-graph-node]')) return
           event.currentTarget.setPointerCapture(event.pointerId)
