@@ -318,7 +318,17 @@ func validateIconURL(value string) error {
 }
 
 func (store *Store) Archive(ctx context.Context, id string) error {
-	_, err := store.pool.Exec(ctx, `UPDATE sources SET archived_at = clock_timestamp(), active = false WHERE id = $1`, id)
+	_, err := store.pool.Exec(ctx, `
+		WITH archived AS (
+			UPDATE sources
+			SET archived_at = clock_timestamp(), active = false
+			WHERE id = $1
+			RETURNING id
+		)
+		UPDATE source_endpoints
+		SET paused = true
+		WHERE source_id IN (SELECT id FROM archived)
+	`, id)
 	return err
 }
 

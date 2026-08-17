@@ -1,14 +1,24 @@
-import { createClient, type SourceType } from '@snap/api-client'
+import { createClient, type AdminSource, type SourceType } from '@snap/api-client'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ExternalLink, Plus, RadioTower } from 'lucide-react'
+import {
+  CirclePause,
+  CirclePlay,
+  EllipsisVertical,
+  ExternalLink,
+  Eye,
+  Pencil,
+  Plus,
+  RadioTower,
+  Trash2,
+} from 'lucide-react'
 import { useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import { toast } from 'sonner'
 
 import { DataTablePagination, DataTableToolbar } from '@/components/data-table-controls'
 import { SourceAvatar } from '@/components/source-avatar'
 import { Badge } from '@/components/ui/badge'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { Button } from '@/components/ui/button'
 import {
   Card,
   CardAction,
@@ -21,10 +31,18 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -43,11 +61,17 @@ const types: SourceType[] = [
   'other',
 ]
 
+type ConfirmAction = {
+  kind: 'status' | 'delete'
+  source: AdminSource
+}
+
 function label(value: string) {
   return value.replaceAll('_', ' ').replace(/\b\w/g, (character) => character.toUpperCase())
 }
 
 export function SourcesPage() {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const table = useTableQuery()
   const typeFilter = table.filter('type')
@@ -71,6 +95,8 @@ export function SourcesPage() {
   const [website, setWebsite] = useState('')
   const [iconUrl, setIconUrl] = useState('')
   const [active, setActive] = useState(false)
+  const [editingSource, setEditingSource] = useState<AdminSource | null>(null)
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
   const create = useMutation({
     mutationFn: () =>
       client.createSource({
@@ -96,8 +122,34 @@ export function SourcesPage() {
   const toggle = useMutation({
     mutationFn: ({ id, active: nextActive }: { id: string; active: boolean }) =>
       client.setSourceActive(id, nextActive),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['admin-sources'] }),
+    onSuccess: (_, variables) => {
+      toast.success(variables.active ? 'Source activated' : 'Source held')
+      setConfirmAction(null)
+      void queryClient.invalidateQueries({ queryKey: ['admin-sources'] })
+    },
     onError: () => toast.error('Could not update source'),
+  })
+  const update = useMutation({
+    mutationFn: (source: AdminSource) => {
+      const { id, ...body } = source
+      return client.updateSource(id, body)
+    },
+    onSuccess: (_, source) => {
+      toast.success('Source updated')
+      setEditingSource(null)
+      void queryClient.invalidateQueries({ queryKey: ['admin-sources'] })
+      void queryClient.invalidateQueries({ queryKey: ['source', source.id] })
+    },
+    onError: () => toast.error('Could not update source'),
+  })
+  const archive = useMutation({
+    mutationFn: (id: string) => client.archiveSource(id),
+    onSuccess: () => {
+      toast.success('Source deleted')
+      setConfirmAction(null)
+      void queryClient.invalidateQueries({ queryKey: ['admin-sources'] })
+    },
+    onError: () => toast.error('Could not delete source'),
   })
   const pagination = sources.data?.pagination
 
@@ -327,22 +379,41 @@ export function SourcesPage() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Link
-                        to={`/sources/${source.id}`}
-                        className={buttonVariants({ variant: 'ghost', size: 'sm' })}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Open context menu for ${source.name}`}
+                          />
+                        }
                       >
-                        View
-                      </Link>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={toggle.isPending}
-                        onClick={() => toggle.mutate({ id: source.id, active: !source.active })}
-                      >
-                        {source.active ? 'Hold' : 'Activate'}
-                      </Button>
-                    </div>
+                        <EllipsisVertical />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-44">
+                        <DropdownMenuItem onClick={() => navigate(`/sources/${source.id}`)}>
+                          <Eye />
+                          View
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setEditingSource(source)}>
+                          <Pencil />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setConfirmAction({ kind: 'status', source })}>
+                          {source.active ? <CirclePause /> : <CirclePlay />}
+                          {source.active ? 'Hold' : 'Activate'}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onClick={() => setConfirmAction({ kind: 'delete', source })}
+                        >
+                          <Trash2 />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </TableCell>
                 </TableRow>
               ))}
@@ -357,6 +428,184 @@ export function SourcesPage() {
           ) : null}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={editingSource !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !update.isPending) setEditingSource(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit publisher source</DialogTitle>
+            <DialogDescription>Update the publisher details shown throughout the admin portal.</DialogDescription>
+          </DialogHeader>
+          {editingSource ? (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault()
+                update.mutate(editingSource)
+              }}
+            >
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="edit-name">Name</FieldLabel>
+                  <Input
+                    id="edit-name"
+                    value={editingSource.name}
+                    onChange={(event) =>
+                      setEditingSource((current) =>
+                        current ? { ...current, name: event.target.value } : current,
+                      )
+                    }
+                    required
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="edit-legal-name">Legal name</FieldLabel>
+                  <Input
+                    id="edit-legal-name"
+                    value={editingSource.legal_name}
+                    onChange={(event) =>
+                      setEditingSource((current) =>
+                        current ? { ...current, legal_name: event.target.value } : current,
+                      )
+                    }
+                    required
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="edit-source-type">Type</FieldLabel>
+                  <Select
+                    value={editingSource.source_type}
+                    onValueChange={(value) =>
+                      setEditingSource((current) =>
+                        current && value ? { ...current, source_type: value as SourceType } : current,
+                      )
+                    }
+                  >
+                    <SelectTrigger id="edit-source-type" className="w-full">
+                      <SelectValue>{(value) => label(String(value))}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {types.map((type) => (
+                        <SelectItem key={type} value={type}>
+                          {label(type)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="edit-website">Website</FieldLabel>
+                  <Input
+                    id="edit-website"
+                    type="url"
+                    value={editingSource.website}
+                    onChange={(event) =>
+                      setEditingSource((current) =>
+                        current ? { ...current, website: event.target.value } : current,
+                      )
+                    }
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="edit-icon">Icon URL</FieldLabel>
+                  <Input
+                    id="edit-icon"
+                    type="url"
+                    value={editingSource.icon_url}
+                    onChange={(event) =>
+                      setEditingSource((current) =>
+                        current ? { ...current, icon_url: event.target.value } : current,
+                      )
+                    }
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="edit-description">Description</FieldLabel>
+                  <Input
+                    id="edit-description"
+                    value={editingSource.description}
+                    onChange={(event) =>
+                      setEditingSource((current) =>
+                        current ? { ...current, description: event.target.value } : current,
+                      )
+                    }
+                  />
+                </Field>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setEditingSource(null)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={update.isPending}>
+                    {update.isPending ? 'Saving…' : 'Save changes'}
+                  </Button>
+                </DialogFooter>
+              </FieldGroup>
+            </form>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={confirmAction !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !toggle.isPending && !archive.isPending) setConfirmAction(null)
+        }}
+      >
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>
+              {confirmAction?.kind === 'delete'
+                ? `Delete ${confirmAction.source.name}?`
+                : `${confirmAction?.source.active ? 'Hold' : 'Activate'} ${confirmAction?.source.name}?`}
+            </DialogTitle>
+            <DialogDescription>
+              {confirmAction?.kind === 'delete'
+                ? 'This removes the source from the registry and stops its endpoints. Existing articles are preserved.'
+                : confirmAction?.source.active
+                  ? 'Newly captured articles will be held from publication until this source is activated again.'
+                  : 'Future captured articles can be published according to this source’s rights profile.'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={toggle.isPending || archive.isPending}
+              onClick={() => setConfirmAction(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant={
+                confirmAction?.kind === 'delete' || confirmAction?.source.active
+                  ? 'destructive'
+                  : 'default'
+              }
+              disabled={toggle.isPending || archive.isPending}
+              onClick={() => {
+                if (!confirmAction) return
+                if (confirmAction.kind === 'delete') {
+                  archive.mutate(confirmAction.source.id)
+                  return
+                }
+                toggle.mutate({ id: confirmAction.source.id, active: !confirmAction.source.active })
+              }}
+            >
+              {archive.isPending || toggle.isPending
+                ? 'Working…'
+                : confirmAction?.kind === 'delete'
+                  ? 'Delete source'
+                  : confirmAction?.source.active
+                    ? 'Hold source'
+                    : 'Activate source'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   )
 }
