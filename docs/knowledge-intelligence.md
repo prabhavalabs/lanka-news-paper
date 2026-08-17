@@ -65,7 +65,7 @@ Initial evidence includes the [Election Commission party register](https://elect
 
 ### Machine-scored article narration
 
-The production analyzer is `political-narration-ml-v6`. It uses the local `qwen3:8b` multilingual transformer through Ollama's OpenAI-compatible structured-output endpoint. Qwen3's published language coverage includes Sinhala and Tamil, but that capability claim is not a substitute for a Sri Lankan evaluation set. The 8B model replaced the 4B baseline after corpus spot checks found that the smaller model could confuse government or private-sector involvement with the journalist's own economic stance.
+The production analyzer is `political-narration-ml-v7`. A conservative multilingual signal gate first records clearly non-economic stories as irrelevant; plausible policy stories then use the local `qwen3:8b` transformer through Ollama's OpenAI-compatible structured-output endpoint. This cascade keeps crime, weather, sport, and routine state activity out of the political spectrum while reserving the model for semantic narration analysis. Qwen3's published language coverage includes Sinhala and Tamil, but that capability claim is not a substitute for a Sri Lankan evaluation set. The 8B model replaced the 4B baseline after corpus spot checks found that the smaller model could confuse government or private-sector involvement with the journalist's own economic stance.
 
 The score means:
 

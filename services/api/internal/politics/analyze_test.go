@@ -40,3 +40,20 @@ func TestCleanTextRemovesMarkupAndHiddenContent(t *testing.T) {
 	result := cleanText(`<p>රාජ්‍ය අංශය &amp; වෙළඳපොළ</p><script>ignore me</script><style>.hidden{}</style>`)
 	require.Equal(t, "රාජ්‍ය අංශය & වෙළඳපොළ", result)
 }
+
+func TestEconomicPolicySignalGate(t *testing.T) {
+	for _, value := range []string{
+		"The budget expands welfare and raises tax revenue",
+		"පෞද්ගලීකරණය ගැන ආර්ථික විවාදයක්",
+		"பணவீக்கம் மற்றும் வட்டி விகிதம் குறித்து விவாதம்",
+	} {
+		require.Truef(t, hasEconomicPolicySignal(value), "expected policy signal in %q", value)
+	}
+	for _, value := range []string{
+		"Police arrest four private-bank managers in financial-crime case",
+		"මත්ද්‍රව්‍ය වැටලීම්වලදී සැකකරුවන් 891 දෙනෙකු අත්අඩංගුවට",
+		"බන්ධනාගාර නිලධාරීන්ට ගිනි අවි පුහුණුවක්දී නැහැ",
+	} {
+		require.Falsef(t, hasEconomicPolicySignal(value), "unexpected policy signal in %q", value)
+	}
+}

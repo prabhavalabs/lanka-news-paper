@@ -16,9 +16,24 @@ import (
 )
 
 const (
-	Model = "political-narration-ml-v6"
+	Model = "political-narration-ml-v7"
 	task  = "narration_framing"
 )
+
+var economicPolicySignals = []string{
+	"economic policy", "economy", "inflation", "tax", "budget", "public spending", "government spending",
+	"debt", "interest rate", "minimum wage", "labour policy", "labor policy", "trade union", "privatization",
+	"privatisation", "private sector", "public sector", "state-owned", "state owned", "welfare", "subsidy",
+	"pension", "deregulation", "regulation", "free market", "market competition", "foreign investment",
+	"ආර්ථික", "උද්ධමන", "බදු", "වැට්", "අයවැය", "රාජ්‍ය වියදම්", "ණය", "පොලී අනුපාත",
+	"අවම වැටුප", "කම්කරු ප්‍රතිපත්ති", "වෘත්තීය සමිති", "පෞද්ගලීකරණ", "පෞද්ගලික අංශය",
+	"පුද්ගලික අංශය", "රාජ්‍ය අංශය", "රාජ්‍ය ව්‍යවසාය", "සුබසාධන", "සහනාධාර", "විශ්‍රාම වැටුප්",
+	"නියාමන", "නිදහස් වෙළඳ", "වෙළඳපොළ තරඟ", "විදේශ ආයෝජන", "මහ බැංකු", "ප්‍රතිපාදන",
+	"பொருளாதார", "பணவீக்க", "வரி", "வரவு செலவு", "அரச செலவு", "கடன்", "வட்டி விகித",
+	"குறைந்தபட்ச ஊதிய", "தொழிலாளர் கொள்கை", "தொழிற்சங்க", "தனியார்மய", "தனியார் துறை",
+	"பொதுத்துறை", "அரச நிறுவனம்", "நலத்திட்ட", "மானிய", "ஓய்வூதிய", "ஒழுங்குமுற",
+	"சுதந்திர சந்தை", "சந்தை போட்டி", "வெளிநாட்டு முதலீடு", "மத்திய வங்கி",
+}
 
 type Analysis struct {
 	Relevant   bool     `json:"relevant"`
@@ -103,28 +118,36 @@ func (store *Store) Backfill(ctx context.Context, limit int) error {
 
 	var failures []error
 	for _, article := range articles {
-		input, err := json.Marshal(map[string]string{
-			"headline":        cleanText(article.headline),
-			"article_excerpt": cleanText(article.description),
-		})
-		if err != nil {
-			return err
+		analysis := Analysis{
+			Score: 0, Label: "unclear", Confidence: 0.95,
+			Rationale: "No explicit economic-policy signal in the headline or excerpt.",
 		}
-		response, err := store.model.Complete(ctx, llm.Request{
-			Task: task, System: systemPrompt, Input: string(input), JSONSchema: schema, DisableReasoning: true, MaxTokens: 1024,
-		})
-		if err != nil {
-			failures = append(failures, fmt.Errorf("analyze article %s: %w", article.id, err))
-			continue
-		}
-		if response.Provider == "none" {
-			failures = append(failures, fmt.Errorf("analyze article %s: no model provider responded", article.id))
-			continue
-		}
-		analysis, err := parseAnalysis(response.Text)
-		if err != nil {
-			failures = append(failures, fmt.Errorf("decode narration analysis for %s: %w", article.id, err))
-			continue
+		providerID, providerModel := "policy-signal-gate", "multilingual-keywords-v1"
+		if hasEconomicPolicySignal(article.headline + " " + article.description) {
+			input, err := json.Marshal(map[string]string{
+				"headline":        cleanText(article.headline),
+				"article_excerpt": cleanText(article.description),
+			})
+			if err != nil {
+				return err
+			}
+			response, err := store.model.Complete(ctx, llm.Request{
+				Task: task, System: systemPrompt, Input: string(input), JSONSchema: schema, DisableReasoning: true, MaxTokens: 1024,
+			})
+			if err != nil {
+				failures = append(failures, fmt.Errorf("analyze article %s: %w", article.id, err))
+				continue
+			}
+			if response.Provider == "none" {
+				failures = append(failures, fmt.Errorf("analyze article %s: no model provider responded", article.id))
+				continue
+			}
+			analysis, err = parseAnalysis(response.Text)
+			if err != nil {
+				failures = append(failures, fmt.Errorf("decode narration analysis for %s: %w", article.id, err))
+				continue
+			}
+			providerID, providerModel = response.Provider, response.Model
 		}
 		evidence, err := json.Marshal(analysis.Evidence)
 		if err != nil {
@@ -149,11 +172,21 @@ func (store *Store) Backfill(ctx context.Context, limit int) error {
 			  provider_model = EXCLUDED.provider_model,
 			  analyzed_at = clock_timestamp()
 		`, article.id, Model, analysis.Score, analysis.Confidence, analysis.Relevant,
-			analysis.Label, analysis.Rationale, evidence, response.Provider, response.Model); err != nil {
+			analysis.Label, analysis.Rationale, evidence, providerID, providerModel); err != nil {
 			return fmt.Errorf("save narration analysis for %s: %w", article.id, err)
 		}
 	}
 	return errors.Join(failures...)
+}
+
+func hasEconomicPolicySignal(value string) bool {
+	value = strings.ToLower(cleanText(value))
+	for _, signal := range economicPolicySignals {
+		if strings.Contains(value, signal) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseAnalysis(value string) (Analysis, error) {
