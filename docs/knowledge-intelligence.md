@@ -65,7 +65,7 @@ Initial evidence includes the [Election Commission party register](https://elect
 
 ### Machine-scored article narration
 
-The production analyzer is `political-narration-ml-v5`. It uses the local `qwen3:4b` multilingual transformer through Ollama's OpenAI-compatible structured-output endpoint. Qwen3's published language coverage includes Sinhala and Tamil, but that capability claim is not a substitute for a Sri Lankan evaluation set.
+The production analyzer is `political-narration-ml-v6`. It uses the local `qwen3:8b` multilingual transformer through Ollama's OpenAI-compatible structured-output endpoint. Qwen3's published language coverage includes Sinhala and Tamil, but that capability claim is not a substitute for a Sri Lankan evaluation set. The 8B model replaced the 4B baseline after corpus spot checks found that the smaller model could confuse government or private-sector involvement with the journalist's own economic stance.
 
 The score means:
 
@@ -167,7 +167,7 @@ The LLM gateway uses database-configured provider and task profiles. Local devel
 - kind: `openai_compatible`;
 - endpoint: `http://host.docker.internal:11434/v1`;
 - task: `narration_framing`;
-- model: `qwen3:4b`;
+- model: `qwen3:8b`;
 - timeout: 90 seconds.
 
 The provider is disabled by default so a deployment without Ollama never pretends to have analyzed an article. When no enabled provider exists, the worker leaves articles untouched for a later retry. No API secret is required for the local Ollama endpoint.
@@ -218,5 +218,5 @@ Every visible score must remain traceable to a model version, confidence, ration
 ## Model and runtime references
 
 - [Qwen3 multilingual capabilities](https://qwenlm.github.io/blog/qwen3/)
-- [Ollama `qwen3:4b` model card](https://ollama.com/library/qwen3:4b)
+- [Ollama `qwen3:8b` model card](https://ollama.com/library/qwen3:8b)
 - [Ollama structured outputs](https://docs.ollama.com/capabilities/structured-outputs)

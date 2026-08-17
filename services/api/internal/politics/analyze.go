@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	Model = "political-narration-ml-v5"
+	Model = "political-narration-ml-v6"
 	task  = "narration_framing"
 )
 
