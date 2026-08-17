@@ -23,7 +23,12 @@ type Config struct {
 	BootstrapAdminPasswordHash string
 	DatabaseURL                string
 	Environment                string
+	MediaLocalDirectory        string
 	MigrationsPath             string
+	R2AccessKeyID              string
+	R2AccountID                string
+	R2Bucket                   string
+	R2SecretAccessKey          string
 	SessionCookieSecure        bool
 	SessionSecret              string
 	SessionTTL                 time.Duration
@@ -68,6 +73,19 @@ func Load(lookup LookupFunc) (Config, error) {
 			return Config{}, fmt.Errorf("parse SNAP_SESSION_COOKIE_SECURE: expected true or false")
 		}
 	}
+	r2AccountID := strings.TrimSpace(lookup("SNAP_R2_ACCOUNT_ID"))
+	r2AccessKeyID := strings.TrimSpace(lookup("SNAP_R2_ACCESS_KEY_ID"))
+	r2SecretAccessKey := strings.TrimSpace(lookup("SNAP_R2_SECRET_ACCESS_KEY"))
+	r2Bucket := strings.TrimSpace(lookup("SNAP_R2_BUCKET"))
+	r2ConfiguredValues := 0
+	for _, value := range []string{r2AccountID, r2AccessKeyID, r2SecretAccessKey, r2Bucket} {
+		if value != "" {
+			r2ConfiguredValues++
+		}
+	}
+	if r2ConfiguredValues != 0 && r2ConfiguredValues != 4 {
+		return Config{}, fmt.Errorf("configure all SNAP_R2_* values or leave all of them empty")
+	}
 
 	return Config{
 		Address:                    valueOrDefault(lookup("SNAP_API_ADDRESS"), defaultAddress),
@@ -76,7 +94,12 @@ func Load(lookup LookupFunc) (Config, error) {
 		BootstrapAdminPasswordHash: strings.TrimSpace(lookup("SNAP_BOOTSTRAP_ADMIN_PASSWORD_HASH")),
 		DatabaseURL:                databaseURL,
 		Environment:                environment,
+		MediaLocalDirectory:        valueOrDefault(lookup("SNAP_MEDIA_LOCAL_DIR"), ".data/media"),
 		MigrationsPath:             valueOrDefault(lookup("SNAP_MIGRATIONS_PATH"), "migrations"),
+		R2AccessKeyID:              r2AccessKeyID,
+		R2AccountID:                r2AccountID,
+		R2Bucket:                   r2Bucket,
+		R2SecretAccessKey:          r2SecretAccessKey,
 		SessionCookieSecure:        secureCookie,
 		SessionSecret:              valueOrDefault(lookup("SNAP_SESSION_SECRET"), "local-dev-session-secret-change"),
 		SessionTTL:                 defaultSessionTTL,

@@ -8,6 +8,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/iam"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/media"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/registry"
 )
@@ -19,6 +20,7 @@ type Dependencies struct {
 	Desk           *desk.Store
 	IAM            *iam.Store
 	LLM            *llm.Gateway
+	Media          *media.Store
 	News           *publish.Store
 	Poller         *ingest.Poller
 	Registry       *registry.Store
@@ -30,7 +32,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	health := healthHandler{database: dependencies.Database}
 	news := newsHandler{reader: dependencies.News}
 	auth := newAuthHandler(dependencies.IAM, dependencies.SessionTTL, dependencies.CookieSecure)
-	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk}
+	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk, media: dependencies.Media}
 
 	mux.HandleFunc("GET /api/v1/health/live", health.liveness)
 	mux.HandleFunc("GET /api/v1/health/ready", health.readiness)
@@ -54,6 +56,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("POST /api/admin/sources", admin.sources)
 	protected.HandleFunc("GET /api/admin/sources/{id}", admin.source)
 	protected.HandleFunc("GET /api/admin/sources/{id}/performance", admin.sourcePerformance)
+	protected.HandleFunc("POST /api/admin/sources/{id}/logo", admin.sourceLogo)
+	protected.HandleFunc("DELETE /api/admin/sources/{id}/logo", admin.sourceLogo)
 	protected.HandleFunc("POST /api/admin/sources/{id}/active", admin.setActive)
 	protected.HandleFunc("GET /api/admin/sources/{id}/endpoints", admin.endpoints)
 	protected.HandleFunc("POST /api/admin/sources/{id}/endpoints", admin.endpoints)
@@ -80,6 +84,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("POST /api/admin/llm/providers", admin.providers)
 	protected.HandleFunc("GET /api/admin/llm/profiles", admin.profiles)
 	protected.HandleFunc("POST /api/admin/llm/profiles", admin.profiles)
+	protected.HandleFunc("GET /api/admin/media/{key...}", admin.mediaFile)
 	mux.Handle("/api/admin/", withCSRF(auth.requireAuth(protected)))
 
 	return withRecovery(withRequestID(withSecurityHeaders(withCORS(http.MaxBytesHandler(mux, 1<<20), dependencies.AllowedOrigins))))

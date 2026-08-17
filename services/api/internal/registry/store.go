@@ -405,8 +405,22 @@ func (store *Store) UpdateSource(ctx context.Context, item Source) error {
 	return err
 }
 
+func (store *Store) SetSourceIconURL(ctx context.Context, id, iconURL string) error {
+	if err := validateIconURL(iconURL); err != nil {
+		return err
+	}
+	_, err := store.pool.Exec(ctx, `
+		UPDATE sources SET icon_url = NULLIF($2, '')
+		WHERE id = $1 AND archived_at IS NULL
+	`, id, iconURL)
+	return err
+}
+
 func validateIconURL(value string) error {
 	if value == "" {
+		return nil
+	}
+	if strings.HasPrefix(value, "/source-logos/") || strings.HasPrefix(value, "/api/admin/media/source-logos/") {
 		return nil
 	}
 	parsed, err := url.Parse(value)

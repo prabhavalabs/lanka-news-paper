@@ -181,7 +181,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     credentials: "include",
     ...init,
     headers: {
-      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(typeof init?.body === "string" ? { "Content-Type": "application/json" } : {}),
       ...(method !== "GET" && method !== "HEAD" ? { "X-SNAP-CSRF": "1" } : {}),
       ...init?.headers
     }
@@ -304,6 +304,18 @@ export function createClient(baseUrl = "") {
       request<{ ok: boolean }>(url(`/api/admin/sources/${id}`), {
         method: "POST",
         body: JSON.stringify(body)
+      }),
+    uploadSourceLogo: (id: string, file: File) => {
+      const body = new FormData();
+      body.set("file", file);
+      return request<{ icon_url: string }>(url(`/api/admin/sources/${id}/logo`), {
+        method: "POST",
+        body
+      });
+    },
+    removeSourceLogo: (id: string) =>
+      request<{ icon_url: string }>(url(`/api/admin/sources/${id}/logo`), {
+        method: "DELETE"
       }),
     archiveSource: (id: string) =>
       request<{ ok: boolean }>(url(`/api/admin/sources/${id}/archive`), {

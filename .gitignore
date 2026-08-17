@@ -11,6 +11,8 @@ bin/
 *.exe
 .cache/
 **/.cache/
+.data/
+**/.data/
 
 # Local secrets
 .env

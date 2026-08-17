@@ -23,9 +23,24 @@ func TestLoadUsesDefaults(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "127.0.0.1:8090", loaded.Address)
 	require.Equal(t, "local", loaded.Environment)
+	require.Equal(t, ".data/media", loaded.MediaLocalDirectory)
 	require.False(t, loaded.SessionCookieSecure)
 	require.Equal(t, 10*time.Second, loaded.ShutdownTimeout)
 	require.Equal(t, []string{"http://127.0.0.1:5173", "http://127.0.0.1:5174"}, loaded.AllowedOrigins)
+}
+
+func TestLoadRejectsPartialR2Configuration(t *testing.T) {
+	_, err := Load(func(key string) string {
+		switch key {
+		case "SNAP_DATABASE_URL":
+			return "postgres://snap:snap@127.0.0.1:55432/snap?sslmode=disable"
+		case "SNAP_R2_BUCKET":
+			return "lanka-news-media"
+		default:
+			return ""
+		}
+	})
+	require.ErrorContains(t, err, "configure all SNAP_R2_*")
 }
 
 func TestLoadSecureCookieOverride(t *testing.T) {

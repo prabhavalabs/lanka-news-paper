@@ -17,6 +17,7 @@ import { toast } from 'sonner'
 
 import { DataTablePagination, DataTableToolbar } from '@/components/data-table-controls'
 import { SourceAvatar } from '@/components/source-avatar'
+import { SourceLogoUpload } from '@/components/source-logo-upload'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -93,28 +94,39 @@ export function SourcesPage() {
   const [legalName, setLegalName] = useState('')
   const [sourceType, setSourceType] = useState<SourceType>('private_media')
   const [website, setWebsite] = useState('')
-  const [iconUrl, setIconUrl] = useState('')
+  const [createLogo, setCreateLogo] = useState<File | null>(null)
   const [active, setActive] = useState(false)
   const [editingSource, setEditingSource] = useState<AdminSource | null>(null)
+  const [editLogo, setEditLogo] = useState<File | null>(null)
+  const [removeEditLogo, setRemoveEditLogo] = useState(false)
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
   const create = useMutation({
-    mutationFn: () =>
-      client.createSource({
+    mutationFn: async () => {
+      const source = await client.createSource({
         name,
         legal_name: legalName,
         source_type: sourceType,
         website,
-        icon_url: iconUrl,
+        icon_url: '',
         description: '',
         active,
-      }),
-    onSuccess: () => {
-      toast.success('Source created')
+      })
+      if (!createLogo) return { logoFailed: false }
+      try {
+        await client.uploadSourceLogo(source.id, createLogo)
+        return { logoFailed: false }
+      } catch {
+        return { logoFailed: true }
+      }
+    },
+    onSuccess: ({ logoFailed }) => {
+      if (logoFailed) toast.warning('Source created, but its logo could not be uploaded')
+      else toast.success('Source created')
       setOpen(false)
       setName('')
       setLegalName('')
       setWebsite('')
-      setIconUrl('')
+      setCreateLogo(null)
       void queryClient.invalidateQueries({ queryKey: ['admin-sources'] })
     },
     onError: () => toast.error('Could not create source'),
@@ -130,13 +142,17 @@ export function SourcesPage() {
     onError: () => toast.error('Could not update source'),
   })
   const update = useMutation({
-    mutationFn: (source: AdminSource) => {
+    mutationFn: async (source: AdminSource) => {
       const { id, ...body } = source
-      return client.updateSource(id, body)
+      await client.updateSource(id, body)
+      if (removeEditLogo) await client.removeSourceLogo(id)
+      else if (editLogo) await client.uploadSourceLogo(id, editLogo)
     },
     onSuccess: (_, source) => {
       toast.success('Source updated')
       setEditingSource(null)
+      setEditLogo(null)
+      setRemoveEditLogo(false)
       void queryClient.invalidateQueries({ queryKey: ['admin-sources'] })
       void queryClient.invalidateQueries({ queryKey: ['source', source.id] })
     },
@@ -222,15 +238,14 @@ export function SourcesPage() {
                     onChange={(event) => setWebsite(event.target.value)}
                   />
                 </Field>
-                <Field>
-                  <FieldLabel htmlFor="icon">Icon URL or local path</FieldLabel>
-                  <Input
-                    id="icon"
-                    placeholder="https://publisher.example/icon.png or /source-logos/icon.png"
-                    value={iconUrl}
-                    onChange={(event) => setIconUrl(event.target.value)}
-                  />
-                </Field>
+                <SourceLogoUpload
+                  file={createLogo}
+                  name={name}
+                  onFileChange={setCreateLogo}
+                  onRemoveChange={() => undefined}
+                  remove={false}
+                  website={website}
+                />
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
@@ -400,7 +415,13 @@ export function SourcesPage() {
                           <Eye />
                           View
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => setEditingSource(source)}>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setEditLogo(null)
+                            setRemoveEditLogo(false)
+                            setEditingSource(source)
+                          }}
+                        >
                           <Pencil />
                           Edit
                         </DropdownMenuItem>
@@ -436,7 +457,11 @@ export function SourcesPage() {
       <Dialog
         open={editingSource !== null}
         onOpenChange={(nextOpen) => {
-          if (!nextOpen && !update.isPending) setEditingSource(null)
+          if (!nextOpen && !update.isPending) {
+            setEditingSource(null)
+            setEditLogo(null)
+            setRemoveEditLogo(false)
+          }
         }}
       >
         <DialogContent>
@@ -513,18 +538,16 @@ export function SourcesPage() {
                     }
                   />
                 </Field>
-                <Field>
-                  <FieldLabel htmlFor="edit-icon">Icon URL or local path</FieldLabel>
-                  <Input
-                    id="edit-icon"
-                    value={editingSource.icon_url}
-                    onChange={(event) =>
-                      setEditingSource((current) =>
-                        current ? { ...current, icon_url: event.target.value } : current,
-                      )
-                    }
-                  />
-                </Field>
+                <SourceLogoUpload
+                  currentIconUrl={editingSource.icon_url}
+                  disabled={update.isPending}
+                  file={editLogo}
+                  name={editingSource.name}
+                  onFileChange={setEditLogo}
+                  onRemoveChange={setRemoveEditLogo}
+                  remove={removeEditLogo}
+                  website={editingSource.website}
+                />
                 <Field>
                   <FieldLabel htmlFor="edit-description">Description</FieldLabel>
                   <Input
@@ -538,7 +561,15 @@ export function SourcesPage() {
                   />
                 </Field>
                 <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setEditingSource(null)}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setEditingSource(null)
+                      setEditLogo(null)
+                      setRemoveEditLogo(false)
+                    }}
+                  >
                     Cancel
                   </Button>
                   <Button type="submit" disabled={update.isPending}>

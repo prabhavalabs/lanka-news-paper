@@ -1,21 +1,137 @@
 package httpapi
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
+	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 
+	"github.com/google/uuid"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/desk"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/media"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/registry"
 )
+
+const maxSourceLogoBytes = 768 << 10
 
 type adminHandler struct {
 	registry *registry.Store
 	poller   *ingest.Poller
 	llm      *llm.Gateway
 	desk     *desk.Store
+	media    *media.Store
+}
+
+func (handler adminHandler) sourceLogo(w http.ResponseWriter, request *http.Request) {
+	source, err := handler.registry.GetSource(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", "Source was not found.")
+		return
+	}
+
+	if request.Method == http.MethodDelete {
+		if err := handler.registry.SetSourceIconURL(request.Context(), source.ID, ""); err != nil {
+			writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not remove the source logo.")
+			return
+		}
+		handler.deleteManagedMedia(request, source.IconURL)
+		handler.registry.Audit(request.Context(), currentUser(request).Email, "remove_source_logo", source.ID, "ok")
+		writeJSON(w, http.StatusOK, map[string]string{"icon_url": ""})
+		return
+	}
+
+	request.Body = http.MaxBytesReader(w, request.Body, maxSourceLogoBytes+(64<<10))
+	if err := request.ParseMultipartForm(maxSourceLogoBytes); err != nil {
+		writeProblem(w, http.StatusRequestEntityTooLarge, "https://snap.local/problems/invalid", "Image too large", "Choose a PNG or JPEG smaller than 768 KB.")
+		return
+	}
+	if request.MultipartForm != nil {
+		defer request.MultipartForm.RemoveAll()
+	}
+	file, _, err := request.FormFile("file")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "A logo file is required.")
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxSourceLogoBytes+1))
+	if err != nil || len(data) > maxSourceLogoBytes {
+		writeProblem(w, http.StatusRequestEntityTooLarge, "https://snap.local/problems/invalid", "Image too large", "Choose a PNG or JPEG smaller than 768 KB.")
+		return
+	}
+	contentType, extension, err := validateSourceLogo(data)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid image", err.Error())
+		return
+	}
+
+	key := fmt.Sprintf("source-logos/%s/%s.%s", source.ID, uuid.NewString(), extension)
+	if err := handler.media.Put(request.Context(), key, contentType, data); err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Upload failed", "Could not store the source logo.")
+		return
+	}
+	iconURL := media.URL(key)
+	if err := handler.registry.SetSourceIconURL(request.Context(), source.ID, iconURL); err != nil {
+		_ = handler.media.Delete(request.Context(), key)
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Upload failed", "Could not attach the source logo.")
+		return
+	}
+	handler.deleteManagedMedia(request, source.IconURL)
+	handler.registry.Audit(request.Context(), currentUser(request).Email, "update_source_logo", source.ID, "ok")
+	writeJSON(w, http.StatusOK, map[string]string{"icon_url": iconURL})
+}
+
+func (handler adminHandler) mediaFile(w http.ResponseWriter, request *http.Request) {
+	body, contentType, err := handler.media.Open(request.Context(), request.PathValue("key"))
+	if err != nil {
+		http.NotFound(w, request)
+		return
+	}
+	defer body.Close()
+	if contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	if _, err := io.Copy(w, body); err != nil {
+		slog.WarnContext(request.Context(), "stream media", "error", err)
+	}
+}
+
+func (handler adminHandler) deleteManagedMedia(request *http.Request, value string) {
+	key, managed := media.KeyFromURL(value)
+	if managed {
+		if err := handler.media.Delete(request.Context(), key); err != nil {
+			slog.WarnContext(request.Context(), "delete replaced media", "key", key, "error", err)
+		}
+	}
+}
+
+func validateSourceLogo(data []byte) (string, string, error) {
+	contentType := http.DetectContentType(data)
+	extensions := map[string]string{"image/jpeg": "jpg", "image/png": "png"}
+	extension, ok := extensions[contentType]
+	if !ok {
+		return "", "", fmt.Errorf("only PNG and JPEG logos are supported")
+	}
+	configuration, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return "", "", fmt.Errorf("the uploaded file is not a valid image")
+	}
+	if configuration.Width < 64 || configuration.Height < 64 {
+		return "", "", fmt.Errorf("logo dimensions must be at least 64 × 64 pixels")
+	}
+	if configuration.Width > 4096 || configuration.Height > 4096 {
+		return "", "", fmt.Errorf("logo dimensions cannot exceed 4096 × 4096 pixels")
+	}
+	return contentType, extension, nil
 }
 
 func (handler adminHandler) sources(w http.ResponseWriter, request *http.Request) {

@@ -19,6 +19,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/iam"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/media"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/registry"
 )
@@ -59,6 +60,17 @@ func run(logger *slog.Logger) error {
 	poller := ingest.NewPoller(pool, logger, clusters, gateway)
 	news := publish.NewStore(pool)
 	deskStore := desk.NewStore(pool)
+	mediaStore, err := media.New(processContext, media.Config{
+		LocalDirectory: loaded.MediaLocalDirectory,
+		R2AccessKeyID:  loaded.R2AccessKeyID,
+		R2AccountID:    loaded.R2AccountID,
+		R2Bucket:       loaded.R2Bucket,
+		R2SecretKey:    loaded.R2SecretAccessKey,
+	})
+	if err != nil {
+		return fmt.Errorf("configure media storage: %w", err)
+	}
+	logger.Info("media storage ready", "remote", mediaStore.Remote())
 
 	server := &http.Server{
 		Addr: loaded.Address,
@@ -69,6 +81,7 @@ func run(logger *slog.Logger) error {
 			Desk:           deskStore,
 			IAM:            users,
 			LLM:            gateway,
+			Media:          mediaStore,
 			News:           news,
 			Poller:         poller,
 			Registry:       registry.NewStore(pool),
