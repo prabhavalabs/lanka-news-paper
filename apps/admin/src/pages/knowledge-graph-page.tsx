@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
+import { Label, Pie, PieChart } from 'recharts'
 
 import { SourceAvatar } from '@/components/source-avatar'
 import { Badge } from '@/components/ui/badge'
@@ -39,6 +40,13 @@ import {
 } from '@/components/ui/dialog'
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from '@/components/ui/chart'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import {
   Select,
   SelectContent,
@@ -660,25 +668,96 @@ function PoliticalSpectrum({ data }: { data?: KnowledgeGraph }) {
 }
 
 function CategoryBreakdown({ data }: { data?: KnowledgeGraph }) {
-  const maximum = Math.max(1, ...(data?.categories.map((category) => category.articles) ?? [1]))
+  const categories = data?.categories ?? []
+  const total = categories.reduce((sum, category) => sum + category.articles, 0)
+  const colors = ['var(--primary)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)']
+  const chartConfig: ChartConfig = Object.fromEntries(categories.map((category, index) => [
+    category.slug,
+    { label: category.name_en, color: colors[index % colors.length] },
+  ]))
+  const chartData = categories.map((category, index) => ({
+    ...category,
+    fill: `var(--color-${category.slug})`,
+    share: total ? Math.round((category.articles / total) * 100) : 0,
+    color: colors[index % colors.length],
+  }))
   return (
     <Card className="gap-0 py-0 shadow-sm">
-      <CardHeader className="border-b py-6">
+      <CardHeader className="grid-cols-1! border-b py-6 sm:grid-cols-[1fr_auto]!">
         <CardTitle>Category distribution</CardTitle>
-        <CardDescription>Semantic coverage for this window.</CardDescription>
+        <CardDescription>See which newsroom topics dominate the selected reporting window.</CardDescription>
+        <CardAction className="col-start-1 row-span-1 row-start-3 mt-2 justify-self-start sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:justify-self-end">
+          <Badge variant="secondary">{total.toLocaleString()} categorized reports</Badge>
+        </CardAction>
       </CardHeader>
-      <CardContent className="space-y-4 py-6">
-        {data?.categories.map((category) => (
-          <div key={category.slug} className="space-y-1.5">
-            <div className="flex justify-between gap-4 text-sm">
-              <span className="font-medium">{category.name_en}</span>
-              <span className="tabular-nums text-muted-foreground">{category.articles} reports</span>
-            </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-              <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(3, (category.articles / maximum) * 100)}%` }} />
+      <CardContent className="py-6">
+        {!data ? <Skeleton className="h-[320px] w-full" /> : null}
+        {data && categories.length === 0 ? (
+          <Empty className="min-h-72 border">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><NetworkIcon /></EmptyMedia>
+              <EmptyTitle>No category distribution yet</EmptyTitle>
+              <EmptyDescription>No categorized reports were published in this window.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : null}
+        {categories.length ? (
+          <div className="grid items-center gap-8 lg:grid-cols-[minmax(280px,0.8fr)_minmax(0,1.2fr)]">
+            <ChartContainer
+              config={chartConfig}
+              className="mx-auto h-[310px] w-full max-w-[390px]"
+              role="img"
+              aria-label="Donut chart showing the share of published reports in each category"
+            >
+              <PieChart accessibilityLayer>
+                <ChartTooltip
+                  cursor={false}
+                  content={<ChartTooltipContent hideLabel nameKey="slug" />}
+                />
+                <Pie
+                  data={chartData}
+                  dataKey="articles"
+                  nameKey="slug"
+                  innerRadius={82}
+                  outerRadius={124}
+                  paddingAngle={2}
+                  strokeWidth={3}
+                >
+                  <Label
+                    content={({ viewBox }) => {
+                      if (!viewBox || !('cx' in viewBox) || !('cy' in viewBox)) return null
+                      return (
+                        <text x={viewBox.cx} y={viewBox.cy} textAnchor="middle" dominantBaseline="middle">
+                          <tspan x={viewBox.cx} y={viewBox.cy} className="fill-foreground text-3xl font-semibold tabular-nums">
+                            {total.toLocaleString()}
+                          </tspan>
+                          <tspan x={viewBox.cx} y={(viewBox.cy ?? 0) + 24} className="fill-muted-foreground text-xs">
+                            reports
+                          </tspan>
+                        </text>
+                      )
+                    }}
+                  />
+                </Pie>
+              </PieChart>
+            </ChartContainer>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {chartData.map((category) => (
+                <div key={category.slug} className="flex items-center gap-3 rounded-2xl border bg-muted/20 p-3">
+                  <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: category.color }} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{category.name_en}</span>
+                    <span className="text-xs text-muted-foreground">{category.events} events</span>
+                  </span>
+                  <span className="text-right">
+                    <span className="block text-sm font-semibold tabular-nums">{category.share}%</span>
+                    <span className="text-[11px] tabular-nums text-muted-foreground">{category.articles} reports</span>
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
-        ))}
+        ) : null}
       </CardContent>
     </Card>
   )
