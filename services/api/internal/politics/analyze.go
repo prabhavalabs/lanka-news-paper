@@ -118,7 +118,8 @@ func (store *Store) Backfill(ctx context.Context, limit int) error {
 			continue
 		}
 		if response.Provider == "none" {
-			return errors.Join(failures...)
+			failures = append(failures, fmt.Errorf("analyze article %s: no model provider responded", article.id))
+			continue
 		}
 		analysis, err := parseAnalysis(response.Text)
 		if err != nil {
