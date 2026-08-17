@@ -139,6 +139,12 @@ export type KnowledgeArticle = {
     model: string;
     economic_frame: number;
     confidence: number;
+    relevant: boolean;
+    label: 'left' | 'center_left' | 'neutral' | 'center_right' | 'right' | 'unclear';
+    rationale: string;
+    evidence: string[];
+    provider_id: string;
+    provider_model: string;
     mentions: {
       party_slug: string;
       stance: number;

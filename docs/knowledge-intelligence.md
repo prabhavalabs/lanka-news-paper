@@ -1,19 +1,19 @@
-# News knowledge and political framing
+# News knowledge and narration intelligence
 
-Status: first auditable implementation, August 2026
+Status: multilingual ML v2, August 2026
 
-## The product story
+## Product story
 
-A newsroom does not receive isolated articles. It receives many accounts of the same real-world event, published at different times and written from different editorial perspectives. The useful unit is therefore not only an article. It is a chain:
+A newsroom receives several accounts of the same real-world event. The system therefore keeps article, event, category, publisher, and narration as separate concepts:
 
 1. A publisher produces an article.
-2. The article is assigned a subject category.
-3. Reports about the same occurrence are grouped into an event.
-4. The event becomes a node in a living timeline.
-5. If political actors are discussed, the system records what was discussed and how it was framed.
-6. Only after enough comparable articles exist may the system describe an outlet-level tendency.
+2. The article is normalized and assigned a semantic category.
+3. Similar reports are clustered into one event.
+4. Events become nodes in the knowledge graph and timeline.
+5. A multilingual model evaluates how each article narrates economic policy.
+6. Only repeated, confident, relevant results contribute to an outlet tendency.
 
-That last distinction is fundamental. Reporting about a left-wing party is not left-wing reporting. The political-intelligence layer must first identify the actor, then evaluate the language used toward that actor, and only then aggregate repeated evidence.
+Reporting about a left-wing party is not automatically left-wing reporting. Party identity is not an input to the narration score. An article can criticize a left-wing party using left-economic arguments, support a right-wing party using state-led arguments, or mention either party without expressing any economic framing.
 
 ```mermaid
 flowchart LR
@@ -22,213 +22,200 @@ flowchart LR
     B --> D["Cross-source event"]
     C --> E["Knowledge graph"]
     D --> E
-    B --> F["Party mentions"]
-    F --> G["Article framing signal"]
-    G --> H["Minimum-sample guardrail"]
-    H --> I["Outlet tendency"]
+    B --> F["Multilingual narration model"]
+    F --> G["Article score, confidence, rationale, evidence"]
+    G --> H["Relevance and confidence guardrails"]
+    H --> I["Event-deduplicated outlet tendency"]
 ```
 
-## What the knowledge page now does
+## Knowledge-page interaction
 
-The event map occupies the full content container. Category nodes sit on the left, event nodes occupy the timeline, and publisher nodes sit on the right. A user can:
+The event map fills the content container. Category nodes sit on the left, event nodes occupy the timeline, and publisher nodes sit on the right. Users can:
 
-- drag empty canvas space to pan;
-- use a mouse wheel or trackpad to zoom around the pointer;
-- use accessible zoom-in, zoom-out, and reset buttons;
-- select an event node with a pointer or keyboard;
-- inspect all reports for that event in a horizontal, snap-scrolling article rail;
-- filter the server-backed graph by time window and semantic category through URL query parameters.
+- pan the graph by dragging empty canvas space;
+- zoom around the pointer without scrolling the page;
+- use accessible zoom-in, zoom-out, and reset controls;
+- select an event with a pointer or keyboard;
+- inspect its reports in a Shadcn scroll area that supports wheel, trackpad, scrollbar, and drag scrolling;
+- filter the server-rendered graph using preset or custom date ranges and category URL parameters.
 
-The graph is native SVG. No graph dependency was added because the existing deterministic layout already supplied the nodes and edges; a viewport transform was sufficient for mind-map interaction.
+## Two different political views
 
-## The political spectrum is one named axis
+The UI deliberately shows two related but independent views.
 
-“Left” and “right” are not complete descriptions of Sri Lankan politics. Economic policy, nationalism, minority rights, institutional reform, and social values do not always move together. A single anonymous score would hide those differences.
+### Curated party-policy reference
 
-The first release therefore names its axis explicitly:
+The party map is a human-reviewed reference on one named axis:
 
-> **Economic policy: state-led (-1) to market-led (+1)**
+> Economic policy: state-led (-1) to market-led (+1)
 
-This is a provisional analytical baseline, not a moral rating, a measure of truth, or a permanent label. Party rows store a confidence, rationale, and evidence URLs so the placement can be reviewed and updated as manifestos and governing records change.
+It is not a moral rating, a truth score, or the source of an article score. Each placement has a confidence, rationale, and evidence links so an editor can challenge and revise it.
 
-### Initial party baseline
-
-| Party | Position | Display band | Why it starts there | Confidence |
+| Party | Position | Display band | Initial rationale | Confidence |
 | --- | ---: | --- | --- | ---: |
 | Frontline Socialist Party (FSP) | -0.95 | Far left | Explicit Marxist orientation | 0.82 |
 | Janatha Vimukthi Peramuna (JVP) | -0.90 | Far left | Marxist-Leninist roots and socialist programme | 0.92 |
-| National People's Power (NPP) | -0.40 | Center-left | Equity, economic democracy, and social protection combined with a mixed, market-participating economy | 0.78 |
-| Sri Lanka Freedom Party (SLFP) | -0.25 | Center-left | Historically state-oriented and social-democratic, with later market-policy convergence | 0.70 |
-| Sri Lanka Podujana Peramuna (SLPP) | +0.05 | Center | Mixed populist economic record; clearer on nationalism than on a stable economic left/right position | 0.55 |
-| Samagi Jana Balawegaya (SJB) | +0.15 | Center | Social-market and welfare commitments alongside market-friendly policy | 0.62 |
-| United National Party (UNP) | +0.55 | Center-right | Historically the most market-liberal major party | 0.82 |
+| National People's Power (NPP) | -0.40 | Center-left | Equity and social protection combined with a mixed economy | 0.78 |
+| Sri Lanka Freedom Party (SLFP) | -0.25 | Center-left | Historically state-oriented, with later market-policy convergence | 0.70 |
+| Sri Lanka Podujana Peramuna (SLPP) | +0.05 | Center | Economically mixed and populist | 0.55 |
+| Samagi Jana Balawegaya (SJB) | +0.15 | Center | Social-market welfare commitments with market-friendly policy | 0.62 |
+| United National Party (UNP) | +0.55 | Center-right | Historically the strongest market-liberal major party | 0.82 |
 
-The NPP and JVP are intentionally separate. The JVP retains a far-left historical and organizational baseline. The broader NPP coalition sits between the left and center and closer to the center, reflecting its broader membership and mixed-economy programme.
+Initial evidence includes the [Election Commission party register](https://elections.gov.lk/en/political_party/political_party_list_E.html), [NPP policy site](https://www.npp.lk/en), [JVP publications](https://www.jvpsrilanka.com/english/), [Verité Research party mapping](https://www.veriteresearch.org/publication/mapping-sri-lankas-political-parties/), and [LSE research on the JVP](https://eprints.lse.ac.uk/41306/).
 
-The initial evidence set includes:
+### Machine-scored article narration
 
-- [Election Commission recognized-party register](https://elections.gov.lk/en/political_party/political_party_list_E.html)
-- [JVP official publications](https://www.jvpsrilanka.com/english/)
-- [NPP official policy site](https://www.npp.lk/en)
-- [NPP policy statement](https://www.npp.lk/up/policies/en/npppolicystatement.pdf)
-- [Verité Research: Mapping Sri Lanka's Political Parties](https://www.veriteresearch.org/publication/mapping-sri-lankas-political-parties/)
-- [LSE Research Online: Sectarian socialism and the JVP](https://eprints.lse.ac.uk/41306/)
-- [SJB economic blueprint reporting](https://www.ft.lk/top-story/SJB-unveils-economic-blueprint-V3-with-a-view-for-Presidency/26-766363)
+The production analyzer is `political-narration-ml-v2`. It uses the local `qwen3:4b` multilingual transformer through Ollama's OpenAI-compatible structured-output endpoint. Qwen3's published language coverage includes Sinhala and Tamil, but that capability claim is not a substitute for a Sri Lankan evaluation set.
 
-## How article framing is calculated
+The score means:
 
-The current model is `political-framing-rules-v1`. It is transparent weak supervision, not a trained black-box classifier.
+| Score | Label | Interpretation |
+| ---: | --- | --- |
+| `-1.00` to `-0.60` | Left | Strongly state-led, redistributive, labour-oriented, universal-welfare, or anti-privatization narration |
+| `-0.59` to `-0.16` | Center-left | Moderately left-economic narration |
+| `-0.15` to `+0.15` | Neutral / mixed | Balanced, descriptive, mixed, or non-directional narration |
+| `+0.16` to `+0.59` | Center-right | Moderately market-oriented narration |
+| `+0.60` to `+1.00` | Right | Strongly private-enterprise, deregulatory, market-allocation, privatization, or lower-tax narration |
 
-### Step 1: find political actors
+The axis measures economic narration only. It does not currently score nationalism, minority rights, institutional liberalism, religion, or social values. Those require separate named axes rather than one overloaded number.
 
-Each party stores English and Sinhala aliases, including common abbreviations and major leader names. The analyzer scans the headline and description and records unique token positions. Articles without a recognized actor receive no political label.
+## Article algorithm
 
-### Step 2: inspect local narrative context
+### 1. Prepare untrusted text
 
-For every mention, the analyzer inspects a small token window around that mention. It counts favorable and critical terms in English and Sinhala. Local windows matter because one headline may praise one party while criticizing another.
+The worker takes the RSS headline and description, removes HTML plus script/style content, decodes entities, collapses whitespace, and caps the excerpt at 6,000 Unicode characters. Article text is explicitly delimited as untrusted data so instructions embedded in a feed cannot override the analysis prompt.
 
-For a party mention:
+This release analyzes the feed excerpt, not a scraped full article. Full-text extraction should be added only after publisher-specific extraction quality and rights are validated.
 
-```text
-stance = (favorable_terms - critical_terms)
-         / (favorable_terms + critical_terms)
+### 2. Request structured ML inference
+
+The model must return this typed contract:
+
+```json
+{
+  "relevant": true,
+  "score": -0.42,
+  "label": "center_left",
+  "confidence": 0.78,
+  "rationale": "The report presents public provision as necessary for universal access.",
+  "evidence": ["essential services must remain publicly owned"]
+}
 ```
 
-The result ranges from `-1` (critical) through `0` (neutral or unclear) to `+1` (favorable). If no directional evidence is present, the system records the mention but deliberately keeps confidence below the scoring threshold.
+The prompt requires the model to:
 
-### Step 3: separate actor position from narrative stance
+- judge reporter/editorial narration rather than the identity of a speaker;
+- distinguish attributed quotations from the article's own framing;
+- treat a party or politician name as no evidence by itself;
+- abstain with `relevant=false` when meaningful political-economic framing is absent;
+- return short evidence phrases from the supplied text;
+- avoid inferring a permanent publisher label from one article.
 
-An article's economic framing signal is a confidence-weighted combination:
+The API validates score and confidence ranges, rejects unknown or trailing JSON, derives the label from fixed score bands, limits evidence length, and forces irrelevant results to score `0` with label `unclear`.
+
+### 3. Persist provenance
+
+Every result stores:
+
+- algorithm version;
+- relevance, score, label, and confidence;
+- rationale and evidence phrases;
+- provider ID and provider model;
+- analysis timestamp.
+
+Changing the algorithm version automatically makes older articles eligible for backfill without modifying their source data.
+
+## Outlet aggregation
+
+An article result contributes only when it is relevant and uses the current model. A confidence of `0.60` is required for directional aggregation.
+
+Reports from the same source about the same clustered event are first collapsed into one sample. This prevents repeated updates or near-duplicates from giving one event disproportionate influence.
+
+For each outlet:
 
 ```text
-article_frame = weighted_mean(party_economic_position × stance_toward_party)
+event_score = confidence_weighted_mean(article_scores_in_event)
+raw_outlet_score = confidence_weighted_mean(event_scores)
+displayed_score = raw_outlet_score × n / (n + 5)
 ```
 
-Examples:
+The final term is neutral shrinkage: small samples move toward zero. The UI requires at least five confident, relevant event samples before placing an outlet on the spectrum. Five is a bootstrap threshold for the local corpus, not a publication-grade statistical guarantee; raise it after recall and coverage are measured.
 
-- favorable framing of JVP contributes leftward;
-- critical framing of JVP contributes rightward;
-- favorable framing of UNP contributes rightward;
-- a neutral mention contributes no directional signal;
-- conflicting evidence reduces or cancels the final signal.
-
-This multiplication is why party coverage and article framing are separate concepts.
-
-### Step 4: aggregate an outlet only when evidence is sufficient
-
-An outlet needs at least five confidently scored reports in the selected time window. Below that threshold the UI says **insufficient directional evidence**.
-
-Qualified article signals use a confidence-weighted mean, then a neutral prior shrinks small samples toward zero:
-
-```text
-raw_outlet_frame = sum(article_frame × confidence) / sum(confidence)
-shrunk_frame     = raw_outlet_frame × n / (n + 5)
-```
-
-The shrinkage prevents five extreme headlines from being displayed as a permanent, high-confidence outlet identity. Time-window filters also mean the metric describes recent framing, not an immutable property of a publisher.
+The result always describes the selected time and category window. It is a recent narration tendency, not a permanent political identity.
 
 ## Metric contract
 
 | Metric | Grain | Definition | Guardrail |
 | --- | --- | --- | --- |
-| Party mention coverage | Article | Article contains at least one recognized alias | Does not imply a political leaning |
-| Article economic frame | Article | Weighted party position multiplied by local stance | Direction hidden below 0.45 confidence |
-| Scored reports | Source × time window | Party-related reports at or above 0.45 confidence | Minimum five before outlet placement |
-| Outlet framing tendency | Source × time window | Confidence-weighted, neutral-shrunk mean | Recomputed per URL time/category filter |
-| Party baseline confidence | Party | Confidence in curated economic placement | Rationale and source evidence are mandatory |
+| Relevant narration | Article | Meaningful economic-policy framing is present | Irrelevant stories abstain and score zero |
+| Narration score | Article | ML estimate on the named `-1..+1` economic axis | Direction is visually uncertain below `0.60` confidence |
+| Evidence | Article | Up to three short phrases supporting the result | Must come from supplied article text |
+| Scored events | Source × window | Distinct relevant events at or above `0.60` confidence | Avoids duplicate-event weighting |
+| Outlet tendency | Source × window | Confidence-weighted, neutral-shrunk mean | Minimum sample and URL-scoped recomputation |
+| Party baseline | Party | Human-curated economic-policy reference | Never enters article or outlet score calculation |
 
-These metrics must not be used to claim that an article is true or false, that an outlet supports a party, or that a party has only one ideological dimension.
+None of these metrics determines truth, factual accuracy, intent, party support, or an outlet's immutable ideology.
 
 ## Data model and runtime
 
-Migration `000017_political_framing` adds:
+Migration `000017_political_framing` introduced party references and article analysis. Migration `000019_narration_framing` adds relevance, label, rationale, evidence, and model provenance.
 
-- `political_parties`: editable baselines, aliases, confidence, rationale, and evidence;
-- `article_political_analysis`: model version, economic frame, confidence, mention evidence, and analysis timestamp.
+The LLM gateway uses database-configured provider and task profiles. Local development seeds:
 
-The ingest worker runs political backfill after polling. It analyzes published articles that have no result or an older model version. New model versions can therefore re-evaluate the corpus without deleting source articles.
+- provider: `local-ollama`;
+- kind: `openai_compatible`;
+- endpoint: `http://host.docker.internal:11434/v1`;
+- task: `narration_framing`;
+- model: `qwen3:4b`;
+- timeout: 90 seconds.
 
-The existing `/api/admin/knowledge-graph` response includes:
+The provider is disabled by default so a deployment without Ollama never pretends to have analyzed an article. When no enabled provider exists, the worker leaves articles untouched for a later retry. No API secret is required for the local Ollama endpoint.
 
-- political analysis on relevant article cards;
-- the current party baseline;
-- outlet aggregates for the selected server-side time/category scope;
-- the minimum-sample and model metadata needed by the UI.
+The ingest worker processes a bounded batch after polling. The knowledge-graph API returns current article evidence, party references, outlet aggregates, minimum sample, and model metadata for the selected server-side scope.
 
-The current implementation lives in:
+Core implementation files:
 
 - `services/api/internal/politics/analyze.go`
+- `services/api/internal/llm/gateway.go`
 - `services/api/internal/desk/store.go`
-- `services/api/migrations/000017_political_framing.up.sql`
+- `services/api/migrations/000018_openai_compatible.up.sql`
+- `services/api/migrations/000019_narration_framing.up.sql`
 - `apps/admin/src/pages/knowledge-graph-page.tsx`
-- `apps/admin/src/lib/knowledge-graph.ts`
 
-## Validation snapshot
+## Validation and promotion path
 
-The first local backfill evaluated 572 published articles. Twenty-six contained a recognized party reference. None had enough high-confidence directional language to qualify an outlet for placement, so the UI correctly displayed every observed outlet as **insufficient** rather than inventing a leaning.
+The local model is a zero-shot ML baseline, not a scientifically calibrated Sri Lankan media-bias classifier. Before production claims are made:
 
-That is a successful guardrail, not a failed model. The page can always show the evidence it has; it must never manufacture certainty to make a chart look populated.
+1. Sample at least 500 excerpts balanced across Sinhala, Tamil, English, publishers, subjects, and score bands.
+2. Split evaluation data by event and time so syndicated or near-duplicate reports cannot leak between train and test.
+3. Ask at least two Sri Lankan political-context annotators to label relevance, narration direction, confidence, evidence, and whether language is quotation or reporter framing.
+4. Measure inter-annotator agreement and adjudicate disagreements.
+5. Report macro F1 per language, relevance precision/recall, mean absolute score error, calibration error, and confident-score coverage.
+6. Inspect counterfactual tests where party names are swapped but the economic argument is unchanged; the score should remain stable.
+7. Run prompt/model candidates in shadow mode and store disagreements for editorial review.
+8. Promote a new version only when it improves calibrated precision across languages, not just majority-class accuracy.
 
-## Moving from rules to multilingual machine learning
-
-The rules model is a bootstrap and audit baseline. It should remain available even after an ML model is introduced because it provides deterministic fallback behavior and interpretable regression cases.
-
-### Phase 1: build the labeled dataset
-
-1. Sample at least 500 party-context spans across Sinhala, Tamil, and English.
-2. Split by event and time, not random article row, so near-duplicate reports cannot leak into train and test sets.
-3. Have two Sri Lankan political-context annotators label:
-   - party/entity;
-   - favorable, neutral, critical, or unclear stance;
-   - evidence phrase;
-   - whether the context is quotation, reporter narration, or headline framing.
-4. Measure inter-annotator agreement and adjudicate disagreements before training.
-
-### Phase 2: train and calibrate
-
-A small multilingual encoder or embedding classifier is sufficient; a generative model is not required for every article. Compare it against the rules baseline using:
-
-- macro F1 across favorable/neutral/critical classes;
-- per-language recall;
-- expected calibration error;
-- precision at the chosen abstention threshold;
-- coverage: the percentage of articles the model is confident enough to score.
-
-The release target should optimize calibrated precision, not raw coverage. “Unclear” is a valid and often preferable result.
-
-### Phase 3: shadow deployment
-
-Run the trained model beside `political-framing-rules-v1` without changing the UI. Store disagreements for editorial review. Promote the model only when it is calibrated across languages and parties, not merely accurate on the majority class.
-
-### Phase 4: governance and drift
-
-- review party baselines after elections, manifestos, splits, and coalition changes;
-- maintain an immutable history of baseline edits;
-- monitor score distribution by language and publisher;
-- audit false positives involving personal names and abbreviations;
-- provide an editorial correction mechanism;
-- never train directly on an outlet-level label inferred by this system, which would create a feedback loop.
-
-## Mentorship notes: why the system is designed this way
-
-The tempting implementation is to ask a model, “Is this article left or right?” and draw a confident dot. That is easy to demo and hard to defend.
-
-The engineering lesson is to decompose an ambiguous judgment into observable steps. We can inspect whether an actor was mentioned. We can show the words that affected a stance score. We can document the party baseline. We can count the sample. We can abstain. Each stage can be tested, corrected, and eventually replaced by a better model without changing the product's conceptual contract.
-
-The UI follows the same principle. It displays the curated party map, article-level evidence, and source aggregate as separate layers. A user can understand where a result came from and where uncertainty entered the pipeline. That traceability is more valuable than a visually impressive but unexplained “bias score.”
+A later fine-tuned multilingual encoder may be cheaper and more reproducible at scale. It should replace this baseline only after the labeled dataset exists; selecting an architecture before that evidence would be premature.
 
 ## Operational checks
 
-After a migration or model-version change:
+After a model or migration change:
 
 1. Run database migrations.
-2. Start or restart the worker; the periodic poll performs the backfill.
-3. Confirm published and analyzed counts are plausible.
-4. Inspect party-mention examples for false aliases.
-5. Confirm low-confidence articles display “Framing unclear.”
-6. Confirm sources below five scored articles remain “insufficient.”
-7. Test the 1-, 7-, and 30-day URL filters independently.
-8. Run Go tests and vet, admin tests, type checking, and the production build.
-9. Browser-test desktop and mobile layouts, keyboard event selection, canvas pan/zoom/reset, and horizontal article scrolling.
+2. Confirm the configured provider and exact model are reachable from the worker.
+3. Restart the worker and verify `llm_calls` outcomes.
+4. Compare published, analyzed, relevant, and high-confidence counts.
+5. Review examples near `-1`, `0`, and `+1` in every supported language.
+6. Confirm party-name-only and non-political stories abstain.
+7. Confirm sources below the minimum sample remain unplaced.
+8. Test preset/custom date and category URL filters.
+9. Run race-enabled Go tests, vet, admin tests, type checking, and production builds.
+10. Browser-test evidence tooltips, keyboard navigation, pan/zoom, and article-rail scrolling.
 
-Any model update must increase the model version, include a labeled evaluation report, and preserve the ability to explain every displayed source-level point.
+Every visible score must remain traceable to a model version, confidence, rationale, and source-text evidence.
+
+## Model and runtime references
+
+- [Qwen3 multilingual capabilities](https://qwenlm.github.io/blog/qwen3/)
+- [Ollama `qwen3:4b` model card](https://ollama.com/library/qwen3:4b)
+- [Ollama structured outputs](https://docs.ollama.com/capabilities/structured-outputs)

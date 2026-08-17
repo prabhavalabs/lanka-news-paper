@@ -66,8 +66,6 @@ const client = createClient()
 const dayOptions = [1, 7, 30] as const
 const dateFormatter = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' })
 const rangeDateFormatter = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' })
-type PoliticalParty = KnowledgeGraph['political']['parties'][number]
-
 export function KnowledgeGraphPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedDays = Number(searchParams.get('days') || 1)
@@ -193,7 +191,7 @@ export function KnowledgeGraphPage() {
               <EventGraph data={graph.data} selectedID={selected?.id ?? ''} onSelect={setSelectedID} />
             ) : null}
           </div>
-          <EventArticleRail event={selected} parties={graph.data?.political.parties ?? []} />
+          <EventArticleRail event={selected} />
         </CardContent>
       </Card>
 
@@ -487,11 +485,10 @@ function EventGraph({
   )
 }
 
-function EventArticleRail({ event, parties }: { event?: KnowledgeEvent; parties: PoliticalParty[] }) {
+function EventArticleRail({ event }: { event?: KnowledgeEvent }) {
   const drag = useRef<{ pointerId: number; startX: number; scrollLeft: number; moved: boolean } | null>(null)
   const suppressClick = useRef(false)
   const sourceCount = new Set(event?.articles.map((article) => article.source_id)).size
-  const partyNames = new Map(parties.map((party) => [party.slug, party.short_name]))
   return (
     <section className="border-t px-6 py-5" aria-label="Articles reporting the selected event">
       {!event ? <p className="text-sm text-muted-foreground">Select an event node to inspect it.</p> : (
@@ -574,19 +571,16 @@ function EventArticleRail({ event, parties }: { event?: KnowledgeEvent; parties:
                 </span>
                 {article.political ? (
                   <span className="mt-3 flex flex-wrap items-center gap-1.5">
-                    {article.political.mentions.map((mention) => (
-                      <Badge
-                        key={mention.party_slug}
-                        variant="outline"
-                        title={`${partyNames.get(mention.party_slug) ?? mention.party_slug}: ${stanceLabel(mention.stance)}`}
-                      >
-                        {partyNames.get(mention.party_slug) ?? mention.party_slug.toUpperCase()}
-                      </Badge>
-                    ))}
+                    <Badge
+                      variant="outline"
+                      title={[article.political.rationale, ...article.political.evidence].filter(Boolean).join(' · ')}
+                    >
+                      {article.political.confidence >= 0.6
+                        ? narrationLabel(article.political.economic_frame)
+                        : 'Narration uncertain'}
+                    </Badge>
                     <span className="text-[11px] text-muted-foreground">
-                      {article.political.confidence >= 0.45
-                        ? frameLabel(article.political.economic_frame)
-                        : 'Framing unclear'}
+                      {article.political.economic_frame.toFixed(2)} · {Math.round(article.political.confidence * 100)}% confidence
                     </span>
                   </span>
                 ) : null}
@@ -614,9 +608,9 @@ function PoliticalSpectrum({ data }: { data?: KnowledgeGraph }) {
   return (
     <Card className="gap-0 py-0 shadow-sm">
       <CardHeader className="grid-cols-1! border-b py-6 sm:grid-cols-[1fr_auto]!">
-        <CardTitle>Political framing monitor</CardTitle>
+        <CardTitle>Political narration monitor</CardTitle>
         <CardDescription>
-          Compare an evidence-backed party baseline with how current reporting frames those parties.
+          Measure how reporting frames economic policy, independently of which party or politician it mentions.
         </CardDescription>
         <CardAction className="col-start-1 row-span-1 row-start-3 mt-2 flex items-center gap-2 justify-self-start sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:justify-self-end">
           <Badge variant="outline" className="gap-1.5"><ScaleIcon />Economic axis</Badge>
@@ -664,8 +658,8 @@ function PoliticalSpectrum({ data }: { data?: KnowledgeGraph }) {
           <section className="rounded-2xl border p-5" aria-labelledby="source-framing-title">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1">
-                <h2 id="source-framing-title" className="font-heading font-semibold">Outlet framing tendency</h2>
-                <p className="text-xs text-muted-foreground">Only shown after {political?.minimum_sample ?? 5} scored reports</p>
+                <h2 id="source-framing-title" className="font-heading font-semibold">Outlet narration tendency</h2>
+                <p className="text-xs text-muted-foreground">Only placed after {political?.minimum_sample ?? 5} confident, relevant events</p>
               </div>
               <Badge variant="outline">Shrunk average</Badge>
             </div>
@@ -676,7 +670,9 @@ function PoliticalSpectrum({ data }: { data?: KnowledgeGraph }) {
                     <SourceAvatar name={source.source} iconUrl={source.source_icon} className="size-7" />
                     <span className="min-w-0 flex-1 truncate text-sm font-medium">{source.source}</span>
                     <span className="text-[11px] tabular-nums text-muted-foreground">
-                      {source.qualified ? frameLabel(source.economic_frame) : `${source.scored_articles}/${political.minimum_sample} scored`}
+                      {source.qualified
+                        ? `${narrationLabel(source.economic_frame)} · ${source.economic_frame.toFixed(2)}`
+                        : `${source.scored_articles}/${political.minimum_sample} scored`}
                     </span>
                   </div>
                   <div className="relative h-1.5 rounded-full bg-muted">
@@ -694,20 +690,20 @@ function PoliticalSpectrum({ data }: { data?: KnowledgeGraph }) {
                     )}
                   </div>
                   {!source.qualified ? (
-                    <p className="text-[10px] text-muted-foreground">{source.mentioned_articles} party-related reports; insufficient directional evidence</p>
+                    <p className="text-[10px] text-muted-foreground">{source.mentioned_articles} relevant events; insufficient confident evidence</p>
                   ) : null}
                 </div>
               )) : (
-                <p className="rounded-xl bg-muted/50 p-4 text-sm text-muted-foreground">No party-related reporting in this window yet.</p>
+                <p className="rounded-xl bg-muted/50 p-4 text-sm text-muted-foreground">No economically relevant narration has been scored in this window yet.</p>
               )}
             </div>
           </section>
         </div>
 
         <div className="grid gap-3 rounded-2xl border bg-primary/[0.035] p-4 text-xs text-muted-foreground md:grid-cols-3">
-          <p><strong className="text-foreground">Party position</strong><br />A curated economic-policy baseline with evidence and confidence—not a universal truth score.</p>
-          <p><strong className="text-foreground">Article framing</strong><br />Favorable or critical language near a party mention; mentioning a party alone does not imply bias.</p>
-          <p className="flex gap-2"><ShieldCheckIcon className="mt-0.5 size-4 shrink-0 text-primary" /><span><strong className="text-foreground">Outlet safeguard</strong><br />Low samples remain “insufficient” and the aggregate is pulled toward neutral to avoid premature labels.</span></p>
+          <p><strong className="text-foreground">Party reference</strong><br />The curated party map provides political context; it is never used to calculate an article's narration score.</p>
+          <p><strong className="text-foreground">Article narration</strong><br />A multilingual model scores state-led to market-led framing from -1 to +1 and returns supporting text evidence.</p>
+          <p className="flex gap-2"><ShieldCheckIcon className="mt-0.5 size-4 shrink-0 text-primary" /><span><strong className="text-foreground">Outlet safeguard</strong><br />Irrelevant stories are excluded, duplicate events are collapsed, and small samples are pulled toward neutral.</span></p>
         </div>
       </CardContent>
     </Card>
@@ -845,14 +841,10 @@ function spectrumPositionLabel(value: number) {
   return 'right'
 }
 
-function stanceLabel(value: number) {
-  if (value > 0.2) return 'favorable framing'
-  if (value < -0.2) return 'critical framing'
-  return 'neutral or unclear framing'
-}
-
-function frameLabel(value: number) {
-  if (value < -0.15) return 'Left-framed'
-  if (value > 0.15) return 'Right-framed'
-  return 'Neutral / mixed'
+function narrationLabel(value: number) {
+  if (value <= -0.6) return 'Left narration'
+  if (value < -0.15) return 'Center-left narration'
+  if (value <= 0.15) return 'Neutral / mixed'
+  if (value < 0.6) return 'Center-right narration'
+  return 'Right narration'
 }
