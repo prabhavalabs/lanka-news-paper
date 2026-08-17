@@ -100,6 +100,11 @@ func (poller *Poller) PollAll(ctx context.Context) error {
 			poller.logger.Error("poll failed", "endpoint", item.endpointID, "error", err)
 		}
 	}
+	if poller.clusters != nil {
+		if err := poller.clusters.Backfill(ctx, 1000); err != nil {
+			return fmt.Errorf("backfill event clusters: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -303,7 +308,7 @@ func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, right
 		return false, nil
 	}
 	if status == "published" && poller.clusters != nil {
-		return true, poller.clusters.Attach(ctx, articleID.String(), headline, publishedAt)
+		return true, poller.clusters.Attach(ctx, articleID.String())
 	}
 	return true, nil
 }
