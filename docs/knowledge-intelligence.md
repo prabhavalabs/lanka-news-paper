@@ -65,7 +65,7 @@ Initial evidence includes the [Election Commission party register](https://elect
 
 ### Machine-scored article narration
 
-The production analyzer is `political-narration-ml-v4`. It uses the local `qwen3:4b` multilingual transformer through Ollama's OpenAI-compatible structured-output endpoint. Qwen3's published language coverage includes Sinhala and Tamil, but that capability claim is not a substitute for a Sri Lankan evaluation set.
+The production analyzer is `political-narration-ml-v5`. It uses the local `qwen3:4b` multilingual transformer through Ollama's OpenAI-compatible structured-output endpoint. Qwen3's published language coverage includes Sinhala and Tamil, but that capability claim is not a substitute for a Sri Lankan evaluation set.
 
 The score means:
 
@@ -107,7 +107,7 @@ The prompt requires the model to:
 - score neutral reporting as zero even when the policy being reported is itself left- or right-wing;
 - require narrator-authored endorsement, criticism, loaded wording, causal judgment, or a recommendation before assigning a directional score;
 - treat a party or politician name as no evidence by itself;
-- use the internal sentinel `narration_score=2` when meaningful political-economic framing is absent;
+- return economic-policy relevance separately from the narration score, so an irrelevant article cannot be confused with neutral narration;
 - reject incidental language such as Sinhala “පෞද්ගලික හේතු” or Tamil “தனிப்பட்ட காரணங்கள்” (personal reasons), which does not mean private-enterprise framing;
 - return short evidence phrases from the supplied text;
 - avoid inferring a permanent publisher label from one article.

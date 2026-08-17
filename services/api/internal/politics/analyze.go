@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	Model = "political-narration-ml-v4"
+	Model = "political-narration-ml-v5"
 	task  = "narration_framing"
 )
 
@@ -41,12 +41,13 @@ func NewStore(pool *pgxpool.Pool, model *llm.Gateway) *Store {
 var schema = map[string]any{
 	"type":                 "object",
 	"additionalProperties": false,
-	"required":             []string{"narration_score", "confidence", "rationale", "evidence"},
+	"required":             []string{"economic_policy_relevance", "narration_score", "confidence", "rationale", "evidence"},
 	"properties": map[string]any{
-		"narration_score": map[string]any{"type": "number", "minimum": -1, "maximum": 2},
-		"confidence":      map[string]any{"type": "number", "minimum": 0, "maximum": 1},
-		"rationale":       map[string]any{"type": "string"},
-		"evidence":        map[string]any{"type": "array", "maxItems": 3, "items": map[string]any{"type": "string"}},
+		"economic_policy_relevance": map[string]any{"type": "integer", "minimum": 0, "maximum": 1},
+		"narration_score":           map[string]any{"type": "number", "minimum": -1, "maximum": 1},
+		"confidence":                map[string]any{"type": "number", "minimum": 0, "maximum": 1},
+		"rationale":                 map[string]any{"type": "string"},
+		"evidence":                  map[string]any{"type": "array", "maxItems": 3, "items": map[string]any{"type": "string"}},
 	},
 }
 
@@ -57,7 +58,7 @@ Return a score on one axis:
 -  0.0: neutral, balanced, mixed, descriptive, or no directional economic framing
 - +1.0: strongly economic-right narration (private enterprise/ownership, deregulation, market allocation, privatization, lower taxation)
 
-First apply a strict relevance gate. Return narration_score=2 when the article does NOT meaningfully evaluate or frame economic policy. Otherwise return a narration_score from -1 to +1. Economic policy includes public/private ownership, privatization, redistribution, labour policy, welfare, taxation, regulation, and market allocation. Mere economic-sounding words are insufficient. Appointments, resignations, crimes, accidents, sport, personal or professional reasons, job titles, and incidental prices must score 2 unless the article actually frames an economic-policy choice. In Sinhala, “පෞද්ගලික හේතු” means personal reasons and must score 2, not private-enterprise framing. In Tamil, “தனிப்பட்ட காரணங்கள்” likewise means personal reasons and must score 2.
+First apply a strict relevance gate. Set economic_policy_relevance=0 when the article does NOT meaningfully discuss economic policy, and set narration_score=0. Set economic_policy_relevance=1 only when it does; then return a narration_score from -1 to +1. Economic policy includes public/private ownership, privatization, redistribution, labour policy, welfare, taxation, regulation, and market allocation. Mere economic-sounding words are insufficient. Appointments, resignations, crimes, accidents, sport, personal or professional reasons, job titles, and incidental prices require economic_policy_relevance=0 unless the article actually discusses an economic-policy choice. In Sinhala, “පෞද්ගලික හේතු” means personal reasons and is not private-enterprise framing. In Tamil, “தனிப்பட்ட காரணங்கள்” likewise means personal reasons.
 
 Only after the relevance gate, perform stance detection on the JOURNALIST'S narration. This is not a classifier for the policy being discussed. A party name, speaker identity, government action, state institution, market actor, or quotation alone is not directional evidence. A neutrally attributed economic-policy claim is relevant but must score 0. Direction requires narrator-authored endorsement, criticism, loaded wording, causal judgment, or a recommendation that favors one side of the axis. If those cues are mixed or absent, score 0 even when the subject itself is strongly left- or right-wing.
 
@@ -160,10 +161,11 @@ func parseAnalysis(value string) (Analysis, error) {
 	value = strings.TrimPrefix(value, "```")
 	value = strings.TrimSuffix(value, "```")
 	var output struct {
-		NarrationScore float64  `json:"narration_score"`
-		Confidence     float64  `json:"confidence"`
-		Rationale      string   `json:"rationale"`
-		Evidence       []string `json:"evidence"`
+		EconomicPolicyRelevance int      `json:"economic_policy_relevance"`
+		NarrationScore          float64  `json:"narration_score"`
+		Confidence              float64  `json:"confidence"`
+		Rationale               string   `json:"rationale"`
+		Evidence                []string `json:"evidence"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(value)))
 	decoder.DisallowUnknownFields()
@@ -173,12 +175,13 @@ func parseAnalysis(value string) (Analysis, error) {
 	if err := ensureEOF(decoder); err != nil {
 		return Analysis{}, err
 	}
-	if output.NarrationScore < -1 || (output.NarrationScore > 1 && output.NarrationScore != 2) ||
+	if (output.EconomicPolicyRelevance != 0 && output.EconomicPolicyRelevance != 1) ||
+		output.NarrationScore < -1 || output.NarrationScore > 1 ||
 		output.Confidence < 0 || output.Confidence > 1 {
 		return Analysis{}, fmt.Errorf("score or confidence outside valid range")
 	}
 	result := Analysis{
-		Relevant: output.NarrationScore != 2, Score: output.NarrationScore,
+		Relevant: output.EconomicPolicyRelevance == 1, Score: output.NarrationScore,
 		Confidence: output.Confidence, Rationale: output.Rationale, Evidence: output.Evidence,
 	}
 	if !result.Relevant {
