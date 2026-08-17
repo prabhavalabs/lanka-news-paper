@@ -244,12 +244,13 @@ func (store *Store) KnowledgeGraph(ctx context.Context, start, end time.Time, ca
 		LEFT JOIN categories c ON c.id = ec.category_id
 		JOIN articles a ON a.event_id = ec.id
 		JOIN sources s ON s.id = a.source_id
-		LEFT JOIN article_political_analysis analysis ON analysis.article_id = a.id
+		LEFT JOIN article_political_analysis analysis
+		  ON analysis.article_id = a.id AND analysis.model = $4
 		WHERE a.public_status = 'published'
 		  AND a.published_at >= $1
 		  AND a.published_at < $2
 		ORDER BY scope.latest DESC, a.published_at DESC
-	`, start, end, category)
+	`, start, end, category, politics.Model)
 	if err != nil {
 		return KnowledgeGraph{}, fmt.Errorf("load knowledge events: %w", err)
 	}
