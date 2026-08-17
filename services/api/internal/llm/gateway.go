@@ -18,10 +18,11 @@ import (
 )
 
 type Request struct {
-	Task       string
-	System     string
-	Input      string
-	JSONSchema map[string]any
+	Task             string
+	System           string
+	Input            string
+	JSONSchema       map[string]any
+	DisableReasoning bool
 }
 
 type Response struct {
@@ -122,6 +123,9 @@ func (gateway *Gateway) callProvider(ctx context.Context, kind, baseURL, keyRef,
 				"schema": request.JSONSchema,
 			},
 		}
+	}
+	if request.DisableReasoning {
+		payloadValue["reasoning_effort"] = "none"
 	}
 	payload, err := json.Marshal(payloadValue)
 	if err != nil {

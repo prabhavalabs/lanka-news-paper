@@ -16,6 +16,7 @@ func TestCallProviderSupportsStructuredOpenAICompatibleResponses(t *testing.T) {
 		var payload map[string]any
 		require.NoError(t, json.NewDecoder(request.Body).Decode(&payload))
 		require.Equal(t, "json_schema", payload["response_format"].(map[string]any)["type"])
+		require.Equal(t, "none", payload["reasoning_effort"])
 		_, err := writer.Write([]byte(`{"choices":[{"message":{"content":"{\"score\":0}"}}]}`))
 		require.NoError(t, err)
 	}))
@@ -23,8 +24,9 @@ func TestCallProviderSupportsStructuredOpenAICompatibleResponses(t *testing.T) {
 
 	gateway := &Gateway{client: server.Client()}
 	response, err := gateway.callProvider(context.Background(), "openai_compatible", server.URL, "", "local-model", Request{
-		Task:       "narration_framing",
-		JSONSchema: map[string]any{"type": "object"},
+		Task:             "narration_framing",
+		JSONSchema:       map[string]any{"type": "object"},
+		DisableReasoning: true,
 	})
 
 	require.NoError(t, err)
