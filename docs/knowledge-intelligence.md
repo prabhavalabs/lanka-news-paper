@@ -1,6 +1,6 @@
 # News knowledge and narration intelligence
 
-Status: multilingual ML v2, August 2026
+Status: multilingual ML v3, August 2026
 
 ## Product story
 
@@ -65,7 +65,7 @@ Initial evidence includes the [Election Commission party register](https://elect
 
 ### Machine-scored article narration
 
-The production analyzer is `political-narration-ml-v2`. It uses the local `qwen3:4b` multilingual transformer through Ollama's OpenAI-compatible structured-output endpoint. Qwen3's published language coverage includes Sinhala and Tamil, but that capability claim is not a substitute for a Sri Lankan evaluation set.
+The production analyzer is `political-narration-ml-v3`. It uses the local `qwen3:4b` multilingual transformer through Ollama's OpenAI-compatible structured-output endpoint. Qwen3's published language coverage includes Sinhala and Tamil, but that capability claim is not a substitute for a Sri Lankan evaluation set.
 
 The score means:
 
@@ -93,8 +93,7 @@ The model must return this typed contract:
 
 ```json
 {
-  "relevance": "economic_narration",
-  "score": -0.42,
+  "narration_score": -0.42,
   "confidence": 0.78,
   "rationale": "The report presents public provision as necessary for universal access.",
   "evidence": ["essential services must remain publicly owned"]
@@ -106,11 +105,12 @@ The prompt requires the model to:
 - judge reporter/editorial narration rather than the identity of a speaker;
 - distinguish attributed quotations from the article's own framing;
 - treat a party or politician name as no evidence by itself;
-- abstain with `relevant=false` when meaningful political-economic framing is absent;
+- use the internal sentinel `narration_score=2` when meaningful political-economic framing is absent;
+- reject incidental language such as Sinhala “පෞද්ගලික හේතු” or Tamil “தனிப்பட்ட காரணங்கள்” (personal reasons), which does not mean private-enterprise framing;
 - return short evidence phrases from the supplied text;
 - avoid inferring a permanent publisher label from one article.
 
-The enum avoids an ambiguity observed with a boolean during integration testing. The API validates relevance plus score and confidence ranges, rejects unknown or trailing JSON, derives the persisted boolean and display label from deterministic code, limits evidence length, and forces irrelevant results to score `0` with label `unclear`.
+The sentinel is an inference-transport value only; it is never displayed or stored as an article score. It avoids inconsistent auxiliary boolean and enum fields observed during integration testing. The API accepts only `2` or a value in `-1..+1`, rejects unknown or trailing JSON, derives relevance and the display label in deterministic code, limits evidence length, and stores irrelevant results as score `0` with label `unclear`.
 
 ### 3. Persist provenance
 
