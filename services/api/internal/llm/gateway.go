@@ -36,7 +36,7 @@ type Gateway struct {
 }
 
 func NewGateway(pool *pgxpool.Pool) *Gateway {
-	return &Gateway{pool: pool, client: &http.Client{Timeout: 45 * time.Second}}
+	return &Gateway{pool: pool, client: &http.Client{}}
 }
 
 func (gateway *Gateway) Complete(ctx context.Context, request Request) (Response, error) {

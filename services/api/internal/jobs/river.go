@@ -35,7 +35,7 @@ func (worker *PollWorker) Work(ctx context.Context, _ *river.Job[PollArgs]) erro
 		}
 	}
 	if worker.Politics != nil {
-		if err := worker.Politics.Backfill(ctx, 1000); err != nil {
+		if err := worker.Politics.Backfill(ctx, 25); err != nil {
 			return err
 		}
 	}

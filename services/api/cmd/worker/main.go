@@ -49,8 +49,9 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	news := publish.NewStore(pool)
-	poller := ingest.NewPoller(pool, logger, cluster.NewStore(pool), llm.NewGateway(pool))
-	client, err := jobs.NewClient(pool, logger, poller, politics.NewStore(pool), news)
+	model := llm.NewGateway(pool)
+	poller := ingest.NewPoller(pool, logger, cluster.NewStore(pool), model)
+	client, err := jobs.NewClient(pool, logger, poller, politics.NewStore(pool, model), news)
 	if err != nil {
 		return err
 	}

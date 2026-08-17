@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pagination"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
 )
 
 type Store struct {
@@ -90,6 +91,12 @@ type ArticlePoliticalAnalysis struct {
 	EconomicFrame float64            `json:"economic_frame"`
 	Confidence    float64            `json:"confidence"`
 	Mentions      []PoliticalMention `json:"mentions"`
+	Relevant      bool               `json:"relevant"`
+	Label         string             `json:"label"`
+	Rationale     string             `json:"rationale"`
+	Evidence      []string           `json:"evidence"`
+	ProviderID    string             `json:"provider_id"`
+	ProviderModel string             `json:"provider_model"`
 }
 
 type PoliticalParty struct {
@@ -229,7 +236,9 @@ func (store *Store) KnowledgeGraph(ctx context.Context, start, end time.Time, ca
 		       ec.algorithm_version, ec.first_seen_at, ec.last_update_at,
 		       a.id::text, a.headline, s.id::text, s.name, COALESCE(s.icon_url, ''),
 		       a.original_url, a.published_at,
-		       analysis.model, analysis.economic_frame, analysis.confidence, analysis.mentions
+		       analysis.model, analysis.economic_frame, analysis.confidence, analysis.mentions,
+		       analysis.relevant, analysis.label, analysis.rationale, analysis.evidence,
+		       analysis.provider_id, analysis.provider_model
 		FROM scope
 		JOIN event_clusters ec ON ec.id = scope.event_id
 		LEFT JOIN categories c ON c.id = ec.category_id
@@ -251,7 +260,9 @@ func (store *Store) KnowledgeGraph(ctx context.Context, start, end time.Time, ca
 		var article KnowledgeArticle
 		var politicalModel *string
 		var economicFrame, politicalConfidence *float64
-		var politicalMentions []byte
+		var politicalRelevant *bool
+		var politicalLabel, politicalRationale, providerID, providerModel *string
+		var politicalMentions, politicalEvidence []byte
 		if err := rows.Scan(
 			&event.ID, &event.Title, &event.Category, &event.CategoryNameSI,
 			&event.Confidence, &event.IsBreaking, &event.Locked,
@@ -259,20 +270,37 @@ func (store *Store) KnowledgeGraph(ctx context.Context, start, end time.Time, ca
 			&article.ID, &article.Headline, &article.SourceID, &article.Source,
 			&article.SourceIcon, &article.OriginalURL, &article.PublishedAt,
 			&politicalModel, &economicFrame, &politicalConfidence, &politicalMentions,
+			&politicalRelevant, &politicalLabel, &politicalRationale, &politicalEvidence,
+			&providerID, &providerModel,
 		); err != nil {
 			return KnowledgeGraph{}, err
 		}
-		if politicalModel != nil && economicFrame != nil && politicalConfidence != nil {
+		if politicalModel != nil && economicFrame != nil && politicalConfidence != nil &&
+			politicalRelevant != nil && *politicalRelevant {
 			analysis := ArticlePoliticalAnalysis{
 				Model: *politicalModel, EconomicFrame: *economicFrame,
-				Confidence: *politicalConfidence, Mentions: make([]PoliticalMention, 0),
+				Confidence: *politicalConfidence, Relevant: true,
+				Mentions: make([]PoliticalMention, 0), Evidence: make([]string, 0),
+			}
+			if politicalLabel != nil {
+				analysis.Label = *politicalLabel
+			}
+			if politicalRationale != nil {
+				analysis.Rationale = *politicalRationale
+			}
+			if providerID != nil {
+				analysis.ProviderID = *providerID
+			}
+			if providerModel != nil {
+				analysis.ProviderModel = *providerModel
 			}
 			if err := json.Unmarshal(politicalMentions, &analysis.Mentions); err != nil {
 				return KnowledgeGraph{}, fmt.Errorf("decode political analysis for article %s: %w", article.ID, err)
 			}
-			if len(analysis.Mentions) > 0 {
-				article.Political = &analysis
+			if err := json.Unmarshal(politicalEvidence, &analysis.Evidence); err != nil {
+				return KnowledgeGraph{}, fmt.Errorf("decode narration evidence for article %s: %w", article.ID, err)
 			}
+			article.Political = &analysis
 		}
 		position, ok := index[event.ID]
 		if !ok {
@@ -298,7 +326,7 @@ func (store *Store) KnowledgeGraph(ctx context.Context, start, end time.Time, ca
 func (store *Store) politicalIntelligence(ctx context.Context, start, end time.Time, category string) (PoliticalIntelligence, error) {
 	const minimumSample = 5
 	result := PoliticalIntelligence{
-		Axis: "Economic policy: state-led to market-led", Model: "political-framing-rules-v1",
+		Axis: "Narration: state-led (-1) to market-led (+1)", Model: politics.Model,
 		MinimumSample: minimumSample, Parties: make([]PoliticalParty, 0), Sources: make([]SourcePoliticalAnalysis, 0),
 	}
 	rows, err := store.pool.Query(ctx, `
@@ -332,7 +360,8 @@ func (store *Store) politicalIntelligence(ctx context.Context, start, end time.T
 
 	rows, err = store.pool.Query(ctx, `
 		WITH scoped AS (
-			SELECT a.source_id, analysis.economic_frame::float8 economic_frame,
+			SELECT a.source_id, COALESCE(a.event_id, a.id) sample_id,
+			       analysis.economic_frame::float8 economic_frame,
 			       analysis.confidence::float8 confidence
 			FROM articles a
 			LEFT JOIN categories c ON c.id = a.category_id
@@ -341,25 +370,32 @@ func (store *Store) politicalIntelligence(ctx context.Context, start, end time.T
 			  AND a.published_at >= $1
 			  AND a.published_at < $2
 			  AND ($3 = '' OR c.slug = $3)
-			  AND jsonb_array_length(analysis.mentions) > 0
+			  AND analysis.model = $4
+			  AND analysis.relevant
+		), samples AS (
+			SELECT source_id, sample_id,
+			       sum(economic_frame * confidence) / NULLIF(sum(confidence), 0) economic_frame,
+			       avg(confidence) confidence
+			FROM scoped
+			GROUP BY source_id, sample_id
 		), aggregate AS (
 			SELECT source_id, count(*) mentioned_articles,
-			       count(*) FILTER (WHERE confidence >= 0.45) scored_articles,
+			       count(*) FILTER (WHERE confidence >= 0.6) scored_articles,
 			       COALESCE(
-			         sum(economic_frame * confidence) FILTER (WHERE confidence >= 0.45)
-			         / NULLIF(sum(confidence) FILTER (WHERE confidence >= 0.45), 0), 0
+			         sum(economic_frame * confidence) FILTER (WHERE confidence >= 0.6)
+			         / NULLIF(sum(confidence) FILTER (WHERE confidence >= 0.6), 0), 0
 			       ) raw_frame,
-			       COALESCE(avg(confidence) FILTER (WHERE confidence >= 0.45), 0) raw_confidence
-			FROM scoped GROUP BY source_id
+			       COALESCE(avg(confidence) FILTER (WHERE confidence >= 0.6), 0) raw_confidence
+			FROM samples GROUP BY source_id
 		)
 		SELECT s.id::text, s.name, COALESCE(s.icon_url, ''),
 		       (aggregate.raw_frame * aggregate.scored_articles / (aggregate.scored_articles + 5.0))::float8,
 		       (aggregate.raw_confidence * aggregate.scored_articles / (aggregate.scored_articles + 5.0))::float8,
 		       aggregate.mentioned_articles, aggregate.scored_articles,
-		       aggregate.scored_articles >= $4
+		       aggregate.scored_articles >= $5
 		FROM aggregate JOIN sources s ON s.id = aggregate.source_id
 		ORDER BY aggregate.scored_articles DESC, s.name
-	`, start, end, category, minimumSample)
+	`, start, end, category, politics.Model, minimumSample)
 	if err != nil {
 		return PoliticalIntelligence{}, fmt.Errorf("aggregate source political framing: %w", err)
 	}

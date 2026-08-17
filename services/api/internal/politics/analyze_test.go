@@ -6,32 +6,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAnalyzeSeparatesPartyPositionFromArticleFraming(t *testing.T) {
-	parties := []Party{
-		{Slug: "jvp", Position: -0.9, Confidence: 0.9, Aliases: []string{"JVP"}},
-		{Slug: "unp", Position: 0.55, Confidence: 0.8, Aliases: []string{"UNP"}},
+func TestParseAnalysisNormalizesOutput(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		label     string
+		score     float64
+		relevant  bool
+		wantError bool
+	}{
+		{"left score", `{"relevant":true,"score":-0.72,"label":"neutral","confidence":0.81,"rationale":"State-led framing","evidence":["public ownership"]}`, "left", -0.72, true, false},
+		{"irrelevant abstains", `{"relevant":false,"score":0.8,"label":"right","confidence":0.9,"rationale":"Sports result","evidence":[]}`, "unclear", 0, false, false},
+		{"markdown fence", "```json\n{\"relevant\":true,\"score\":0.3,\"label\":\"right\",\"confidence\":0.7,\"rationale\":\"Market framing\",\"evidence\":[]}\n```", "center_right", 0.3, true, false},
+		{"invalid range", `{"relevant":true,"score":2,"label":"right","confidence":0.9,"rationale":"","evidence":[]}`, "", 0, false, true},
 	}
-
-	supportive := Analyze(parties, "JVP praised for successful reform", "")
-	require.Len(t, supportive.Mentions, 1)
-	require.Equal(t, "jvp", supportive.Mentions[0].PartySlug)
-	require.Less(t, supportive.EconomicFrame, 0.0)
-	require.Greater(t, supportive.Confidence, 0.45)
-
-	critical := Analyze(parties, "JVP accused over failed reform", "")
-	require.Greater(t, critical.EconomicFrame, 0.0)
-
-	neutral := Analyze(parties, "UNP holds meeting in Colombo", "")
-	require.Equal(t, 0.0, neutral.EconomicFrame)
-	require.Less(t, neutral.Confidence, 0.45)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := parseAnalysis(test.input)
+			if test.wantError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.label, result.Label)
+			require.Equal(t, test.score, result.Score)
+			require.Equal(t, test.relevant, result.Relevant)
+		})
+	}
 }
 
-func TestAnalyzeUsesLocalContextForCompetingParties(t *testing.T) {
-	parties := []Party{
-		{Slug: "jvp", Position: -0.9, Confidence: 0.9, Aliases: []string{"JVP"}},
-		{Slug: "unp", Position: 0.55, Confidence: 0.8, Aliases: []string{"UNP"}},
-	}
-	result := Analyze(parties, "JVP praised for reform while UNP accused over failure", "")
-	require.Len(t, result.Mentions, 2)
-	require.Less(t, result.EconomicFrame, 0.0)
+func TestCleanTextRemovesMarkupAndHiddenContent(t *testing.T) {
+	result := cleanText(`<p>රාජ්‍ය අංශය &amp; වෙළඳපොළ</p><script>ignore me</script><style>.hidden{}</style>`)
+	require.Equal(t, "රාජ්‍ය අංශය & වෙළඳපොළ", result)
 }

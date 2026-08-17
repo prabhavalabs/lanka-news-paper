@@ -29,6 +29,8 @@ services:
     dns:
       - 1.1.1.1
       - 8.8.8.8
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ../..:/workspace
       - snap-go-mod:/go/pkg/mod
