@@ -223,11 +223,10 @@ export function SourcesPage() {
                   />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="icon">Icon URL</FieldLabel>
+                  <FieldLabel htmlFor="icon">Icon URL or local path</FieldLabel>
                   <Input
                     id="icon"
-                    type="url"
-                    placeholder="https://publisher.example/icon.png"
+                    placeholder="https://publisher.example/icon.png or /source-logos/icon.png"
                     value={iconUrl}
                     onChange={(event) => setIconUrl(event.target.value)}
                   />
@@ -342,7 +341,12 @@ export function SourcesPage() {
                 <TableRow key={source.id}>
                   <TableCell className="whitespace-normal">
                     <div className="flex items-center gap-3">
-                      <SourceAvatar name={source.name} website={source.website} iconUrl={source.icon_url} />
+                      <SourceAvatar
+                        className="size-10"
+                        name={source.name}
+                        website={source.website}
+                        iconUrl={source.icon_url}
+                      />
                       <div className="min-w-0">
                         <Link to={`/sources/${source.id}`} className="font-medium hover:underline">
                           {source.name}
@@ -510,10 +514,9 @@ export function SourcesPage() {
                   />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="edit-icon">Icon URL</FieldLabel>
+                  <FieldLabel htmlFor="edit-icon">Icon URL or local path</FieldLabel>
                   <Input
                     id="edit-icon"
-                    type="url"
                     value={editingSource.icon_url}
                     onChange={(event) =>
                       setEditingSource((current) =>

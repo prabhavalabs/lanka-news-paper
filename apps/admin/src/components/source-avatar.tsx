@@ -26,7 +26,9 @@ export function SourceAvatar({ name, website, iconUrl, className }: SourceAvatar
 
   return (
     <Avatar aria-hidden="true" className={cn('bg-background', className)}>
-      {favicon ? <AvatarImage src={favicon} alt="" /> : null}
+      {favicon ? (
+        <AvatarImage className="rounded-[inherit] bg-white object-contain p-1" src={favicon} alt="" />
+      ) : null}
       <AvatarFallback className="font-medium">{initials || '—'}</AvatarFallback>
     </Avatar>
   )
