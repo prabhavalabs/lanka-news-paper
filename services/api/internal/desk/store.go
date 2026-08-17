@@ -166,7 +166,10 @@ func (store *Store) SetStatus(ctx context.Context, id, status, actor, reason str
 
 func (store *Store) SetCategory(ctx context.Context, id, slug string) error {
 	_, err := store.pool.Exec(ctx, `
-		UPDATE articles SET category_id = (SELECT id FROM categories WHERE slug = $2)
+		UPDATE articles
+		SET category_id = (SELECT id FROM categories WHERE slug = $2),
+		    classify_confidence = 1,
+		    classify_model = 'manual'
 		WHERE id = $1
 	`, id, slug)
 	return err

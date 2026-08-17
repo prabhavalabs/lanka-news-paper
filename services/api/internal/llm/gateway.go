@@ -82,8 +82,8 @@ func (gateway *Gateway) Complete(ctx context.Context, request Request) (Response
 
 func (gateway *Gateway) fallback(request Request) Response {
 	if request.Task == "classify" {
-		slug, _ := classify.From(nil, request.Input)
-		return Response{Text: slug, Provider: "keyword-rules", Model: "rules"}
+		result := classify.From(nil, request.Input, "")
+		return Response{Text: result.Slug, Provider: "keyword-rules", Model: result.Model}
 	}
 	return Response{Text: "", Provider: "none", Model: "none"}
 }

@@ -50,6 +50,9 @@ func limitRedirects(req *http.Request, via []*http.Request) error {
 }
 
 func (poller *Poller) PollAll(ctx context.Context) error {
+	if err := poller.reclassifyLegacy(ctx); err != nil {
+		return fmt.Errorf("reclassify legacy articles: %w", err)
+	}
 	_, _ = poller.pool.Exec(ctx, `
 		UPDATE source_endpoints
 		SET health_state = 'stale'
@@ -95,6 +98,54 @@ func (poller *Poller) PollAll(ctx context.Context) error {
 	for _, item := range targets {
 		if err := poller.pollOne(ctx, item.endpointID, item.sourceID, item.endpointType, item.rawURL, item.etag, item.lastModified, item.rightsID, item.mode, item.website, item.active); err != nil {
 			poller.logger.Error("poll failed", "endpoint", item.endpointID, "error", err)
+		}
+	}
+	return nil
+}
+
+func (poller *Poller) reclassifyLegacy(ctx context.Context) error {
+	rows, err := poller.pool.Query(ctx, `
+		SELECT id::text, COALESCE(publisher_category, ''), headline, COALESCE(description, '')
+		FROM articles
+		WHERE classify_model IS NULL OR classify_model IN ('rules', 'keyword-rules')
+		ORDER BY received_at
+		LIMIT 1000
+	`)
+	if err != nil {
+		return err
+	}
+	type legacyArticle struct {
+		id, publisherCategory, headline, description string
+	}
+	items := make([]legacyArticle, 0)
+	for rows.Next() {
+		var item legacyArticle
+		if err := rows.Scan(&item.id, &item.publisherCategory, &item.headline, &item.description); err != nil {
+			rows.Close()
+			return err
+		}
+		items = append(items, item)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+
+	for _, item := range items {
+		categories := []string(nil)
+		if item.publisherCategory != "" {
+			categories = []string{item.publisherCategory}
+		}
+		result := classify.From(categories, item.headline, item.description)
+		if _, err := poller.pool.Exec(ctx, `
+			UPDATE articles
+			SET category_id = (SELECT id FROM categories WHERE slug = $2),
+			    classify_confidence = $3,
+			    classify_model = $4
+			WHERE id = $1
+		`, item.id, result.Slug, result.Confidence, result.Model); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -192,12 +243,12 @@ func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, right
 	if len(item.Categories) > 0 {
 		publisherCat = item.Categories[0]
 	}
-	slug, confidence := classify.From(item.Categories, headline)
-	model := "keyword-rules"
-	if poller.llm != nil {
+	classification := classify.From(item.Categories, headline, item.Description)
+	slug, confidence, model := classification.Slug, classification.Confidence, classification.Model
+	if poller.llm != nil && confidence < 0.55 {
 		result, _ := poller.llm.Complete(ctx, llm.Request{Task: "classify", Input: headline})
-		if result.Text != "" {
-			slug, model = result.Text, result.Model
+		if classify.ValidSlug(result.Text) && result.Provider != "keyword-rules" {
+			slug, confidence, model = result.Text, 0.60, "ai:"+result.Model
 		}
 	}
 	var near uuid.UUID
