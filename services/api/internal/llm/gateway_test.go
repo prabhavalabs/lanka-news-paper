@@ -17,7 +17,7 @@ func TestCallProviderSupportsStructuredOpenAICompatibleResponses(t *testing.T) {
 		require.NoError(t, json.NewDecoder(request.Body).Decode(&payload))
 		require.Equal(t, "json_schema", payload["response_format"].(map[string]any)["type"])
 		require.Equal(t, "none", payload["reasoning_effort"])
-		require.Equal(t, float64(512), payload["max_tokens"])
+		require.Equal(t, float64(1024), payload["max_tokens"])
 		_, err := writer.Write([]byte(`{"choices":[{"message":{"content":"{\"score\":0}"}}]}`))
 		require.NoError(t, err)
 	}))
@@ -28,7 +28,7 @@ func TestCallProviderSupportsStructuredOpenAICompatibleResponses(t *testing.T) {
 		Task:             "narration_framing",
 		JSONSchema:       map[string]any{"type": "object"},
 		DisableReasoning: true,
-		MaxTokens:        512,
+		MaxTokens:        1024,
 	})
 
 	require.NoError(t, err)
