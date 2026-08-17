@@ -16,6 +16,28 @@ export type GraphEdge = {
   kind: 'category' | 'source'
 }
 
+export type GraphViewport = {
+  x: number
+  y: number
+  scale: number
+}
+
+export const initialGraphViewport: GraphViewport = { x: 0, y: 0, scale: 1 }
+
+export function zoomGraphViewport(
+  viewport: GraphViewport,
+  requestedScale: number,
+  point: { x: number; y: number },
+): GraphViewport {
+  const scale = Math.min(2.5, Math.max(0.5, requestedScale))
+  const ratio = scale / viewport.scale
+  return {
+    x: point.x - (point.x - viewport.x) * ratio,
+    y: point.y - (point.y - viewport.y) * ratio,
+    scale,
+  }
+}
+
 export function layoutKnowledgeGraph(data: KnowledgeGraph, width = 1200, height = 560) {
   const nodes: GraphNode[] = []
   const edges: GraphEdge[] = []

@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import type { KnowledgeGraph } from '@snap/api-client'
 
-import { layoutKnowledgeGraph } from './knowledge-graph.ts'
+import { initialGraphViewport, layoutKnowledgeGraph, zoomGraphViewport } from './knowledge-graph.ts'
 
 test('lays out category, event, and source relationships', () => {
   const data: KnowledgeGraph = {
@@ -27,4 +27,11 @@ test('lays out category, event, and source relationships', () => {
   assert.equal(graph.nodes.filter((node) => node.kind === 'event').length, 1)
   assert.equal(graph.nodes.filter((node) => node.kind === 'source').length, 2)
   assert.equal(graph.edges.length, 3)
+})
+
+test('zooms around the pointer and clamps the supported range', () => {
+  const zoomed = zoomGraphViewport(initialGraphViewport, 2, { x: 100, y: 80 })
+  assert.deepEqual(zoomed, { x: -100, y: -80, scale: 2 })
+  assert.equal(zoomGraphViewport(zoomed, 10, { x: 0, y: 0 }).scale, 2.5)
+  assert.equal(zoomGraphViewport(zoomed, 0.1, { x: 0, y: 0 }).scale, 0.5)
 })

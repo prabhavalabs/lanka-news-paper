@@ -1,14 +1,17 @@
 import { createClient, type KnowledgeEvent, type KnowledgeGraph } from '@snap/api-client'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Clock3Icon,
   ExternalLinkIcon,
   GitMergeIcon,
+  MinusIcon,
+  MoveIcon,
   NetworkIcon,
   NewspaperIcon,
+  PlusIcon,
   RadioTowerIcon,
+  RotateCcwIcon,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 
 import { SourceAvatar } from '@/components/source-avatar'
@@ -30,8 +33,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { layoutKnowledgeGraph } from '@/lib/knowledge-graph'
-import { cn } from '@/lib/utils'
+import {
+  initialGraphViewport,
+  layoutKnowledgeGraph,
+  zoomGraphViewport,
+} from '@/lib/knowledge-graph'
 
 const client = createClient()
 const dayOptions = [1, 7, 30] as const
@@ -119,8 +125,8 @@ export function KnowledgeGraphPage() {
             <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-muted-foreground/50" />Single report</span>
           </CardAction>
         </CardHeader>
-        <CardContent className="grid gap-0 px-0 2xl:grid-cols-[minmax(0,1fr)_340px]">
-          <div className="min-h-[560px] overflow-x-auto bg-[radial-gradient(circle_at_center,var(--color-border)_1px,transparent_1px)] bg-[size:22px_22px]">
+        <CardContent className="px-0">
+          <div className="min-h-[560px] overflow-hidden bg-[radial-gradient(circle_at_center,var(--color-border)_1px,transparent_1px)] bg-[size:22px_22px]">
             {graph.isPending ? <Skeleton className="m-6 h-[512px]" /> : null}
             {graph.isError ? (
               <div className="flex h-[560px] items-center justify-center text-sm text-muted-foreground">
@@ -136,14 +142,11 @@ export function KnowledgeGraphPage() {
               <EventGraph data={graph.data} selectedID={selected?.id ?? ''} onSelect={setSelectedID} />
             ) : null}
           </div>
-          <EventInspector event={selected} />
+          <EventArticleRail event={selected} />
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(300px,0.5fr)]">
-        <EventTimeline events={graph.data?.events ?? []} selectedID={selected?.id ?? ''} onSelect={setSelectedID} />
-        <CategoryBreakdown data={graph.data} />
-      </div>
+      <CategoryBreakdown data={graph.data} />
     </section>
   )
 }
@@ -186,32 +189,98 @@ function EventGraph({
   const graph = useMemo(() => layoutKnowledgeGraph(data, width, height), [data])
   const positions = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes])
   const events = useMemo(() => new Map(data.events.map((event) => [event.id, event])), [data.events])
+  const [viewport, setViewport] = useState(initialGraphViewport)
+  const drag = useRef<{ pointerID: number; x: number; y: number } | null>(null)
+
+  function graphPoint(element: SVGSVGElement, clientX: number, clientY: number) {
+    const bounds = element.getBoundingClientRect()
+    return {
+      x: ((clientX - bounds.left) / bounds.width) * width,
+      y: ((clientY - bounds.top) / bounds.height) * height,
+    }
+  }
+
+  function zoom(nextScale: number, point = { x: width / 2, y: height / 2 }) {
+    setViewport((current) => zoomGraphViewport(current, nextScale, point))
+  }
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-[560px] min-w-[980px] w-full" role="img" aria-label="Knowledge graph of news categories, events, and sources">
-      <title>News categories connected to clustered events and their reporting sources</title>
-      <g aria-hidden="true">
-        {graph.edges.map((edge, index) => {
-          const source = positions.get(edge.source)
-          const target = positions.get(edge.target)
-          if (!source || !target) return null
-          return (
-            <line
-              key={`${edge.source}-${edge.target}-${index}`}
-              x1={source.x}
-              y1={source.y}
-              x2={target.x}
-              y2={target.y}
-              className={edge.kind === 'category' ? 'stroke-primary/15' : 'stroke-foreground/8'}
-              strokeWidth={edge.kind === 'category' ? 1.25 : 1}
-            />
-          )
-        })}
-      </g>
-      {graph.nodes.map((node) => {
+    <div className="relative">
+      <div className="absolute top-4 right-4 z-10 flex items-center gap-1 rounded-2xl border bg-background/90 p-1 shadow-sm backdrop-blur">
+        <Button size="icon" variant="ghost" aria-label="Zoom out" onClick={() => zoom(viewport.scale / 1.25)}>
+          <MinusIcon />
+        </Button>
+        <span className="w-12 text-center text-xs tabular-nums text-muted-foreground" aria-live="polite">
+          {Math.round(viewport.scale * 100)}%
+        </span>
+        <Button size="icon" variant="ghost" aria-label="Zoom in" onClick={() => zoom(viewport.scale * 1.25)}>
+          <PlusIcon />
+        </Button>
+        <Button size="icon" variant="ghost" aria-label="Reset graph view" onClick={() => setViewport(initialGraphViewport)}>
+          <RotateCcwIcon />
+        </Button>
+      </div>
+      <div className="pointer-events-none absolute bottom-4 left-4 z-10 hidden items-center gap-2 rounded-xl border bg-background/85 px-3 py-2 text-xs text-muted-foreground backdrop-blur sm:flex">
+        <MoveIcon className="size-3.5" /> Drag to move · Scroll to zoom
+      </div>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-[560px] w-full cursor-grab select-none active:cursor-grabbing"
+        style={{ touchAction: 'none' }}
+        role="img"
+        aria-label="Interactive knowledge graph of news categories, events, and sources. Drag to pan and scroll to zoom."
+        onWheel={(event) => {
+          event.preventDefault()
+          const point = graphPoint(event.currentTarget, event.clientX, event.clientY)
+          zoom(viewport.scale * (event.deltaY < 0 ? 1.12 : 0.89), point)
+        }}
+        onPointerDown={(event) => {
+          if ((event.target as SVGElement).closest('[data-graph-node]')) return
+          event.currentTarget.setPointerCapture(event.pointerId)
+          drag.current = { pointerID: event.pointerId, x: event.clientX, y: event.clientY }
+        }}
+        onPointerMove={(event) => {
+          if (drag.current?.pointerID !== event.pointerId) return
+          const bounds = event.currentTarget.getBoundingClientRect()
+          const factor = width / bounds.width
+          const deltaX = (event.clientX - drag.current.x) * factor
+          const deltaY = (event.clientY - drag.current.y) * factor
+          drag.current = { pointerID: event.pointerId, x: event.clientX, y: event.clientY }
+          setViewport((current) => ({ ...current, x: current.x + deltaX, y: current.y + deltaY }))
+        }}
+        onPointerUp={(event) => {
+          if (drag.current?.pointerID !== event.pointerId) return
+          drag.current = null
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId)
+          }
+        }}
+        onPointerCancel={() => { drag.current = null }}
+      >
+        <title>News categories connected to clustered events and their reporting sources</title>
+        <g transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.scale})`}>
+          <g aria-hidden="true" className="pointer-events-none">
+            {graph.edges.map((edge, index) => {
+              const source = positions.get(edge.source)
+              const target = positions.get(edge.target)
+              if (!source || !target) return null
+              return (
+                <line
+                  key={`${edge.source}-${edge.target}-${index}`}
+                  x1={source.x}
+                  y1={source.y}
+                  x2={target.x}
+                  y2={target.y}
+                  className={edge.kind === 'category' ? 'stroke-primary/15' : 'stroke-foreground/8'}
+                  strokeWidth={edge.kind === 'category' ? 1.25 : 1}
+                />
+              )
+            })}
+          </g>
+          {graph.nodes.map((node) => {
         if (node.kind === 'category') {
           return (
-            <g key={node.id} aria-hidden="true">
+            <g key={node.id} aria-hidden="true" data-graph-node>
               <circle cx={node.x} cy={node.y} r={node.radius} className="fill-primary/15 stroke-primary" />
               <text x={node.x + node.radius + 8} y={node.y + 4} className="fill-foreground text-[11px] font-medium">{truncate(node.label, 18)}</text>
             </g>
@@ -219,7 +288,7 @@ function EventGraph({
         }
         if (node.kind === 'source') {
           return (
-            <g key={node.id} aria-hidden="true">
+            <g key={node.id} aria-hidden="true" data-graph-node>
               <circle cx={node.x} cy={node.y} r={node.radius} className="fill-background stroke-muted-foreground/60" />
               <text x={node.x + 10} y={node.y + 4} className="fill-muted-foreground text-[10px]">{truncate(node.label, 20)}</text>
             </g>
@@ -231,6 +300,7 @@ function EventGraph({
         return (
           <g
             key={node.id}
+            data-graph-node
             role="button"
             tabIndex={0}
             aria-label={`${event?.title ?? 'Event'}, ${event?.articles.length ?? 0} reports`}
@@ -262,83 +332,59 @@ function EventGraph({
             ) : null}
           </g>
         )
-      })}
-    </svg>
+          })}
+        </g>
+      </svg>
+    </div>
   )
 }
 
-function EventInspector({ event }: { event?: KnowledgeEvent }) {
+function EventArticleRail({ event }: { event?: KnowledgeEvent }) {
   const sourceCount = new Set(event?.articles.map((article) => article.source_id)).size
   return (
-    <aside className="border-t p-6 2xl:border-t-0 2xl:border-l">
+    <section className="border-t px-6 py-5" aria-label="Articles reporting the selected event">
       {!event ? <p className="text-sm text-muted-foreground">Select an event node to inspect it.</p> : (
-        <div className="space-y-5">
-          <div className="space-y-2">
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="secondary">{event.category.replaceAll('_', ' ')}</Badge>
-              {sourceCount > 1 ? <Badge variant="default">{sourceCount} sources</Badge> : <Badge variant="outline">Single report</Badge>}
-              {event.is_breaking ? <Badge variant="destructive">Breaking</Badge> : null}
+        <div className="space-y-4">
+          <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
+            <div className="min-w-0 space-y-1.5">
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="secondary">{event.category.replaceAll('_', ' ')}</Badge>
+                {sourceCount > 1 ? <Badge>{sourceCount} sources</Badge> : <Badge variant="outline">Single report</Badge>}
+                {event.is_breaking ? <Badge variant="destructive">Breaking</Badge> : null}
+              </div>
+              <h2 className="font-heading text-lg font-semibold leading-snug">{event.title}</h2>
+              <p className="text-xs text-muted-foreground">
+                Updated {formatDate(event.last_update_at)} · {Math.round(event.confidence * 100)}% cluster confidence
+              </p>
             </div>
-            <h2 className="font-heading text-lg font-semibold leading-snug">{event.title}</h2>
-            <p className="text-xs text-muted-foreground">
-              Updated {formatDate(event.last_update_at)} · {Math.round(event.confidence * 100)}% cluster confidence
-            </p>
+            <p className="shrink-0 text-xs text-muted-foreground">{event.articles.length} relevant reports · {event.algorithm_version}</p>
           </div>
-          <div className="space-y-3">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Reports in this event</p>
+          <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-3" tabIndex={0} aria-label="Scrollable relevant article cards">
             {event.articles.map((article) => (
               <a
                 key={article.id}
                 href={article.original_url}
                 target="_blank"
                 rel="noreferrer"
-                className="group flex items-start gap-3 rounded-2xl border p-3 transition-colors hover:bg-muted/50"
+                className="group flex min-h-36 w-[285px] shrink-0 snap-start flex-col justify-between rounded-2xl border bg-card p-4 transition-colors hover:bg-muted/50 sm:w-[340px]"
               >
-                <SourceAvatar name={article.source} iconUrl={article.source_icon} className="size-8 shrink-0" />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-xs text-muted-foreground">{article.source}</span>
-                  <span className="mt-0.5 line-clamp-2 block text-sm font-medium leading-snug">{article.headline}</span>
+                <span className="flex items-start gap-3">
+                  <SourceAvatar name={article.source} iconUrl={article.source_icon} className="size-9 shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs text-muted-foreground">{article.source}</span>
+                    <span className="mt-1 line-clamp-3 block text-sm font-medium leading-snug">{article.headline}</span>
+                  </span>
                 </span>
-                <ExternalLinkIcon className="mt-1 size-3.5 shrink-0 text-muted-foreground group-hover:text-foreground" />
+                <span className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>{formatDate(article.published_at)}</span>
+                  <ExternalLinkIcon className="size-3.5 group-hover:text-foreground" />
+                </span>
               </a>
             ))}
           </div>
-          <p className="text-[11px] text-muted-foreground">Model: {event.algorithm_version}</p>
         </div>
       )}
-    </aside>
-  )
-}
-
-function EventTimeline({ events, selectedID, onSelect }: { events: KnowledgeEvent[]; selectedID: string; onSelect: (id: string) => void }) {
-  return (
-    <Card className="gap-0 py-0 shadow-sm">
-      <CardHeader className="border-b py-6">
-        <CardTitle>Event timeline</CardTitle>
-        <CardDescription>Newest story clusters in the selected window.</CardDescription>
-        <CardAction><Badge variant="secondary">{events.length} shown</Badge></CardAction>
-      </CardHeader>
-      <CardContent className="divide-y px-0">
-        {events.slice(0, 12).map((event) => {
-          const sources = new Set(event.articles.map((article) => article.source_id)).size
-          return (
-            <button
-              key={event.id}
-              type="button"
-              className={cn('flex w-full items-start gap-4 px-6 py-4 text-left transition-colors hover:bg-muted/40', selectedID === event.id && 'bg-primary/[0.05]')}
-              onClick={() => onSelect(event.id)}
-            >
-              <span className="mt-1 flex size-8 shrink-0 items-center justify-center rounded-full bg-muted"><Clock3Icon className="size-4" /></span>
-              <span className="min-w-0 flex-1">
-                <span className="line-clamp-2 font-medium leading-snug">{event.title}</span>
-                <span className="mt-1 block text-xs text-muted-foreground">{formatDate(event.last_update_at)} · {event.articles.length} reports · {sources} sources</span>
-              </span>
-              <Badge variant="outline">{event.category}</Badge>
-            </button>
-          )
-        })}
-      </CardContent>
-    </Card>
+    </section>
   )
 }
 
