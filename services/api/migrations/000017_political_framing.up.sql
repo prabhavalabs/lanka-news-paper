@@ -48,7 +48,7 @@ INSERT INTO political_parties (
   (
     'npp', 'NPP', 'National People''s Power', 'ජාතික ජන බලවේගය',
     ARRAY['npp', 'national people''s power', 'ජාතික ජන බලවේගය', 'ජාජබ', 'anura kumara dissanayake', 'anura dissanayake', 'අනුර කුමාර දිසානායක', 'අනුර දිසානායක'],
-    -0.55, 0.78, 'A left coalition with equity, economic democracy, and social-protection commitments, moderated by support for a mixed and market-participating economy.',
+    -0.40, 0.78, 'A left coalition with equity, economic democracy, and social-protection commitments, moderated by support for a mixed and market-participating economy.',
     '["https://www.npp.lk/en","https://www.npp.lk/up/policies/en/npppolicystatement.pdf"]'
   ),
   (
