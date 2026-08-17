@@ -1,6 +1,7 @@
 import { createClient, type KnowledgeEvent, type KnowledgeGraph } from '@snap/api-client'
 import { useQuery } from '@tanstack/react-query'
 import {
+  CalendarRangeIcon,
   ExternalLinkIcon,
   GitMergeIcon,
   MinusIcon,
@@ -28,6 +29,17 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
+import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -45,17 +57,23 @@ import {
 const client = createClient()
 const dayOptions = [1, 7, 30] as const
 const dateFormatter = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' })
+const rangeDateFormatter = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' })
 type PoliticalParty = KnowledgeGraph['political']['parties'][number]
 
 export function KnowledgeGraphPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedDays = Number(searchParams.get('days') || 1)
   const days = dayOptions.includes(requestedDays as 1 | 7 | 30) ? (requestedDays as 1 | 7 | 30) : 1
+  const from = searchParams.get('from') || ''
+  const to = searchParams.get('to') || ''
+  const customRange = isDateInputValue(from) && isDateInputValue(to) && from <= to ? { from, to } : undefined
   const category = searchParams.get('category') || ''
   const [selectedID, setSelectedID] = useState('')
   const graph = useQuery({
-    queryKey: ['knowledge-graph', days, category],
-    queryFn: () => client.knowledgeGraph(days, category),
+    queryKey: ['knowledge-graph', days, customRange?.from, customRange?.to, category],
+    queryFn: () => client.knowledgeGraph(customRange
+      ? { ...customRange, category }
+      : { days, category }),
   })
   const selected = graph.data?.events.find((event) => event.id === selectedID)
     ?? graph.data?.events.find((event) => event.articles.length > 1)
@@ -65,6 +83,22 @@ export function KnowledgeGraphPage() {
     const next = new URLSearchParams(searchParams)
     if (value) next.set(key, value)
     else next.delete(key)
+    setSearchParams(next, { replace: true })
+  }
+
+  function setDays(value: 1 | 7 | 30) {
+    const next = new URLSearchParams(searchParams)
+    next.set('days', String(value))
+    next.delete('from')
+    next.delete('to')
+    setSearchParams(next, { replace: true })
+  }
+
+  function setCustomRange(fromDate: string, toDate: string) {
+    const next = new URLSearchParams(searchParams)
+    next.delete('days')
+    next.set('from', fromDate)
+    next.set('to', toDate)
     setSearchParams(next, { replace: true })
   }
 
@@ -88,12 +122,17 @@ export function KnowledgeGraphPage() {
               <Button
                 key={option}
                 size="sm"
-                variant={days === option ? 'default' : 'ghost'}
-                onClick={() => setFilter('days', String(option))}
+                variant={!customRange && days === option ? 'default' : 'ghost'}
+                onClick={() => setDays(option)}
               >
                 {option === 1 ? '24 hours' : `${option} days`}
               </Button>
             ))}
+            <CustomDateRange
+              from={customRange?.from}
+              to={customRange?.to}
+              onApply={setCustomRange}
+            />
           </div>
           <Select
             value={category || 'all'}
@@ -153,6 +192,93 @@ export function KnowledgeGraphPage() {
       <PoliticalSpectrum data={graph.data} />
       <CategoryBreakdown data={graph.data} />
     </section>
+  )
+}
+
+function CustomDateRange({
+  from: initialFrom,
+  to: initialTo,
+  onApply,
+}: {
+  from?: string
+  to?: string
+  onApply: (from: string, to: string) => void
+}) {
+  const today = toDateInputValue(new Date())
+  const defaultStart = new Date()
+  defaultStart.setDate(defaultStart.getDate() - 6)
+  const [open, setOpen] = useState(false)
+  const [from, setFrom] = useState(initialFrom || toDateInputValue(defaultStart))
+  const [to, setTo] = useState(initialTo || today)
+  const rangeError = from && to && from > to ? 'The end date must be on or after the start date.' : ''
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
+      setFrom(initialFrom || toDateInputValue(defaultStart))
+      setTo(initialTo || today)
+    }
+    setOpen(nextOpen)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger render={<Button size="sm" variant={initialFrom && initialTo ? 'default' : 'ghost'} />}>
+        <CalendarRangeIcon data-icon="inline-start" />
+        {initialFrom && initialTo
+          ? `${formatRangeDate(initialFrom)} – ${formatRangeDate(initialTo)}`
+          : 'Custom'}
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Custom date range</DialogTitle>
+          <DialogDescription>
+            Show events published on any day within this range, including both selected dates.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="flex flex-col gap-6"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (rangeError) return
+            onApply(from, to)
+            setOpen(false)
+          }}
+        >
+          <FieldGroup className="gap-4 sm:grid sm:grid-cols-2">
+            <Field data-invalid={rangeError ? true : undefined}>
+              <FieldLabel htmlFor="knowledge-from">From</FieldLabel>
+              <Input
+                id="knowledge-from"
+                type="date"
+                value={from}
+                max={to || today}
+                onChange={(event) => setFrom(event.target.value)}
+                aria-invalid={rangeError ? true : undefined}
+                required
+              />
+            </Field>
+            <Field data-invalid={rangeError ? true : undefined}>
+              <FieldLabel htmlFor="knowledge-to">To</FieldLabel>
+              <Input
+                id="knowledge-to"
+                type="date"
+                value={to}
+                min={from}
+                max={today}
+                onChange={(event) => setTo(event.target.value)}
+                aria-invalid={rangeError ? true : undefined}
+                required
+              />
+            </Field>
+          </FieldGroup>
+          {rangeError ? <FieldError>{rangeError}</FieldError> : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button type="submit" disabled={Boolean(rangeError)}>Apply range</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -560,6 +686,21 @@ function CategoryBreakdown({ data }: { data?: KnowledgeGraph }) {
 
 function formatDate(value: string) {
   return dateFormatter.format(new Date(value))
+}
+
+function formatRangeDate(value: string) {
+  return rangeDateFormatter.format(new Date(`${value}T00:00:00`))
+}
+
+function isDateInputValue(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))
+}
+
+function toDateInputValue(value: Date) {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function truncate(value: string, length: number) {

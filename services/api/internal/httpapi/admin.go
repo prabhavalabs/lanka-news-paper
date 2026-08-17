@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/desk"
@@ -381,7 +382,12 @@ func (handler adminHandler) trends(w http.ResponseWriter, request *http.Request)
 }
 
 func (handler adminHandler) knowledgeGraph(w http.ResponseWriter, request *http.Request) {
-	days, err := parseKnowledgeDays(request.URL.Query().Get("days"))
+	start, end, err := parseKnowledgeWindow(
+		request.URL.Query().Get("days"),
+		request.URL.Query().Get("from"),
+		request.URL.Query().Get("to"),
+		time.Now(),
+	)
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
 		return
@@ -391,12 +397,42 @@ func (handler adminHandler) knowledgeGraph(w http.ResponseWriter, request *http.
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "category is too long")
 		return
 	}
-	item, err := handler.desk.KnowledgeGraph(request.Context(), days, category)
+	item, err := handler.desk.KnowledgeGraph(request.Context(), start, end, category)
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, item)
+}
+
+func parseKnowledgeWindow(daysValue, fromValue, toValue string, now time.Time) (time.Time, time.Time, error) {
+	if fromValue == "" && toValue == "" {
+		days, err := parseKnowledgeDays(daysValue)
+		if err != nil {
+			return time.Time{}, time.Time{}, err
+		}
+		end := now.UTC()
+		return end.Add(-time.Duration(days) * 24 * time.Hour), end, nil
+	}
+	if fromValue == "" || toValue == "" {
+		return time.Time{}, time.Time{}, errors.New("from and to dates must be provided together")
+	}
+	start, err := time.Parse(time.DateOnly, fromValue)
+	if err != nil {
+		return time.Time{}, time.Time{}, errors.New("from must use YYYY-MM-DD")
+	}
+	lastDay, err := time.Parse(time.DateOnly, toValue)
+	if err != nil {
+		return time.Time{}, time.Time{}, errors.New("to must use YYYY-MM-DD")
+	}
+	if lastDay.Before(start) {
+		return time.Time{}, time.Time{}, errors.New("to must be on or after from")
+	}
+	end := lastDay.AddDate(0, 0, 1)
+	if end.Sub(start) > 366*24*time.Hour {
+		return time.Time{}, time.Time{}, errors.New("date range cannot exceed 366 days")
+	}
+	return start, end, nil
 }
 
 func parseKnowledgeDays(value string) (int, error) {

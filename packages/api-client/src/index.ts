@@ -327,9 +327,14 @@ export function createClient(baseUrl = "") {
       request<{ items: OverviewTrendPoint[] }>(
         url(`/api/admin/overview/trends?days=${days}`)
       ),
-    knowledgeGraph: (days: 1 | 7 | 30 = 1, category = "") =>
+    knowledgeGraph: (params: {
+      days?: 1 | 7 | 30;
+      category?: string;
+      from?: string;
+      to?: string;
+    } = { days: 1 }) =>
       request<KnowledgeGraph>(
-        url(withQuery("/api/admin/knowledge-graph", { days, category }))
+        url(withQuery("/api/admin/knowledge-graph", params))
       ),
     queue: (params: AdminTableQuery = {}) =>
       request<PageResponse<QueueItem>>(

@@ -145,10 +145,10 @@ type KnowledgeGraph struct {
 	Political   PoliticalIntelligence `json:"political"`
 }
 
-func (store *Store) KnowledgeGraph(ctx context.Context, days int, category string) (KnowledgeGraph, error) {
+func (store *Store) KnowledgeGraph(ctx context.Context, start, end time.Time, category string) (KnowledgeGraph, error) {
 	result := KnowledgeGraph{
 		GeneratedAt: time.Now().UTC(),
-		Days:        days,
+		Days:        int((end.Sub(start) + 24*time.Hour - 1) / (24 * time.Hour)),
 		Categories:  make([]KnowledgeCategory, 0),
 		Events:      make([]KnowledgeEvent, 0),
 	}
@@ -159,8 +159,9 @@ func (store *Store) KnowledgeGraph(ctx context.Context, days int, category strin
 			LEFT JOIN categories c ON c.id = a.category_id
 			WHERE a.public_status = 'published'
 			  AND a.event_id IS NOT NULL
-			  AND a.published_at >= clock_timestamp() - make_interval(days => $1)
-			  AND ($2 = '' OR c.slug = $2)
+			  AND a.published_at >= $1
+			  AND a.published_at < $2
+			  AND ($3 = '' OR c.slug = $3)
 		), events AS (
 			SELECT event_id, count(DISTINCT source_id) source_count
 			FROM scoped GROUP BY event_id
@@ -170,7 +171,7 @@ func (store *Store) KnowledgeGraph(ctx context.Context, days int, category strin
 		       count(*) FILTER (WHERE source_count > 1),
 		       (SELECT count(DISTINCT source_id) FROM scoped)
 		FROM events
-	`, days, category).Scan(
+	`, start, end, category).Scan(
 		&result.Summary.Articles,
 		&result.Summary.Events,
 		&result.Summary.MultiSourceEvents,
@@ -185,11 +186,12 @@ func (store *Store) KnowledgeGraph(ctx context.Context, days int, category strin
 		JOIN categories c ON c.id = a.category_id
 		WHERE a.public_status = 'published'
 		  AND a.event_id IS NOT NULL
-		  AND a.published_at >= clock_timestamp() - make_interval(days => $1)
-		  AND ($2 = '' OR c.slug = $2)
+		  AND a.published_at >= $1
+		  AND a.published_at < $2
+		  AND ($3 = '' OR c.slug = $3)
 		GROUP BY c.id, c.slug, c.name_si, c.name_en
 		ORDER BY count(*) DESC, c.slug
-	`, days, category)
+	`, start, end, category)
 	if err != nil {
 		return KnowledgeGraph{}, fmt.Errorf("list knowledge categories: %w", err)
 	}
@@ -214,8 +216,9 @@ func (store *Store) KnowledgeGraph(ctx context.Context, days int, category strin
 			LEFT JOIN categories c ON c.id = a.category_id
 			WHERE a.public_status = 'published'
 			  AND a.event_id IS NOT NULL
-			  AND a.published_at >= clock_timestamp() - make_interval(days => $1)
-			  AND ($2 = '' OR c.slug = $2)
+			  AND a.published_at >= $1
+			  AND a.published_at < $2
+			  AND ($3 = '' OR c.slug = $3)
 			GROUP BY a.event_id
 			ORDER BY latest DESC
 			LIMIT 150
@@ -234,9 +237,10 @@ func (store *Store) KnowledgeGraph(ctx context.Context, days int, category strin
 		JOIN sources s ON s.id = a.source_id
 		LEFT JOIN article_political_analysis analysis ON analysis.article_id = a.id
 		WHERE a.public_status = 'published'
-		  AND a.published_at >= clock_timestamp() - make_interval(days => $1)
+		  AND a.published_at >= $1
+		  AND a.published_at < $2
 		ORDER BY scope.latest DESC, a.published_at DESC
-	`, days, category)
+	`, start, end, category)
 	if err != nil {
 		return KnowledgeGraph{}, fmt.Errorf("load knowledge events: %w", err)
 	}
@@ -283,7 +287,7 @@ func (store *Store) KnowledgeGraph(ctx context.Context, days int, category strin
 		return KnowledgeGraph{}, err
 	}
 	rows.Close()
-	political, err := store.politicalIntelligence(ctx, days, category)
+	political, err := store.politicalIntelligence(ctx, start, end, category)
 	if err != nil {
 		return KnowledgeGraph{}, err
 	}
@@ -291,7 +295,7 @@ func (store *Store) KnowledgeGraph(ctx context.Context, days int, category strin
 	return result, nil
 }
 
-func (store *Store) politicalIntelligence(ctx context.Context, days int, category string) (PoliticalIntelligence, error) {
+func (store *Store) politicalIntelligence(ctx context.Context, start, end time.Time, category string) (PoliticalIntelligence, error) {
 	const minimumSample = 5
 	result := PoliticalIntelligence{
 		Axis: "Economic policy: state-led to market-led", Model: "political-framing-rules-v1",
@@ -334,8 +338,9 @@ func (store *Store) politicalIntelligence(ctx context.Context, days int, categor
 			LEFT JOIN categories c ON c.id = a.category_id
 			JOIN article_political_analysis analysis ON analysis.article_id = a.id
 			WHERE a.public_status = 'published'
-			  AND a.published_at >= clock_timestamp() - make_interval(days => $1)
-			  AND ($2 = '' OR c.slug = $2)
+			  AND a.published_at >= $1
+			  AND a.published_at < $2
+			  AND ($3 = '' OR c.slug = $3)
 			  AND jsonb_array_length(analysis.mentions) > 0
 		), aggregate AS (
 			SELECT source_id, count(*) mentioned_articles,
@@ -351,10 +356,10 @@ func (store *Store) politicalIntelligence(ctx context.Context, days int, categor
 		       (aggregate.raw_frame * aggregate.scored_articles / (aggregate.scored_articles + 5.0))::float8,
 		       (aggregate.raw_confidence * aggregate.scored_articles / (aggregate.scored_articles + 5.0))::float8,
 		       aggregate.mentioned_articles, aggregate.scored_articles,
-		       aggregate.scored_articles >= $3
+		       aggregate.scored_articles >= $4
 		FROM aggregate JOIN sources s ON s.id = aggregate.source_id
 		ORDER BY aggregate.scored_articles DESC, s.name
-	`, days, category, minimumSample)
+	`, start, end, category, minimumSample)
 	if err != nil {
 		return PoliticalIntelligence{}, fmt.Errorf("aggregate source political framing: %w", err)
 	}
