@@ -27,6 +27,13 @@ export function LoginPage() {
   return (
     <main className="relative flex min-h-svh items-center justify-center bg-background px-6 py-16 text-foreground">
       <section className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-sm" aria-labelledby="login-title">
+        <div className="mb-6 flex items-center gap-3">
+          <img src="/brand/news-control-room-mark.svg" alt="" className="size-10" />
+          <div>
+            <p className="font-heading font-semibold tracking-tight">News Control Room</p>
+            <p className="text-xs text-muted-foreground">Administration portal</p>
+          </div>
+        </div>
         <h1 id="login-title" className="font-heading text-lg font-semibold tracking-tight">Login to your account</h1>
         <p className="mt-2 text-sm leading-5 text-muted-foreground">
           Sign in with the predefined administrator account.

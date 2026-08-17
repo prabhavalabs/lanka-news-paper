@@ -3,7 +3,6 @@ import {
   LayoutDashboardIcon,
   ListChecksIcon,
   MessageSquareWarningIcon,
-  NewspaperIcon,
   RadioTowerIcon,
   SparklesIcon,
 } from 'lucide-react'
@@ -42,13 +41,11 @@ export function AppSidebar({ user, onLogout, ...props }: AppSidebarProps) {
           <SidebarMenuItem>
             <SidebarMenuButton
               render={<Link to="/" />}
-              tooltip="SNAP newsroom"
+              tooltip="News Control Room"
               className="data-[slot=sidebar-menu-button]:p-1.5!"
             >
-              <span className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <NewspaperIcon className="size-4" />
-              </span>
-              <span className="text-base font-semibold tracking-tight">SNAP newsroom</span>
+              <img src="/brand/news-control-room-mark.svg" alt="" className="size-7" />
+              <span className="text-base font-semibold tracking-tight">News Control Room</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
