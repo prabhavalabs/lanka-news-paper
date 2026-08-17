@@ -18,9 +18,10 @@ import (
 )
 
 type Request struct {
-	Task   string
-	System string
-	Input  string
+	Task       string
+	System     string
+	Input      string
+	JSONSchema map[string]any
 }
 
 type Response struct {
@@ -58,7 +59,9 @@ func (gateway *Gateway) Complete(ctx context.Context, request Request) (Response
 			continue
 		}
 		started := time.Now()
-		text, callErr := gateway.callProvider(ctx, kind, baseURL, keyRef, model, request)
+		callContext, cancelCall := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+		text, callErr := gateway.callProvider(callContext, kind, baseURL, keyRef, model, request)
+		cancelCall()
 		outcome := "ok"
 		if callErr != nil {
 			outcome = "fallback"
@@ -89,28 +92,48 @@ func (gateway *Gateway) fallback(request Request) Response {
 }
 
 func (gateway *Gateway) callProvider(ctx context.Context, kind, baseURL, keyRef, model string, request Request) (string, error) {
-	if kind != "openai_api" {
+	if kind != "openai_api" && kind != "openai_compatible" {
 		return "", fmt.Errorf("codex_cli is not configured")
 	}
 	if baseURL == "" {
 		return "", fmt.Errorf("missing base_url")
 	}
-	apiKey := os.Getenv(keyRef)
-	if apiKey == "" {
+	apiKey := ""
+	if keyRef != "" {
+		apiKey = os.Getenv(keyRef)
+	}
+	if kind == "openai_api" && apiKey == "" {
 		return "", fmt.Errorf("missing secret %s", keyRef)
 	}
-	payload, _ := json.Marshal(map[string]any{
-		"model": model,
+	payloadValue := map[string]any{
+		"model":       model,
+		"temperature": 0,
 		"messages": []map[string]string{
 			{"role": "system", "content": request.System},
 			{"role": "user", "content": request.Input},
 		},
-	})
+	}
+	if request.JSONSchema != nil {
+		payloadValue["response_format"] = map[string]any{
+			"type": "json_schema",
+			"json_schema": map[string]any{
+				"name":   request.Task,
+				"strict": true,
+				"schema": request.JSONSchema,
+			},
+		}
+	}
+	payload, err := json.Marshal(payloadValue)
+	if err != nil {
+		return "", fmt.Errorf("encode provider request: %w", err)
+	}
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
 		return "", err
 	}
-	httpRequest.Header.Set("Authorization", "Bearer "+apiKey)
+	if apiKey != "" {
+		httpRequest.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 	httpRequest.Header.Set("Content-Type", "application/json")
 	response, err := gateway.client.Do(httpRequest)
 	if err != nil {
@@ -159,7 +182,8 @@ func (gateway *Gateway) ListProviders(ctx context.Context, params pagination.Par
 	}
 
 	rows, err := gateway.pool.Query(ctx, `
-		SELECT id, kind, COALESCE(base_url, ''), enabled, status, api_key_ref IS NOT NULL AND api_key_ref <> ''
+		SELECT id, kind, COALESCE(base_url, ''), enabled, status,
+		       kind = 'openai_compatible' OR (api_key_ref IS NOT NULL AND api_key_ref <> '')
 		FROM llm_providers
 		WHERE ($1 = '' OR id ILIKE '%' || $1 || '%' OR kind ILIKE '%' || $1 || '%'
 		       OR COALESCE(base_url, '') ILIKE '%' || $1 || '%')
