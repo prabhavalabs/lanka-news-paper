@@ -34,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   initialGraphViewport,
@@ -364,15 +365,16 @@ function EventArticleRail({ event, parties }: { event?: KnowledgeEvent; parties:
             </div>
             <p className="shrink-0 text-xs text-muted-foreground">{event.articles.length} relevant reports · {event.algorithm_version}</p>
           </div>
-          <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-3" tabIndex={0} aria-label="Scrollable relevant article cards">
-            {event.articles.map((article) => (
-              <a
-                key={article.id}
-                href={article.original_url}
-                target="_blank"
-                rel="noreferrer"
-                className="group flex min-h-36 w-[285px] shrink-0 snap-start flex-col justify-between rounded-2xl border bg-card p-4 transition-colors hover:bg-muted/50 sm:w-[340px]"
-              >
+          <ScrollArea className="h-[190px] w-full" aria-label="Scrollable relevant article cards">
+            <div className="flex w-max snap-x snap-mandatory gap-3 pb-3">
+              {event.articles.map((article) => (
+                <a
+                  key={article.id}
+                  href={article.original_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="group flex min-h-36 w-[285px] shrink-0 snap-start flex-col justify-between rounded-2xl border bg-card p-4 transition-colors hover:bg-muted/50 sm:w-[340px]"
+                >
                 <span className="flex items-start gap-3">
                   <SourceAvatar name={article.source} iconUrl={article.source_icon} className="size-9 shrink-0" />
                   <span className="min-w-0 flex-1">
@@ -402,9 +404,11 @@ function EventArticleRail({ event, parties }: { event?: KnowledgeEvent; parties:
                   <span>{formatDate(article.published_at)}</span>
                   <ExternalLinkIcon className="size-3.5 group-hover:text-foreground" />
                 </span>
-              </a>
-            ))}
-          </div>
+                </a>
+              ))}
+            </div>
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
         </div>
       )}
     </section>
