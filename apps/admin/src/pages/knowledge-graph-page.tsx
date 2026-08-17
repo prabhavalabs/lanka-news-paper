@@ -488,6 +488,8 @@ function EventGraph({
 }
 
 function EventArticleRail({ event, parties }: { event?: KnowledgeEvent; parties: PoliticalParty[] }) {
+  const drag = useRef<{ pointerId: number; startX: number; scrollLeft: number; moved: boolean } | null>(null)
+  const suppressClick = useRef(false)
   const sourceCount = new Set(event?.articles.map((article) => article.source_id)).size
   const partyNames = new Map(parties.map((party) => [party.slug, party.short_name]))
   return (
@@ -508,7 +510,51 @@ function EventArticleRail({ event, parties }: { event?: KnowledgeEvent; parties:
             </div>
             <p className="shrink-0 text-xs text-muted-foreground">{event.articles.length} relevant reports · {event.algorithm_version}</p>
           </div>
-          <ScrollArea className="h-[190px] w-full" aria-label="Scrollable relevant article cards">
+          <ScrollArea
+            className="h-[190px] w-full cursor-grab select-none active:cursor-grabbing"
+            aria-label="Drag or scroll through relevant article cards"
+            onDragStart={(pointerEvent) => pointerEvent.preventDefault()}
+            onPointerDown={(pointerEvent) => {
+              if (pointerEvent.pointerType !== 'mouse' || pointerEvent.button !== 0) return
+              if ((pointerEvent.target as HTMLElement).closest('[data-slot="scroll-area-scrollbar"]')) return
+              const viewport = pointerEvent.currentTarget.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')
+              if (!viewport) return
+              suppressClick.current = false
+              drag.current = {
+                pointerId: pointerEvent.pointerId,
+                startX: pointerEvent.clientX,
+                scrollLeft: viewport.scrollLeft,
+                moved: false,
+              }
+              pointerEvent.currentTarget.setPointerCapture(pointerEvent.pointerId)
+            }}
+            onPointerMove={(pointerEvent) => {
+              if (!drag.current || drag.current.pointerId !== pointerEvent.pointerId) return
+              const viewport = pointerEvent.currentTarget.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')
+              if (!viewport) return
+              const distance = pointerEvent.clientX - drag.current.startX
+              drag.current.moved ||= Math.abs(distance) > 4
+              if (!drag.current.moved) return
+              pointerEvent.preventDefault()
+              viewport.scrollLeft = drag.current.scrollLeft - distance
+            }}
+            onPointerUp={(pointerEvent) => {
+              if (!drag.current || drag.current.pointerId !== pointerEvent.pointerId) return
+              suppressClick.current = drag.current.moved
+              drag.current = null
+              pointerEvent.currentTarget.releasePointerCapture(pointerEvent.pointerId)
+            }}
+            onPointerCancel={() => {
+              drag.current = null
+              suppressClick.current = false
+            }}
+            onClickCapture={(clickEvent) => {
+              if (!suppressClick.current) return
+              clickEvent.preventDefault()
+              clickEvent.stopPropagation()
+              suppressClick.current = false
+            }}
+          >
             <div className="flex w-max snap-x snap-mandatory gap-3 pb-3">
               {event.articles.map((article) => (
                 <a
@@ -516,6 +562,7 @@ function EventArticleRail({ event, parties }: { event?: KnowledgeEvent; parties:
                   href={article.original_url}
                   target="_blank"
                   rel="noreferrer"
+                  draggable={false}
                   className="group flex min-h-36 w-[285px] shrink-0 snap-start flex-col justify-between rounded-2xl border bg-card p-4 transition-colors hover:bg-muted/50 sm:w-[340px]"
                 >
                 <span className="flex items-start gap-3">
