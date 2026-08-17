@@ -93,9 +93,8 @@ The model must return this typed contract:
 
 ```json
 {
-  "relevant": true,
+  "relevance": "economic_narration",
   "score": -0.42,
-  "label": "center_left",
   "confidence": 0.78,
   "rationale": "The report presents public provision as necessary for universal access.",
   "evidence": ["essential services must remain publicly owned"]
@@ -111,7 +110,7 @@ The prompt requires the model to:
 - return short evidence phrases from the supplied text;
 - avoid inferring a permanent publisher label from one article.
 
-The API validates score and confidence ranges, rejects unknown or trailing JSON, derives the label from fixed score bands, limits evidence length, and forces irrelevant results to score `0` with label `unclear`.
+The enum avoids an ambiguity observed with a boolean during integration testing. The API validates relevance plus score and confidence ranges, rejects unknown or trailing JSON, derives the persisted boolean and display label from deterministic code, limits evidence length, and forces irrelevant results to score `0` with label `unclear`.
 
 ### 3. Persist provenance
 
