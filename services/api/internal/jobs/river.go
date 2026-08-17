@@ -11,6 +11,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivermigrate"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
@@ -23,9 +24,8 @@ func (PollArgs) Kind() string { return "ingest.poll" }
 
 type PollWorker struct {
 	river.WorkerDefaults[PollArgs]
-	Poller   *ingest.Poller
-	Politics *politics.Store
-	News     *publish.Store
+	Poller *ingest.Poller
+	News   *publish.Store
 }
 
 func (worker *PollWorker) Work(ctx context.Context, _ *river.Job[PollArgs]) error {
@@ -34,15 +34,43 @@ func (worker *PollWorker) Work(ctx context.Context, _ *river.Job[PollArgs]) erro
 			return err
 		}
 	}
-	if worker.Politics != nil {
-		if err := worker.Politics.Backfill(ctx, 25); err != nil {
-			return err
-		}
-	}
 	if worker.News != nil {
 		return worker.News.WriteBrief(ctx)
 	}
 	return nil
+}
+
+type NarrationArgs struct{}
+
+func (NarrationArgs) Kind() string { return "intelligence.narration" }
+
+func (NarrationArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{
+		Queue: "analysis",
+		UniqueOpts: river.UniqueOpts{ByQueue: true, ByState: []rivertype.JobState{
+			rivertype.JobStateAvailable,
+			rivertype.JobStatePending,
+			rivertype.JobStateRunning,
+			rivertype.JobStateScheduled,
+			rivertype.JobStateRetryable,
+		}},
+	}
+}
+
+type NarrationWorker struct {
+	river.WorkerDefaults[NarrationArgs]
+	Politics *politics.Store
+}
+
+func (worker *NarrationWorker) Work(ctx context.Context, _ *river.Job[NarrationArgs]) error {
+	if worker.Politics == nil {
+		return nil
+	}
+	return worker.Politics.Backfill(ctx, 10)
+}
+
+func (worker *NarrationWorker) Timeout(*river.Job[NarrationArgs]) time.Duration {
+	return 8 * time.Minute
 }
 
 type BriefArgs struct{}
@@ -74,7 +102,8 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 
 func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, politicsStore *politics.Store, news *publish.Store) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
-	river.AddWorker(workers, &PollWorker{Poller: poller, Politics: politicsStore, News: news})
+	river.AddWorker(workers, &PollWorker{Poller: poller, News: news})
+	river.AddWorker(workers, &NarrationWorker{Politics: politicsStore})
 	river.AddWorker(workers, &BriefWorker{News: news})
 
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
@@ -83,12 +112,16 @@ func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, p
 			river.NewPeriodicJob(river.PeriodicInterval(time.Minute), func() (river.JobArgs, *river.InsertOpts) {
 				return PollArgs{}, nil
 			}, &river.PeriodicJobOpts{RunOnStart: true}),
+			river.NewPeriodicJob(river.PeriodicInterval(time.Minute), func() (river.JobArgs, *river.InsertOpts) {
+				return NarrationArgs{}, nil
+			}, &river.PeriodicJobOpts{RunOnStart: true}),
 			river.NewPeriodicJob(river.PeriodicInterval(time.Hour), func() (river.JobArgs, *river.InsertOpts) {
 				return BriefArgs{}, nil
 			}, nil),
 		},
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: 2},
+			"analysis":         {MaxWorkers: 1},
 		},
 		Workers: workers,
 	})
