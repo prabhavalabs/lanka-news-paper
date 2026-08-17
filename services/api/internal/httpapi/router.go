@@ -53,6 +53,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("GET /api/admin/sources", admin.sources)
 	protected.HandleFunc("POST /api/admin/sources", admin.sources)
 	protected.HandleFunc("GET /api/admin/sources/{id}", admin.source)
+	protected.HandleFunc("GET /api/admin/sources/{id}/performance", admin.sourcePerformance)
 	protected.HandleFunc("POST /api/admin/sources/{id}/active", admin.setActive)
 	protected.HandleFunc("GET /api/admin/sources/{id}/endpoints", admin.endpoints)
 	protected.HandleFunc("POST /api/admin/sources/{id}/endpoints", admin.endpoints)

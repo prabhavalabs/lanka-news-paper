@@ -101,6 +101,7 @@ func (poller *Poller) PollAll(ctx context.Context) error {
 }
 
 func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, endpointType, rawURL, etag, lastModified, rightsID, mode, website string, sourceActive bool) error {
+	startedAt := time.Now().UTC()
 	if !strings.HasPrefix(rawURL, "https://") {
 		return poller.mark(ctx, endpointID, "failed", "only https endpoints are allowed", "", "")
 	}
@@ -121,6 +122,10 @@ func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, endpoin
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusNotModified {
+		_, _ = poller.pool.Exec(ctx, `
+			INSERT INTO ingestion_runs (endpoint_id, started_at, ended_at, status, http_status)
+			VALUES ($1, $2, clock_timestamp(), 'ok', $3)
+		`, endpointID, startedAt, response.StatusCode)
 		return poller.mark(ctx, endpointID, "healthy", "", etag, lastModified)
 	}
 	if response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusUnauthorized {
@@ -156,9 +161,9 @@ func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, endpoin
 		}
 	}
 	_, _ = poller.pool.Exec(ctx, `
-		INSERT INTO ingestion_runs (endpoint_id, ended_at, status, http_status, item_count, new_item_count)
-		VALUES ($1, clock_timestamp(), 'ok', $2, $3, $4)
-	`, endpointID, response.StatusCode, len(feed.Items), newItems)
+		INSERT INTO ingestion_runs (endpoint_id, started_at, ended_at, status, http_status, item_count, new_item_count)
+		VALUES ($1, $2, clock_timestamp(), 'ok', $3, $4, $5)
+	`, endpointID, startedAt, response.StatusCode, len(feed.Items), newItems)
 	return poller.mark(ctx, endpointID, "healthy", "", response.Header.Get("ETag"), response.Header.Get("Last-Modified"))
 }
 

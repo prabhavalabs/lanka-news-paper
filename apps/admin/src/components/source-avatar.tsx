@@ -1,12 +1,14 @@
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { cn } from '@/lib/utils'
 
 type SourceAvatarProps = {
   name: string
   website?: string | null
   iconUrl?: string | null
+  className?: string
 }
 
-export function SourceAvatar({ name, website, iconUrl }: SourceAvatarProps) {
+export function SourceAvatar({ name, website, iconUrl, className }: SourceAvatarProps) {
   let favicon: string | undefined
 
   try {
@@ -23,7 +25,7 @@ export function SourceAvatar({ name, website, iconUrl }: SourceAvatarProps) {
     .toUpperCase()
 
   return (
-    <Avatar aria-hidden="true" className="bg-background">
+    <Avatar aria-hidden="true" className={cn('bg-background', className)}>
       {favicon ? <AvatarImage src={favicon} alt="" /> : null}
       <AvatarFallback className="font-medium">{initials || '—'}</AvatarFallback>
     </Avatar>

@@ -66,6 +66,24 @@ func (handler adminHandler) source(w http.ResponseWriter, request *http.Request)
 	writeJSON(w, http.StatusOK, item)
 }
 
+func (handler adminHandler) sourcePerformance(w http.ResponseWriter, request *http.Request) {
+	days := 30
+	if value := request.URL.Query().Get("days"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || (parsed != 7 && parsed != 30 && parsed != 90) {
+			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "days must be 7, 30, or 90.")
+			return
+		}
+		days = parsed
+	}
+	item, err := handler.registry.GetSourcePerformance(request.Context(), request.PathValue("id"), days)
+	if err != nil {
+		writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", "Source was not found.")
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
 func (handler adminHandler) setActive(w http.ResponseWriter, request *http.Request) {
 	var body struct {
 		Active bool `json:"active"`

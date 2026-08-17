@@ -64,8 +64,13 @@ export type AdminEndpoint = {
   paused: boolean;
   health_state: string;
   last_error: string | null;
+  last_success_at: string | null;
   polling_interval_seconds: number;
   verified_official: boolean;
+  last_latency_ms: number | null;
+  last_item_count: number;
+  last_new_item_count: number;
+  total_captured: number;
 };
 
 export type AdminRights = {
@@ -74,6 +79,18 @@ export type AdminRights = {
   endpoint_id: string;
   mode: string;
   attribution: string;
+};
+
+export type SourcePerformance = {
+  total_captured: number;
+  captured_today: number;
+  published: number;
+  last_success_at: string | null;
+  daily: {
+    date: string;
+    captured: number;
+    published: number;
+  }[];
 };
 
 export type LlmProvider = {
@@ -274,6 +291,10 @@ export function createClient(baseUrl = "") {
       ),
     adminSource: (id: string) =>
       request<AdminSource>(url(`/api/admin/sources/${id}`)),
+    sourcePerformance: (id: string, days: 7 | 30 | 90 = 30) =>
+      request<SourcePerformance>(
+        url(`/api/admin/sources/${id}/performance?days=${days}`)
+      ),
     createSource: (body: Omit<AdminSource, "id">) =>
       request<AdminSource>(url("/api/admin/sources"), {
         method: "POST",

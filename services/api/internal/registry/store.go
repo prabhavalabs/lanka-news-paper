@@ -37,6 +37,10 @@ type Endpoint struct {
 	LastSuccessAt   *string `json:"last_success_at"`
 	IntervalSeconds int     `json:"polling_interval_seconds"`
 	Verified        bool    `json:"verified_official"`
+	LastLatencyMS   *int    `json:"last_latency_ms"`
+	LastItemCount   int     `json:"last_item_count"`
+	LastNewItems    int     `json:"last_new_item_count"`
+	TotalCaptured   int     `json:"total_captured"`
 }
 
 type Rights struct {
@@ -45,6 +49,20 @@ type Rights struct {
 	EndpointID  string `json:"endpoint_id"`
 	Mode        string `json:"mode"`
 	Attribution string `json:"attribution"`
+}
+
+type SourceTrendPoint struct {
+	Date      string `json:"date"`
+	Captured  int    `json:"captured"`
+	Published int    `json:"published"`
+}
+
+type SourcePerformance struct {
+	TotalCaptured int                `json:"total_captured"`
+	CapturedToday int                `json:"captured_today"`
+	Published     int                `json:"published"`
+	LastSuccessAt *string            `json:"last_success_at"`
+	Daily         []SourceTrendPoint `json:"daily"`
 }
 
 type Store struct {
@@ -108,6 +126,59 @@ func (store *Store) GetSource(ctx context.Context, id string) (Source, error) {
 	return item, err
 }
 
+func (store *Store) GetSourcePerformance(ctx context.Context, id string, days int) (SourcePerformance, error) {
+	var performance SourcePerformance
+	err := store.pool.QueryRow(ctx, `
+		SELECT count(article.id),
+		       count(article.id) FILTER (
+		         WHERE timezone('Asia/Colombo', article.received_at)::date = timezone('Asia/Colombo', clock_timestamp())::date
+		       ),
+		       count(article.id) FILTER (WHERE article.public_status = 'published'),
+		       (SELECT max(last_success_at)::text FROM source_endpoints WHERE source_id = source.id)
+		FROM sources AS source
+		LEFT JOIN articles AS article ON article.source_id = source.id
+		WHERE source.id = $1 AND source.archived_at IS NULL
+		GROUP BY source.id
+	`, id).Scan(
+		&performance.TotalCaptured,
+		&performance.CapturedToday,
+		&performance.Published,
+		&performance.LastSuccessAt,
+	)
+	if err != nil {
+		return SourcePerformance{}, err
+	}
+
+	rows, err := store.pool.Query(ctx, `
+		SELECT day::date::text,
+		       count(article.id),
+		       count(article.id) FILTER (WHERE article.public_status = 'published')
+		FROM generate_series(
+		       timezone('Asia/Colombo', clock_timestamp())::date - ($2::int - 1),
+		       timezone('Asia/Colombo', clock_timestamp())::date,
+		       interval '1 day'
+		     ) AS day
+		LEFT JOIN articles AS article
+		  ON article.source_id = $1
+		 AND timezone('Asia/Colombo', article.received_at)::date = day::date
+		GROUP BY day
+		ORDER BY day
+	`, id, days)
+	if err != nil {
+		return SourcePerformance{}, err
+	}
+	defer rows.Close()
+	performance.Daily = make([]SourceTrendPoint, 0, days)
+	for rows.Next() {
+		var point SourceTrendPoint
+		if err := rows.Scan(&point.Date, &point.Captured, &point.Published); err != nil {
+			return SourcePerformance{}, err
+		}
+		performance.Daily = append(performance.Daily, point)
+	}
+	return performance, rows.Err()
+}
+
 func (store *Store) SetActive(ctx context.Context, id string, active bool) error {
 	_, err := store.pool.Exec(ctx, `UPDATE sources SET active = $2 WHERE id = $1 AND archived_at IS NULL`, id, active)
 	return err
@@ -140,14 +211,25 @@ func (store *Store) ListEndpoints(ctx context.Context, sourceID string, params p
 	}
 
 	rows, err := store.pool.Query(ctx, `
-		SELECT id::text, source_id::text, endpoint_type, url, paused, health_state, last_error,
-		       last_success_at::text, polling_interval_seconds, verified_official
-		FROM source_endpoints
-		WHERE source_id = $1
-		  AND ($2 = '' OR url ILIKE '%' || $2 || '%' OR endpoint_type ILIKE '%' || $2 || '%')
-		  AND ($3 = '' OR health_state = $3)
-		  AND ($4 = '' OR ($4 = 'paused' AND paused) OR ($4 = 'active' AND NOT paused))
-		ORDER BY created_at, id
+		SELECT endpoint.id::text, endpoint.source_id::text, endpoint.endpoint_type, endpoint.url,
+		       endpoint.paused, endpoint.health_state, endpoint.last_error, endpoint.last_success_at::text,
+		       endpoint.polling_interval_seconds, endpoint.verified_official,
+		       NULLIF(round(extract(epoch FROM (last_run.ended_at - last_run.started_at)) * 1000)::int, 0),
+		       COALESCE(last_run.item_count, 0), COALESCE(last_run.new_item_count, 0),
+		       (SELECT count(*) FROM articles WHERE endpoint_id = endpoint.id)
+		FROM source_endpoints AS endpoint
+		LEFT JOIN LATERAL (
+			SELECT started_at, ended_at, item_count, new_item_count
+			FROM ingestion_runs
+			WHERE endpoint_id = endpoint.id AND ended_at IS NOT NULL
+			ORDER BY ended_at DESC
+			LIMIT 1
+		) AS last_run ON true
+		WHERE endpoint.source_id = $1
+		  AND ($2 = '' OR endpoint.url ILIKE '%' || $2 || '%' OR endpoint.endpoint_type ILIKE '%' || $2 || '%')
+		  AND ($3 = '' OR endpoint.health_state = $3)
+		  AND ($4 = '' OR ($4 = 'paused' AND endpoint.paused) OR ($4 = 'active' AND NOT endpoint.paused))
+		ORDER BY endpoint.created_at, endpoint.id
 		LIMIT $5 OFFSET $6
 	`, sourceID, params.Search, health, status, params.Limit(), params.Offset())
 	if err != nil {
@@ -157,7 +239,22 @@ func (store *Store) ListEndpoints(ctx context.Context, sourceID string, params p
 	items := make([]Endpoint, 0)
 	for rows.Next() {
 		var item Endpoint
-		if err := rows.Scan(&item.ID, &item.SourceID, &item.EndpointType, &item.URL, &item.Paused, &item.HealthState, &item.LastError, &item.LastSuccessAt, &item.IntervalSeconds, &item.Verified); err != nil {
+		if err := rows.Scan(
+			&item.ID,
+			&item.SourceID,
+			&item.EndpointType,
+			&item.URL,
+			&item.Paused,
+			&item.HealthState,
+			&item.LastError,
+			&item.LastSuccessAt,
+			&item.IntervalSeconds,
+			&item.Verified,
+			&item.LastLatencyMS,
+			&item.LastItemCount,
+			&item.LastNewItems,
+			&item.TotalCaptured,
+		); err != nil {
 			return nil, 0, fmt.Errorf("scan endpoint: %w", err)
 		}
 		items = append(items, item)
@@ -229,8 +326,10 @@ func (store *Store) ListRights(ctx context.Context, sourceID string, params pagi
 
 func (store *Store) CreateRights(ctx context.Context, item Rights) (Rights, error) {
 	err := store.pool.QueryRow(ctx, `
-		INSERT INTO rights_profiles (source_id, endpoint_id, mode, attribution, effective_from, approved_by, approved_at)
-		VALUES ($1, $2, $3, $4, clock_timestamp(), 'admin', clock_timestamp())
+		INSERT INTO rights_profiles (source_id, endpoint_id, version, mode, attribution, effective_from, approved_by, approved_at)
+		SELECT $1, $2, COALESCE(max(version), 0) + 1, $3, $4, clock_timestamp(), 'admin', clock_timestamp()
+		FROM rights_profiles
+		WHERE source_id = $1 AND endpoint_id = $2
 		RETURNING id::text
 	`, item.SourceID, item.EndpointID, item.Mode, item.Attribution).Scan(&item.ID)
 	return item, err
