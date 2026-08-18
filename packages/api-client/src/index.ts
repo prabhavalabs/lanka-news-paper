@@ -223,6 +223,88 @@ export type QueueItem = {
   category: string | null;
 };
 
+export type AdminArticleListItem = {
+  id: string;
+  headline: string;
+  public_status: string;
+  source: string;
+  source_icon: string;
+  category: string | null;
+  received_at: string;
+  published_at: string;
+  pipeline_status: string | null;
+  current_step: string | null;
+  pipeline_finished_at: string | null;
+};
+
+export type PipelineStep = {
+  id: string;
+  name: string;
+  position: number;
+  status: "queued" | "running" | "succeeded" | "failed" | "skipped";
+  attempt: number;
+  max_attempts: number;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+  error_detail: string | null;
+  output: Record<string, unknown>;
+};
+
+export type PipelineRun = {
+  id: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  trigger: string;
+  current_step: string | null;
+  attempt: number;
+  last_error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  steps: PipelineStep[];
+};
+
+export type AdminArticleDetail = {
+  id: string;
+  headline: string;
+  description: string;
+  public_status: string;
+  source_id: string;
+  source: string;
+  source_icon: string;
+  original_url: string;
+  canonical_url: string;
+  author: string;
+  category: string | null;
+  category_name: string | null;
+  publisher_category: string;
+  classification_model: string | null;
+  classification_confidence: number | null;
+  endpoint_id: string;
+  endpoint_url: string;
+  rights_mode: string;
+  published_at: string;
+  received_at: string;
+  event: {
+    id: string;
+    title: string;
+    confidence: number;
+    algorithm_version: string;
+  } | null;
+  political: KnowledgeArticle["political"] | null;
+  pipeline_runs: PipelineRun[];
+  llm_calls: {
+    id: number;
+    task: string;
+    provider_id: string;
+    model: string;
+    latency_ms: number | null;
+    outcome: string;
+    error_detail: string | null;
+    created_at: string;
+  }[];
+};
+
 export type AdminComplaint = {
   id: string;
   entity_type: string;
@@ -346,6 +428,17 @@ export function createClient(baseUrl = "") {
       request<PageResponse<QueueItem>>(
         url(withQuery("/api/admin/queue", params))
       ),
+    adminArticles: (params: AdminTableQuery = {}) =>
+      request<PageResponse<AdminArticleListItem>>(
+        url(withQuery("/api/admin/articles", params))
+      ),
+    adminArticle: (id: string) =>
+      request<AdminArticleDetail>(url(`/api/admin/articles/${id}`)),
+    retryArticlePipeline: (id: string, step = "") =>
+      request<{ ok: boolean }>(url(`/api/admin/articles/${id}/pipeline/retry`), {
+        method: "POST",
+        body: JSON.stringify({ step })
+      }),
     quarantine: () =>
       request<{
         items: {

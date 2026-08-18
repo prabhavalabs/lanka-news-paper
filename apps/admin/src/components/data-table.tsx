@@ -233,8 +233,8 @@ export function DataTable({ prefix = 'queue', editable = false }: DataTableProps
                           </Button>
                         </div>
                       ) : (
-                        <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/queue" />}>
-                          Review
+                        <Button variant="ghost" size="sm" nativeButton={false} render={<Link to={`/articles/${item.id}`} />}>
+                          Inspect
                         </Button>
                       )}
                     </TableCell>

@@ -1,6 +1,8 @@
 import { createBrowserRouter } from 'react-router'
 
 import { ComplaintsPage } from './pages/complaints-page'
+import { ArticleDetailPage } from './pages/article-detail-page'
+import { ArticlesPage } from './pages/articles-page'
 import { DashboardPage } from './pages/dashboard-page'
 import { LoginPage } from './pages/login-page'
 import { KnowledgeGraphPage } from './pages/knowledge-graph-page'
@@ -19,6 +21,8 @@ export const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: 'sources', element: <SourcesPage /> },
       { path: 'sources/:id', element: <SourceDetailPage /> },
+      { path: 'articles', element: <ArticlesPage /> },
+      { path: 'articles/:id', element: <ArticleDetailPage /> },
       { path: 'knowledge', element: <KnowledgeGraphPage /> },
       { path: 'queue', element: <QueuePage /> },
       { path: 'complaints', element: <ComplaintsPage /> },

@@ -4,6 +4,7 @@ import {
   ListChecksIcon,
   MessageSquareWarningIcon,
   NetworkIcon,
+  NewspaperIcon,
   RadioTowerIcon,
   SparklesIcon,
 } from 'lucide-react'
@@ -24,6 +25,7 @@ import {
 const navigation: NavItem[] = [
   { title: 'Overview', url: '/', icon: LayoutDashboardIcon },
   { title: 'Sources', url: '/sources', icon: RadioTowerIcon },
+  { title: 'Articles', url: '/articles', icon: NewspaperIcon },
   { title: 'Knowledge graph', url: '/knowledge', icon: NetworkIcon },
   { title: 'Editorial queue', url: '/queue', icon: ListChecksIcon },
   { title: 'Complaints', url: '/complaints', icon: MessageSquareWarningIcon },
