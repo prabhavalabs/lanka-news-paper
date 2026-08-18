@@ -34,3 +34,22 @@ func TestCallProviderSupportsStructuredOpenAICompatibleResponses(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"score":0}`, response)
 }
+
+func TestCallProviderSendsConfiguredBearerToken(t *testing.T) {
+	t.Setenv("TEST_LLM_API_KEY", "test-secret")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		require.Equal(t, "Bearer test-secret", request.Header.Get("Authorization"))
+		_, err := writer.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	gateway := &Gateway{client: server.Client()}
+	response, err := gateway.callProvider(
+		context.Background(), "openai_compatible", server.URL,
+		"TEST_LLM_API_KEY", "remote-model", Request{},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "ok", response)
+}

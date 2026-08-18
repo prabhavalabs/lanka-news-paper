@@ -104,7 +104,10 @@ func (gateway *Gateway) callProvider(ctx context.Context, kind, baseURL, keyRef,
 	if keyRef != "" {
 		apiKey = os.Getenv(keyRef)
 	}
-	if kind == "openai_api" && apiKey == "" {
+	if kind == "openai_api" && keyRef == "" {
+		return "", fmt.Errorf("missing api key reference")
+	}
+	if keyRef != "" && apiKey == "" {
 		return "", fmt.Errorf("missing secret %s", keyRef)
 	}
 	payloadValue := map[string]any{

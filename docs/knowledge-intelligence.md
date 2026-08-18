@@ -172,6 +172,12 @@ The LLM gateway uses database-configured provider and task profiles. Local devel
 
 The provider is disabled by default so a deployment without Ollama never pretends to have analyzed an article. When no enabled provider exists, the worker leaves articles untouched for a later retry. No API secret is required for the local Ollama endpoint.
 
+Migration `000021_remote_ollama` also seeds the disabled `vps-ollama` provider at
+`https://llm.lankanewspaper.prabhavalabs.com/v1`. It uses the exact
+`qwen3:8b-q4_K_M` tag and reads its bearer token from `SNAP_LLM_API_KEY`. The
+provider must remain disabled until DNS, TLS, authentication, and a structured
+completion have all been verified.
+
 The ingest worker processes a bounded batch after polling. The knowledge-graph API returns current article evidence, party references, outlet aggregates, minimum sample, and model metadata for the selected server-side scope.
 
 Core implementation files:
