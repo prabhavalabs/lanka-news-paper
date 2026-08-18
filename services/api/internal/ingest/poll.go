@@ -16,7 +16,6 @@ import (
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/classify"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/cluster"
-	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/normalize"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/sinhala"
 )
@@ -26,7 +25,6 @@ type Poller struct {
 	logger   *slog.Logger
 	client   *http.Client
 	clusters *cluster.Store
-	llm      *llm.Gateway
 	pipeline func(context.Context, string) error
 }
 
@@ -34,12 +32,11 @@ func (poller *Poller) SetArticlePipeline(start func(context.Context, string) err
 	poller.pipeline = start
 }
 
-func NewPoller(pool *pgxpool.Pool, logger *slog.Logger, clusters *cluster.Store, gateway *llm.Gateway) *Poller {
+func NewPoller(pool *pgxpool.Pool, logger *slog.Logger, clusters *cluster.Store) *Poller {
 	return &Poller{
 		pool:     pool,
 		logger:   logger,
 		clusters: clusters,
-		llm:      gateway,
 		client:   &http.Client{Timeout: 20 * time.Second, CheckRedirect: limitRedirects},
 	}
 }
@@ -255,12 +252,6 @@ func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, right
 	}
 	classification := classify.From(item.Categories, headline, item.Description)
 	slug, confidence, model := classification.Slug, classification.Confidence, classification.Model
-	if poller.llm != nil && confidence < 0.55 {
-		result, _ := poller.llm.Complete(ctx, llm.Request{Task: "classify", Input: headline})
-		if classify.ValidSlug(result.Text) && result.Provider != "keyword-rules" {
-			slug, confidence, model = result.Text, 0.60, "ai:"+result.Model
-		}
-	}
 	var near uuid.UUID
 	err := poller.pool.QueryRow(ctx, `
 		SELECT id FROM articles

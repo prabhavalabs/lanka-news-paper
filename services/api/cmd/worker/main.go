@@ -54,8 +54,8 @@ func run(logger *slog.Logger) error {
 	clusters := cluster.NewStore(pool)
 	politicsStore := politics.NewStore(pool, model)
 	pipelineStore := pipeline.NewStore(pool, model, clusters, politicsStore)
-	poller := ingest.NewPoller(pool, logger, clusters, model)
-	client, err := jobs.NewClient(pool, logger, poller, politicsStore, pipelineStore, news)
+	poller := ingest.NewPoller(pool, logger, clusters)
+	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, news)
 	if err != nil {
 		return err
 	}

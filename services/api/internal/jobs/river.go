@@ -15,7 +15,6 @@ import (
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
-	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 )
 
@@ -60,14 +59,10 @@ func (NarrationArgs) InsertOpts() river.InsertOpts {
 
 type NarrationWorker struct {
 	river.WorkerDefaults[NarrationArgs]
-	Politics *politics.Store
 }
 
-func (worker *NarrationWorker) Work(ctx context.Context, _ *river.Job[NarrationArgs]) error {
-	if worker.Politics == nil {
-		return nil
-	}
-	return worker.Politics.Backfill(ctx, 20)
+func (worker *NarrationWorker) Work(_ context.Context, _ *river.Job[NarrationArgs]) error {
+	return nil
 }
 
 func (worker *NarrationWorker) Timeout(*river.Job[NarrationArgs]) time.Duration {
@@ -167,11 +162,11 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
-func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, politicsStore *politics.Store, pipelineStore *pipeline.Store, news *publish.Store) (*river.Client[pgx.Tx], error) {
+func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, pipelineStore *pipeline.Store, news *publish.Store) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
 	dispatcher := &PipelineDispatchWorker{Pipeline: pipelineStore}
 	river.AddWorker(workers, &PollWorker{Poller: poller, News: news})
-	river.AddWorker(workers, &NarrationWorker{Politics: politicsStore})
+	river.AddWorker(workers, &NarrationWorker{})
 	river.AddWorker(workers, &ArticlePipelineWorker{Pipeline: pipelineStore})
 	river.AddWorker(workers, dispatcher)
 	river.AddWorker(workers, &BriefWorker{News: news})

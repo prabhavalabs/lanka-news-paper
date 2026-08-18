@@ -66,7 +66,7 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	poller := ingest.NewPoller(pool, logger, clusters, gateway)
+	poller := ingest.NewPoller(pool, logger, clusters)
 	startPipeline := func(ctx context.Context, articleID string) error {
 		runID, err := pipelineStore.Start(ctx, articleID, "ingestion")
 		if err != nil {
