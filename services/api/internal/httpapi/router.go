@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -24,6 +25,7 @@ type Dependencies struct {
 	News           *publish.Store
 	Poller         *ingest.Poller
 	Registry       *registry.Store
+	RetryPipeline  func(context.Context, string, string) error
 	SessionTTL     time.Duration
 }
 
@@ -32,7 +34,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	health := healthHandler{database: dependencies.Database}
 	news := newsHandler{reader: dependencies.News}
 	auth := newAuthHandler(dependencies.IAM, dependencies.SessionTTL, dependencies.CookieSecure)
-	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk, media: dependencies.Media}
+	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk, media: dependencies.Media, retryPipeline: dependencies.RetryPipeline}
 
 	mux.HandleFunc("GET /api/v1/health/live", health.liveness)
 	mux.HandleFunc("GET /api/v1/health/ready", health.readiness)
@@ -70,6 +72,9 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("GET /api/admin/overview/trends", admin.trends)
 	protected.HandleFunc("GET /api/admin/knowledge-graph", admin.knowledgeGraph)
 	protected.HandleFunc("GET /api/admin/queue", admin.queue)
+	protected.HandleFunc("GET /api/admin/articles", admin.articles)
+	protected.HandleFunc("GET /api/admin/articles/{id}", admin.article)
+	protected.HandleFunc("POST /api/admin/articles/{id}/pipeline/retry", admin.retryArticlePipeline)
 	protected.HandleFunc("GET /api/admin/quarantine", admin.quarantine)
 	protected.HandleFunc("POST /api/admin/articles/{id}/status", admin.articleStatus)
 	protected.HandleFunc("POST /api/admin/articles/{id}/category", admin.articleCategory)

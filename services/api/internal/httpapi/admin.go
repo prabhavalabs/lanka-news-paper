@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"image"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/desk"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
@@ -24,11 +26,12 @@ import (
 const maxSourceLogoBytes = 768 << 10
 
 type adminHandler struct {
-	registry *registry.Store
-	poller   *ingest.Poller
-	llm      *llm.Gateway
-	desk     *desk.Store
-	media    *media.Store
+	registry      *registry.Store
+	poller        *ingest.Poller
+	llm           *llm.Gateway
+	desk          *desk.Store
+	media         *media.Store
+	retryPipeline func(context.Context, string, string) error
 }
 
 func (handler adminHandler) sourceLogo(w http.ResponseWriter, request *http.Request) {
@@ -484,6 +487,62 @@ func (handler adminHandler) queue(w http.ResponseWriter, request *http.Request) 
 		return
 	}
 	writePage(w, items, total, params)
+}
+
+func (handler adminHandler) articles(w http.ResponseWriter, request *http.Request) {
+	params, err := parsePagination(request)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	status, err := parseFilter(request, "status", "held", "published", "unpublished", "removed", "quarantined")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	pipelineStatus, err := parseFilter(request, "pipeline", "not_started", "queued", "running", "succeeded", "failed")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	items, total, err := handler.desk.Articles(request.Context(), params, status, pipelineStatus)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
+		return
+	}
+	writePage(w, items, total, params)
+}
+
+func (handler adminHandler) article(w http.ResponseWriter, request *http.Request) {
+	item, err := handler.desk.Article(request.Context(), request.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", "Article was not found.")
+			return
+		}
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (handler adminHandler) retryArticlePipeline(w http.ResponseWriter, request *http.Request) {
+	var body struct {
+		Step string `json:"step"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
+		return
+	}
+	if handler.retryPipeline == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Pipeline unavailable", "The pipeline producer is not available.")
+		return
+	}
+	if err := handler.retryPipeline(request.Context(), request.PathValue("id"), body.Step); err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Could not retry pipeline", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
 }
 
 func (handler adminHandler) quarantine(w http.ResponseWriter, request *http.Request) {

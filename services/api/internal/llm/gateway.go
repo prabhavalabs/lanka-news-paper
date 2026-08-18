@@ -24,6 +24,9 @@ type Request struct {
 	JSONSchema       map[string]any
 	DisableReasoning bool
 	MaxTokens        int
+	ArticleID        string
+	PipelineRunID    string
+	PipelineStepID   string
 }
 
 type Response struct {
@@ -68,15 +71,23 @@ func (gateway *Gateway) Complete(ctx context.Context, request Request) (Response
 		if callErr != nil {
 			outcome = "fallback"
 			_, _ = gateway.pool.Exec(ctx, `
-				INSERT INTO llm_calls (task, provider_id, model, latency_ms, outcome)
-				VALUES ($1, $2, $3, $4, $5)
-			`, request.Task, providerID, model, time.Since(started).Milliseconds(), outcome)
+				INSERT INTO llm_calls (
+				  task, provider_id, model, latency_ms, outcome, article_id,
+				  pipeline_run_id, pipeline_step_id, error_detail
+				)
+				VALUES ($1, $2, $3, $4, $5, NULLIF($6, '')::uuid, NULLIF($7, '')::uuid, NULLIF($8, '')::uuid, $9)
+			`, request.Task, providerID, model, time.Since(started).Milliseconds(), outcome,
+				request.ArticleID, request.PipelineRunID, request.PipelineStepID, callErr.Error())
 			continue
 		}
 		_, _ = gateway.pool.Exec(ctx, `
-			INSERT INTO llm_calls (task, provider_id, model, latency_ms, outcome)
-			VALUES ($1, $2, $3, $4, 'ok')
-		`, request.Task, providerID, model, time.Since(started).Milliseconds())
+			INSERT INTO llm_calls (
+			  task, provider_id, model, latency_ms, outcome, article_id,
+			  pipeline_run_id, pipeline_step_id
+			)
+			VALUES ($1, $2, $3, $4, 'ok', NULLIF($5, '')::uuid, NULLIF($6, '')::uuid, NULLIF($7, '')::uuid)
+		`, request.Task, providerID, model, time.Since(started).Milliseconds(),
+			request.ArticleID, request.PipelineRunID, request.PipelineStepID)
 		return Response{Text: text, Provider: providerID, Model: model}, nil
 	}
 	if err := rows.Err(); err != nil && err != pgx.ErrNoRows {

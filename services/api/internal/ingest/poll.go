@@ -27,6 +27,11 @@ type Poller struct {
 	client   *http.Client
 	clusters *cluster.Store
 	llm      *llm.Gateway
+	pipeline func(context.Context, string) error
+}
+
+func (poller *Poller) SetArticlePipeline(start func(context.Context, string) error) {
+	poller.pipeline = start
 }
 
 func NewPoller(pool *pgxpool.Pool, logger *slog.Logger, clusters *cluster.Store, gateway *llm.Gateway) *Poller {
@@ -306,6 +311,9 @@ func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, right
 			SELECT $1, COALESCE((SELECT max(version) FROM article_versions WHERE article_id = $1), 0) + 1, '{"headline":true}'::jsonb
 		`, articleID)
 		return false, nil
+	}
+	if poller.pipeline != nil {
+		return true, poller.pipeline(ctx, articleID.String())
 	}
 	if status == "published" && poller.clusters != nil {
 		return true, poller.clusters.Attach(ctx, articleID.String())
