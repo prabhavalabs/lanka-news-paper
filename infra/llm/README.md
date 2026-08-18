@@ -12,6 +12,17 @@ request, and a 4,096-token context. These limits protect the other VPS workloads
 Create an `A` record for `llm.lankanewspaper.prabhavalabs.com` pointing to
 `178.104.111.17`. Keep the record DNS-only until the origin certificate is issued.
 
+## HTTPS
+
+After DNS resolves to the VPS, install the certificate and redirect HTTP with:
+
+```sh
+certbot --nginx -d llm.lankanewspaper.prabhavalabs.com \
+  --non-interactive --agree-tos --register-unsafely-without-email --redirect
+```
+
+Certbot uses the existing Let's Encrypt account and installs automatic renewal.
+
 ## Secret handling
 
 Store the same random token in `/etc/lanka-llm/api-key` on the VPS and
