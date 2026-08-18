@@ -6,6 +6,8 @@ Nginx exposes only `/v1/` and requires `Authorization: Bearer <token>`.
 
 The container is limited to two CPUs, 7 GiB RAM, one loaded model, one parallel
 request, and a 4,096-token context. These limits protect the other VPS workloads.
+Narration calls allow up to ten minutes because CPU-only structured inference can
+cross five minutes under load; the application still processes only one at a time.
 
 ## DNS
 
