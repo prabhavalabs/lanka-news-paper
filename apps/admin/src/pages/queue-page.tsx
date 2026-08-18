@@ -1,70 +1,45 @@
 import { createClient } from '@snap/api-client'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { toast } from 'sonner'
+import { useQuery } from '@tanstack/react-query'
+import { ShieldAlert } from 'lucide-react'
 
-import { Button } from '@/components/ui/button'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { DataTable } from '@/components/data-table'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
 const client = createClient()
 
 export function QueuePage() {
-  const queryClient = useQueryClient()
-  const queue = useQuery({ queryKey: ['queue'], queryFn: () => client.queue() })
   const quarantine = useQuery({ queryKey: ['quarantine'], queryFn: () => client.quarantine() })
-  const publish = useMutation({
-    mutationFn: (id: string) => client.setArticleStatus(id, 'published', 'desk publish'),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['queue'] }),
-    onError: () => toast.error('Could not publish'),
-  })
-  const hold = useMutation({
-    mutationFn: (id: string) => client.setArticleStatus(id, 'unpublished', 'desk unpublish'),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['queue'] }),
-  })
 
   return (
-    <section className="flex flex-col gap-8">
-      <h1 className="text-xl font-medium">Editorial queue</h1>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Headline</TableHead>
-            <TableHead>Source</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {queue.data?.items.map((item) => (
-            <TableRow key={item.id}>
-              <TableCell className="max-w-md">{item.headline}</TableCell>
-              <TableCell>{item.source}</TableCell>
-              <TableCell>
-                {item.public_status}
-                {item.confidence != null ? ` · ${item.confidence.toFixed(2)}` : ''}
-              </TableCell>
-              <TableCell className="flex gap-2">
-                <Button size="sm" onClick={() => publish.mutate(item.id)}>
-                  Publish
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => hold.mutate(item.id)}>
-                  Unpublish
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <section className="flex flex-col gap-6">
       <div>
-        <h2 className="mb-3 text-sm font-medium">Quarantined payloads</h2>
+        <Badge variant="outline" className="mb-2">
+          Editorial operations
+        </Badge>
+        <h1 className="font-heading text-2xl font-semibold tracking-tight">Review desk</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Publish, hold, and inspect items that need human judgment.</p>
+      </div>
+      <DataTable prefix="" editable />
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldAlert className="size-4" />
+            Quarantined payloads
+          </CardTitle>
+          <CardDescription>Raw ingestion payloads isolated for manual inspection.</CardDescription>
+        </CardHeader>
+        <CardContent>
         <ul className="flex flex-col gap-2 text-sm">
           {quarantine.data?.items.map((item) => (
-            <li key={item.id} className="border border-border p-3">
-              <p>{item.reason}</p>
+            <li key={item.id} className="rounded-lg border border-border p-4">
+              <p className="font-medium">{item.reason}</p>
               {item.sample ? <pre className="mt-2 overflow-auto text-xs">{item.sample}</pre> : null}
             </li>
           ))}
         </ul>
-      </div>
+        </CardContent>
+      </Card>
     </section>
   )
 }

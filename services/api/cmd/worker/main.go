@@ -15,6 +15,8 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/jobs"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 )
 
@@ -48,11 +50,22 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	news := publish.NewStore(pool)
-	poller := ingest.NewPoller(pool, logger, cluster.NewStore(pool), llm.NewGateway(pool))
-	client, err := jobs.NewClient(pool, logger, poller, news)
+	model := llm.NewGateway(pool)
+	clusters := cluster.NewStore(pool)
+	politicsStore := politics.NewStore(pool, model)
+	pipelineStore := pipeline.NewStore(pool, model, clusters, politicsStore)
+	poller := ingest.NewPoller(pool, logger, clusters)
+	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, news)
 	if err != nil {
 		return err
 	}
+	poller.SetArticlePipeline(func(ctx context.Context, articleID string) error {
+		runID, err := pipelineStore.Start(ctx, articleID, "ingestion")
+		if err != nil {
+			return err
+		}
+		return jobs.EnqueuePipeline(ctx, client, runID)
+	})
 	if err := client.Start(processContext); err != nil {
 		return fmt.Errorf("start river: %w", err)
 	}

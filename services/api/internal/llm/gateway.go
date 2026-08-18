@@ -14,12 +14,19 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/classify"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pagination"
 )
 
 type Request struct {
-	Task   string
-	System string
-	Input  string
+	Task             string
+	System           string
+	Input            string
+	JSONSchema       map[string]any
+	DisableReasoning bool
+	MaxTokens        int
+	ArticleID        string
+	PipelineRunID    string
+	PipelineStepID   string
 }
 
 type Response struct {
@@ -34,7 +41,7 @@ type Gateway struct {
 }
 
 func NewGateway(pool *pgxpool.Pool) *Gateway {
-	return &Gateway{pool: pool, client: &http.Client{Timeout: 45 * time.Second}}
+	return &Gateway{pool: pool, client: &http.Client{}}
 }
 
 func (gateway *Gateway) Complete(ctx context.Context, request Request) (Response, error) {
@@ -57,20 +64,30 @@ func (gateway *Gateway) Complete(ctx context.Context, request Request) (Response
 			continue
 		}
 		started := time.Now()
-		text, callErr := gateway.callProvider(ctx, kind, baseURL, keyRef, model, request)
+		callContext, cancelCall := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+		text, callErr := gateway.callProvider(callContext, kind, baseURL, keyRef, model, request)
+		cancelCall()
 		outcome := "ok"
 		if callErr != nil {
 			outcome = "fallback"
 			_, _ = gateway.pool.Exec(ctx, `
-				INSERT INTO llm_calls (task, provider_id, model, latency_ms, outcome)
-				VALUES ($1, $2, $3, $4, $5)
-			`, request.Task, providerID, model, time.Since(started).Milliseconds(), outcome)
+				INSERT INTO llm_calls (
+				  task, provider_id, model, latency_ms, outcome, article_id,
+				  pipeline_run_id, pipeline_step_id, error_detail
+				)
+				VALUES ($1, $2, $3, $4, $5, NULLIF($6, '')::uuid, NULLIF($7, '')::uuid, NULLIF($8, '')::uuid, $9)
+			`, request.Task, providerID, model, time.Since(started).Milliseconds(), outcome,
+				request.ArticleID, request.PipelineRunID, request.PipelineStepID, callErr.Error())
 			continue
 		}
 		_, _ = gateway.pool.Exec(ctx, `
-			INSERT INTO llm_calls (task, provider_id, model, latency_ms, outcome)
-			VALUES ($1, $2, $3, $4, 'ok')
-		`, request.Task, providerID, model, time.Since(started).Milliseconds())
+			INSERT INTO llm_calls (
+			  task, provider_id, model, latency_ms, outcome, article_id,
+			  pipeline_run_id, pipeline_step_id
+			)
+			VALUES ($1, $2, $3, $4, 'ok', NULLIF($5, '')::uuid, NULLIF($6, '')::uuid, NULLIF($7, '')::uuid)
+		`, request.Task, providerID, model, time.Since(started).Milliseconds(),
+			request.ArticleID, request.PipelineRunID, request.PipelineStepID)
 		return Response{Text: text, Provider: providerID, Model: model}, nil
 	}
 	if err := rows.Err(); err != nil && err != pgx.ErrNoRows {
@@ -81,35 +98,64 @@ func (gateway *Gateway) Complete(ctx context.Context, request Request) (Response
 
 func (gateway *Gateway) fallback(request Request) Response {
 	if request.Task == "classify" {
-		slug, _ := classify.From(nil, request.Input)
-		return Response{Text: slug, Provider: "keyword-rules", Model: "rules"}
+		result := classify.From(nil, request.Input, "")
+		return Response{Text: result.Slug, Provider: "keyword-rules", Model: result.Model}
 	}
 	return Response{Text: "", Provider: "none", Model: "none"}
 }
 
 func (gateway *Gateway) callProvider(ctx context.Context, kind, baseURL, keyRef, model string, request Request) (string, error) {
-	if kind != "openai_api" {
+	if kind != "openai_api" && kind != "openai_compatible" {
 		return "", fmt.Errorf("codex_cli is not configured")
 	}
 	if baseURL == "" {
 		return "", fmt.Errorf("missing base_url")
 	}
-	apiKey := os.Getenv(keyRef)
-	if apiKey == "" {
+	apiKey := ""
+	if keyRef != "" {
+		apiKey = os.Getenv(keyRef)
+	}
+	if kind == "openai_api" && keyRef == "" {
+		return "", fmt.Errorf("missing api key reference")
+	}
+	if keyRef != "" && apiKey == "" {
 		return "", fmt.Errorf("missing secret %s", keyRef)
 	}
-	payload, _ := json.Marshal(map[string]any{
-		"model": model,
+	payloadValue := map[string]any{
+		"model":       model,
+		"temperature": 0,
 		"messages": []map[string]string{
 			{"role": "system", "content": request.System},
 			{"role": "user", "content": request.Input},
 		},
-	})
+	}
+	if request.JSONSchema != nil {
+		payloadValue["response_format"] = map[string]any{
+			"type": "json_schema",
+			"json_schema": map[string]any{
+				"name":   request.Task,
+				"strict": true,
+				"schema": request.JSONSchema,
+			},
+		}
+	}
+	if request.DisableReasoning {
+		payloadValue["reasoning_effort"] = "none"
+	}
+	if request.MaxTokens > 0 {
+		payloadValue["max_tokens"] = request.MaxTokens
+	}
+	payload, err := json.Marshal(payloadValue)
+	if err != nil {
+		return "", fmt.Errorf("encode provider request: %w", err)
+	}
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
 		return "", err
 	}
-	httpRequest.Header.Set("Authorization", "Bearer "+apiKey)
+	if apiKey != "" {
+		httpRequest.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 	httpRequest.Header.Set("Content-Type", "application/json")
 	response, err := gateway.client.Do(httpRequest)
 	if err != nil {
@@ -144,24 +190,45 @@ type Provider struct {
 	KeySet  bool   `json:"key_set"`
 }
 
-func (gateway *Gateway) ListProviders(ctx context.Context) ([]Provider, error) {
-	rows, err := gateway.pool.Query(ctx, `
-		SELECT id, kind, COALESCE(base_url, ''), enabled, status, api_key_ref IS NOT NULL AND api_key_ref <> ''
-		FROM llm_providers ORDER BY id
-	`)
+func (gateway *Gateway) ListProviders(ctx context.Context, params pagination.Params, state string) ([]Provider, int, error) {
+	var total int
+	err := gateway.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM llm_providers
+		WHERE ($1 = '' OR id ILIKE '%' || $1 || '%' OR kind ILIKE '%' || $1 || '%'
+		       OR COALESCE(base_url, '') ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR ($2 = 'enabled' AND enabled) OR ($2 = 'disabled' AND NOT enabled))
+	`, params.Search, state).Scan(&total)
 	if err != nil {
-		return nil, err
+		return nil, 0, fmt.Errorf("count LLM providers: %w", err)
+	}
+
+	rows, err := gateway.pool.Query(ctx, `
+		SELECT id, kind, COALESCE(base_url, ''), enabled, status,
+		       kind = 'openai_compatible' OR (api_key_ref IS NOT NULL AND api_key_ref <> '')
+		FROM llm_providers
+		WHERE ($1 = '' OR id ILIKE '%' || $1 || '%' OR kind ILIKE '%' || $1 || '%'
+		       OR COALESCE(base_url, '') ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR ($2 = 'enabled' AND enabled) OR ($2 = 'disabled' AND NOT enabled))
+		ORDER BY id
+		LIMIT $3 OFFSET $4
+	`, params.Search, state, params.Limit(), params.Offset())
+	if err != nil {
+		return nil, 0, fmt.Errorf("list LLM providers: %w", err)
 	}
 	defer rows.Close()
 	items := make([]Provider, 0)
 	for rows.Next() {
 		var item Provider
 		if err := rows.Scan(&item.ID, &item.Kind, &item.BaseURL, &item.Enabled, &item.Status, &item.KeySet); err != nil {
-			return nil, err
+			return nil, 0, fmt.Errorf("scan LLM provider: %w", err)
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate LLM providers: %w", err)
+	}
+	return items, total, nil
 }
 
 func (gateway *Gateway) UpsertProvider(ctx context.Context, item Provider, keyRef string) error {
@@ -183,24 +250,44 @@ type TaskProfile struct {
 	Enabled  bool   `json:"enabled"`
 }
 
-func (gateway *Gateway) ListProfiles(ctx context.Context) ([]TaskProfile, error) {
+func (gateway *Gateway) ListProfiles(ctx context.Context, params pagination.Params, state string) ([]TaskProfile, int, error) {
+	var total int
+	err := gateway.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM llm_task_profiles
+		WHERE ($1 = '' OR task ILIKE '%' || $1 || '%' OR provider_id ILIKE '%' || $1 || '%'
+		       OR model ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR ($2 = 'enabled' AND enabled) OR ($2 = 'disabled' AND NOT enabled))
+	`, params.Search, state).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count LLM profiles: %w", err)
+	}
+
 	rows, err := gateway.pool.Query(ctx, `
 		SELECT task, priority, provider_id, model, timeout_seconds, enabled
-		FROM llm_task_profiles ORDER BY task, priority
-	`)
+		FROM llm_task_profiles
+		WHERE ($1 = '' OR task ILIKE '%' || $1 || '%' OR provider_id ILIKE '%' || $1 || '%'
+		       OR model ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR ($2 = 'enabled' AND enabled) OR ($2 = 'disabled' AND NOT enabled))
+		ORDER BY task, priority
+		LIMIT $3 OFFSET $4
+	`, params.Search, state, params.Limit(), params.Offset())
 	if err != nil {
-		return nil, err
+		return nil, 0, fmt.Errorf("list LLM profiles: %w", err)
 	}
 	defer rows.Close()
 	items := make([]TaskProfile, 0)
 	for rows.Next() {
 		var item TaskProfile
 		if err := rows.Scan(&item.Task, &item.Priority, &item.Provider, &item.Model, &item.Timeout, &item.Enabled); err != nil {
-			return nil, err
+			return nil, 0, fmt.Errorf("scan LLM profile: %w", err)
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate LLM profiles: %w", err)
+	}
+	return items, total, nil
 }
 
 func (gateway *Gateway) UpsertProfile(ctx context.Context, item TaskProfile) error {

@@ -18,7 +18,11 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/httpapi"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/iam"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/jobs"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/media"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/registry"
 )
@@ -50,33 +54,68 @@ func run(logger *slog.Logger) error {
 	defer pool.Close()
 
 	users := iam.NewStore(pool)
-	if err := users.Bootstrap(processContext, loaded.BootstrapAdminEmail, loaded.BootstrapAdminPassword); err != nil {
+	if err := users.Bootstrap(processContext, loaded.BootstrapAdminEmail, loaded.BootstrapAdminPasswordHash); err != nil {
 		return fmt.Errorf("bootstrap admin: %w", err)
 	}
 
 	clusters := cluster.NewStore(pool)
 	gateway := llm.NewGateway(pool)
-	poller := ingest.NewPoller(pool, logger, clusters, gateway)
+	politicsStore := politics.NewStore(pool, gateway)
+	pipelineStore := pipeline.NewStore(pool, gateway, clusters, politicsStore)
+	producer, err := jobs.NewProducer(pool, logger)
+	if err != nil {
+		return err
+	}
+	poller := ingest.NewPoller(pool, logger, clusters)
+	startPipeline := func(ctx context.Context, articleID string) error {
+		runID, err := pipelineStore.Start(ctx, articleID, "ingestion")
+		if err != nil {
+			return err
+		}
+		return jobs.EnqueuePipeline(ctx, producer, runID)
+	}
+	poller.SetArticlePipeline(startPipeline)
 	news := publish.NewStore(pool)
 	deskStore := desk.NewStore(pool)
+	mediaStore, err := media.New(processContext, media.Config{
+		LocalDirectory: loaded.MediaLocalDirectory,
+		R2AccessKeyID:  loaded.R2AccessKeyID,
+		R2AccountID:    loaded.R2AccountID,
+		R2Bucket:       loaded.R2Bucket,
+		R2SecretKey:    loaded.R2SecretAccessKey,
+	})
+	if err != nil {
+		return fmt.Errorf("configure media storage: %w", err)
+	}
+	logger.Info("media storage ready", "remote", mediaStore.Remote())
 
 	server := &http.Server{
 		Addr: loaded.Address,
 		Handler: httpapi.NewRouter(httpapi.Dependencies{
 			AllowedOrigins: loaded.AllowedOrigins,
+			CookieSecure:   loaded.SessionCookieSecure,
 			Database:       pool,
 			Desk:           deskStore,
 			IAM:            users,
 			LLM:            gateway,
+			Media:          mediaStore,
 			News:           news,
 			Poller:         poller,
 			Registry:       registry.NewStore(pool),
-			SessionTTL:     loaded.SessionTTL,
+			RetryPipeline: func(ctx context.Context, articleID, step string) error {
+				runID, err := pipelineStore.Retry(ctx, articleID, step)
+				if err != nil {
+					return err
+				}
+				return jobs.EnqueuePipeline(ctx, producer, runID)
+			},
+			SessionTTL: loaded.SessionTTL,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       20 * time.Second,
 		WriteTimeout:      45 * time.Second,
 		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	serverErrors := make(chan error, 1)

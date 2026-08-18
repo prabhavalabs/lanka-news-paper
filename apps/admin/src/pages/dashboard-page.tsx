@@ -1,41 +1,61 @@
 import { createClient } from '@snap/api-client'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { ArrowRight, RefreshCw } from 'lucide-react'
 import { Link } from 'react-router'
+
+import { ChartAreaInteractive } from '@/components/chart-area-interactive'
+import { DataTable } from '@/components/data-table'
+import { SectionCards } from '@/components/section-cards'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 
 const client = createClient()
 
 export function DashboardPage() {
+  const queryClient = useQueryClient()
   const overview = useQuery({ queryKey: ['overview'], queryFn: () => client.overview() })
-  const item = overview.data
+  const isRefreshing = overview.isFetching
+
   return (
     <section className="flex flex-col gap-6">
-      <h1 className="text-xl font-medium">Desk</h1>
-      <p className="text-sm text-muted-foreground">Live counts from the public corpus and ingest health.</p>
-      <dl className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
-        <div className="border border-border p-4">
-          <dt className="text-muted-foreground">Published</dt>
-          <dd className="mt-1 text-2xl font-medium">{item?.published ?? '—'}</dd>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div className="space-y-2">
+          <Badge variant="outline" className="gap-1.5">
+            <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+            Live newsroom
+          </Badge>
+          <div>
+            <h1 className="font-heading text-2xl font-semibold tracking-tight">Newsroom performance</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Publishing, intake health, and editorial work in one place.
+            </p>
+          </div>
         </div>
-        <div className="border border-border p-4">
-          <dt className="text-muted-foreground">Held / queue</dt>
-          <dd className="mt-1 text-2xl font-medium">{item?.held ?? '—'}</dd>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" nativeButton={false} render={<Link to="/queue" />}>
+            Review queue
+            <ArrowRight data-icon="inline-end" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="Refresh dashboard data"
+            disabled={isRefreshing}
+            onClick={() => {
+              void Promise.all([
+                queryClient.invalidateQueries({ queryKey: ['overview'] }),
+                queryClient.invalidateQueries({ queryKey: ['queue'] }),
+              ])
+            }}
+          >
+            <RefreshCw className={isRefreshing ? 'animate-spin' : undefined} />
+          </Button>
         </div>
-        <div className="border border-border p-4">
-          <dt className="text-muted-foreground">Complaints</dt>
-          <dd className="mt-1 text-2xl font-medium">{item?.complaints ?? '—'}</dd>
-        </div>
-        <div className="border border-border p-4">
-          <dt className="text-muted-foreground">Sick / stale feeds</dt>
-          <dd className="mt-1 text-2xl font-medium">
-            {item ? item.sick_feeds + item.stale_feeds : '—'}
-          </dd>
-        </div>
-      </dl>
-      <p className="text-sm">
-        <Link to="/queue">Open editorial queue</Link>
-        {' · '}
-        <Link to="/sources">Manage sources</Link>
-      </p>
+      </div>
+
+      <SectionCards data={overview.data} isLoading={overview.isPending} />
+      <ChartAreaInteractive />
+      <DataTable />
     </section>
   )
 }

@@ -18,5 +18,26 @@ services:
       timeout: 5s
       retries: 20
 
+  worker:
+    image: golang:1.25-alpine
+    restart: unless-stopped
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    working_dir: /workspace/services/api
+    command: ["go", "run", "./cmd/worker"]
+    environment:
+      SNAP_DATABASE_URL: postgres://snap:snap@postgres:5432/snap?sslmode=disable
+      SNAP_ENV: local
+    volumes:
+      - ../..:/workspace
+      - snap-go-mod:/go/pkg/mod
+      - snap-go-build:/root/.cache/go-build
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   snap-pg:
+  snap-go-mod:
+  snap-go-build:

@@ -51,6 +51,7 @@ export type AdminSource = {
   legal_name: string;
   source_type: SourceType;
   website: string;
+  icon_url: string;
   description: string;
   active: boolean;
 };
@@ -63,8 +64,13 @@ export type AdminEndpoint = {
   paused: boolean;
   health_state: string;
   last_error: string | null;
+  last_success_at: string | null;
   polling_interval_seconds: number;
   verified_official: boolean;
+  last_latency_ms: number | null;
+  last_item_count: number;
+  last_new_item_count: number;
+  total_captured: number;
 };
 
 export type AdminRights = {
@@ -73,6 +79,18 @@ export type AdminRights = {
   endpoint_id: string;
   mode: string;
   attribution: string;
+};
+
+export type SourcePerformance = {
+  total_captured: number;
+  captured_today: number;
+  published: number;
+  last_success_at: string | null;
+  daily: {
+    date: string;
+    captured: number;
+    published: number;
+  }[];
 };
 
 export type LlmProvider = {
@@ -103,14 +121,188 @@ export type Overview = {
   sources: number;
 };
 
+export type OverviewTrendPoint = {
+  date: string;
+  published: number;
+  received: number;
+};
+
+export type KnowledgeArticle = {
+  id: string;
+  headline: string;
+  source_id: string;
+  source: string;
+  source_icon: string;
+  original_url: string;
+  published_at: string;
+  political?: {
+    model: string;
+    economic_frame: number;
+    confidence: number;
+    relevant: boolean;
+    label: 'left' | 'center_left' | 'neutral' | 'center_right' | 'right' | 'unclear';
+    rationale: string;
+    evidence: string[];
+    provider_id: string;
+    provider_model: string;
+    mentions: {
+      party_slug: string;
+      stance: number;
+      confidence: number;
+      terms: string[];
+    }[];
+  };
+};
+
+export type KnowledgeEvent = {
+  id: string;
+  title: string;
+  category: string;
+  category_name_si: string;
+  confidence: number;
+  is_breaking: boolean;
+  locked: boolean;
+  algorithm_version: string;
+  first_seen_at: string;
+  last_update_at: string;
+  articles: KnowledgeArticle[];
+};
+
+export type KnowledgeGraph = {
+  generated_at: string;
+  days: number;
+  summary: {
+    articles: number;
+    events: number;
+    multi_source_events: number;
+    sources: number;
+  };
+  categories: {
+    slug: string;
+    name_si: string;
+    name_en: string;
+    articles: number;
+    events: number;
+  }[];
+  events: KnowledgeEvent[];
+  political: {
+    axis: string;
+    model: string;
+    minimum_sample: number;
+    parties: {
+      slug: string;
+      short_name: string;
+      name_en: string;
+      name_si: string;
+      economic_position: number;
+      confidence: number;
+      rationale: string;
+      evidence_urls: string[];
+    }[];
+    sources: {
+      source_id: string;
+      source: string;
+      source_icon: string;
+      economic_frame: number;
+      confidence: number;
+      relevant_events: number;
+      scored_articles: number;
+      qualified: boolean;
+    }[];
+  };
+};
+
 export type QueueItem = {
   id: string;
   headline: string;
   public_status: string;
   source: string;
+  received_at: string;
   confidence: number | null;
   model: string | null;
   category: string | null;
+};
+
+export type AdminArticleListItem = {
+  id: string;
+  headline: string;
+  public_status: string;
+  source: string;
+  source_icon: string;
+  category: string | null;
+  received_at: string;
+  published_at: string;
+  pipeline_status: string | null;
+  current_step: string | null;
+  pipeline_finished_at: string | null;
+};
+
+export type PipelineStep = {
+  id: string;
+  name: string;
+  position: number;
+  status: "queued" | "running" | "succeeded" | "failed" | "skipped";
+  attempt: number;
+  max_attempts: number;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+  error_detail: string | null;
+  output: Record<string, unknown>;
+};
+
+export type PipelineRun = {
+  id: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  trigger: string;
+  current_step: string | null;
+  attempt: number;
+  last_error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  steps: PipelineStep[];
+};
+
+export type AdminArticleDetail = {
+  id: string;
+  headline: string;
+  description: string;
+  public_status: string;
+  source_id: string;
+  source: string;
+  source_icon: string;
+  original_url: string;
+  canonical_url: string;
+  author: string;
+  category: string | null;
+  category_name: string | null;
+  publisher_category: string;
+  classification_model: string | null;
+  classification_confidence: number | null;
+  endpoint_id: string;
+  endpoint_url: string;
+  rights_mode: string;
+  published_at: string;
+  received_at: string;
+  event: {
+    id: string;
+    title: string;
+    confidence: number;
+    algorithm_version: string;
+  } | null;
+  political: KnowledgeArticle["political"] | null;
+  pipeline_runs: PipelineRun[];
+  llm_calls: {
+    id: number;
+    task: string;
+    provider_id: string;
+    model: string;
+    latency_ms: number | null;
+    outcome: string;
+    error_detail: string | null;
+    created_at: string;
+  }[];
 };
 
 export type AdminComplaint = {
@@ -122,12 +314,42 @@ export type AdminComplaint = {
   status: string;
 };
 
+export type PaginationMeta = {
+  page: number;
+  per_page: number;
+  total: number;
+  total_pages: number;
+};
+
+export type PageResponse<T> = {
+  items: T[];
+  pagination: PaginationMeta;
+};
+
+export type AdminTableQuery = {
+  page?: number;
+  per_page?: number;
+  search?: string;
+  [filter: string]: string | number | undefined;
+};
+
+function withQuery(path: string, params: AdminTableQuery = {}) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") search.set(key, String(value));
+  }
+  const suffix = search.toString();
+  return suffix ? `${path}?${suffix}` : path;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = init?.method?.toUpperCase() ?? "GET";
   const response = await fetch(path, {
     credentials: "include",
     ...init,
     headers: {
-      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(typeof init?.body === "string" ? { "Content-Type": "application/json" } : {}),
+      ...(method !== "GET" && method !== "HEAD" ? { "X-SNAP-CSRF": "1" } : {}),
       ...init?.headers
     }
   });
@@ -176,19 +398,11 @@ export function createClient(baseUrl = "") {
       }),
     login: (email: string, password: string) =>
       request<{
-        mfa_required: boolean;
-        mfa_setup: boolean;
-        mfa_token: string;
-        otpauth_url?: string;
-        otpauth_qr?: string;
+        ok: boolean;
+        user: { id: string; email: string; name: string; role: string };
       }>(url("/api/admin/login"), {
         method: "POST",
         body: JSON.stringify({ email, password })
-      }),
-    verifyMfa: (mfa_token: string, code: string) =>
-      request<{ ok: boolean }>(url("/api/admin/mfa"), {
-        method: "POST",
-        body: JSON.stringify({ mfa_token, code })
       }),
     logout: () =>
       request<{ ok: boolean }>(url("/api/admin/logout"), { method: "POST" }),
@@ -197,7 +411,34 @@ export function createClient(baseUrl = "") {
         url("/api/admin/me")
       ),
     overview: () => request<Overview>(url("/api/admin/overview")),
-    queue: () => request<{ items: QueueItem[] }>(url("/api/admin/queue")),
+    overviewTrends: (days: 7 | 30 | 90 = 90) =>
+      request<{ items: OverviewTrendPoint[] }>(
+        url(`/api/admin/overview/trends?days=${days}`)
+      ),
+    knowledgeGraph: (params: {
+      days?: 1 | 7 | 30;
+      category?: string;
+      from?: string;
+      to?: string;
+    } = { days: 1 }) =>
+      request<KnowledgeGraph>(
+        url(withQuery("/api/admin/knowledge-graph", params))
+      ),
+    queue: (params: AdminTableQuery = {}) =>
+      request<PageResponse<QueueItem>>(
+        url(withQuery("/api/admin/queue", params))
+      ),
+    adminArticles: (params: AdminTableQuery = {}) =>
+      request<PageResponse<AdminArticleListItem>>(
+        url(withQuery("/api/admin/articles", params))
+      ),
+    adminArticle: (id: string) =>
+      request<AdminArticleDetail>(url(`/api/admin/articles/${id}`)),
+    retryArticlePipeline: (id: string, step = "") =>
+      request<{ ok: boolean }>(url(`/api/admin/articles/${id}/pipeline/retry`), {
+        method: "POST",
+        body: JSON.stringify({ step })
+      }),
     quarantine: () =>
       request<{
         items: {
@@ -222,17 +463,25 @@ export function createClient(baseUrl = "") {
         method: "POST",
         body: JSON.stringify({ note })
       }),
-    complaints: () =>
-      request<{ items: AdminComplaint[] }>(url("/api/admin/complaints")),
+    complaints: (params: AdminTableQuery = {}) =>
+      request<PageResponse<AdminComplaint>>(
+        url(withQuery("/api/admin/complaints", params))
+      ),
     resolveComplaint: (id: string, status: string, resolution: string) =>
       request<{ ok: boolean }>(url(`/api/admin/complaints/${id}`), {
         method: "POST",
         body: JSON.stringify({ status, resolution })
       }),
-    adminSources: () =>
-      request<{ items: AdminSource[] }>(url("/api/admin/sources")),
+    adminSources: (params: AdminTableQuery = {}) =>
+      request<PageResponse<AdminSource>>(
+        url(withQuery("/api/admin/sources", params))
+      ),
     adminSource: (id: string) =>
       request<AdminSource>(url(`/api/admin/sources/${id}`)),
+    sourcePerformance: (id: string, days: 7 | 30 | 90 = 30) =>
+      request<SourcePerformance>(
+        url(`/api/admin/sources/${id}/performance?days=${days}`)
+      ),
     createSource: (body: Omit<AdminSource, "id">) =>
       request<AdminSource>(url("/api/admin/sources"), {
         method: "POST",
@@ -243,6 +492,18 @@ export function createClient(baseUrl = "") {
         method: "POST",
         body: JSON.stringify(body)
       }),
+    uploadSourceLogo: (id: string, file: File) => {
+      const body = new FormData();
+      body.set("file", file);
+      return request<{ icon_url: string }>(url(`/api/admin/sources/${id}/logo`), {
+        method: "POST",
+        body
+      });
+    },
+    removeSourceLogo: (id: string) =>
+      request<{ icon_url: string }>(url(`/api/admin/sources/${id}/logo`), {
+        method: "DELETE"
+      }),
     archiveSource: (id: string) =>
       request<{ ok: boolean }>(url(`/api/admin/sources/${id}/archive`), {
         method: "POST"
@@ -252,9 +513,9 @@ export function createClient(baseUrl = "") {
         method: "POST",
         body: JSON.stringify({ active })
       }),
-    adminEndpoints: (sourceId: string) =>
-      request<{ items: AdminEndpoint[] }>(
-        url(`/api/admin/sources/${sourceId}/endpoints`)
+    adminEndpoints: (sourceId: string, params: AdminTableQuery = {}) =>
+      request<PageResponse<AdminEndpoint>>(
+        url(withQuery(`/api/admin/sources/${sourceId}/endpoints`, params))
       ),
     createEndpoint: (
       sourceId: string,
@@ -272,9 +533,9 @@ export function createClient(baseUrl = "") {
         method: "POST",
         body: JSON.stringify(body)
       }),
-    adminRights: (sourceId: string) =>
-      request<{ items: AdminRights[] }>(
-        url(`/api/admin/sources/${sourceId}/rights`)
+    adminRights: (sourceId: string, params: AdminTableQuery = {}) =>
+      request<PageResponse<AdminRights>>(
+        url(withQuery(`/api/admin/sources/${sourceId}/rights`, params))
       ),
     createRights: (
       sourceId: string,
@@ -300,8 +561,10 @@ export function createClient(baseUrl = "") {
       request<{ ok: boolean }>(url(`/api/admin/endpoints/${endpointId}/run`), {
         method: "POST"
       }),
-    llmProviders: () =>
-      request<{ items: LlmProvider[] }>(url("/api/admin/llm/providers")),
+    llmProviders: (params: AdminTableQuery = {}) =>
+      request<PageResponse<LlmProvider>>(
+        url(withQuery("/api/admin/llm/providers", params))
+      ),
     upsertProvider: (body: {
       id: string;
       kind: string;
@@ -313,8 +576,10 @@ export function createClient(baseUrl = "") {
         method: "POST",
         body: JSON.stringify(body)
       }),
-    llmProfiles: () =>
-      request<{ items: LlmProfile[] }>(url("/api/admin/llm/profiles")),
+    llmProfiles: (params: AdminTableQuery = {}) =>
+      request<PageResponse<LlmProfile>>(
+        url(withQuery("/api/admin/llm/profiles", params))
+      ),
     upsertProfile: (body: LlmProfile) =>
       request<{ ok: boolean }>(url("/api/admin/llm/profiles"), {
         method: "POST",

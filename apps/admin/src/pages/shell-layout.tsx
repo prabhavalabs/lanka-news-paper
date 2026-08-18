@@ -1,7 +1,12 @@
-import { Link, Outlet, useNavigate } from 'react-router'
-import { useQuery } from '@tanstack/react-query'
-import { useEffect } from 'react'
 import { createClient } from '@snap/api-client'
+import { useQuery } from '@tanstack/react-query'
+import type { CSSProperties } from 'react'
+import { useEffect } from 'react'
+import { Outlet, useNavigate } from 'react-router'
+
+import { AppSidebar } from '@/components/app-sidebar'
+import { SiteHeader } from '@/components/site-header'
+import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 
 const client = createClient()
 
@@ -16,35 +21,37 @@ export function ShellLayout() {
   }, [me.isError, navigate])
 
   if (me.isPending) {
-    return <p className="p-8 text-sm text-muted-foreground">Loading…</p>
+    return <p className="p-8 text-sm text-muted-foreground">Loading newsroom…</p>
+  }
+
+  if (me.isError) {
+    return null
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="flex h-12 items-center justify-between border-b border-border px-6">
-        <p className="text-sm font-medium">SNAP newsroom</p>
-        <nav className="flex items-center gap-4 text-sm">
-          <Link to="/">Desk</Link>
-          <Link to="/sources">Sources</Link>
-          <Link to="/queue">Queue</Link>
-          <Link to="/complaints">Complaints</Link>
-          <Link to="/routing">AI & Routing</Link>
-          <span className="text-muted-foreground">{me.data?.email}</span>
-          <button
-            type="button"
-            className="text-muted-foreground underline"
-            onClick={async () => {
-              await client.logout()
-              navigate('/login')
-            }}
-          >
-            Sign out
-          </button>
-        </nav>
-      </header>
-      <main className="mx-auto max-w-5xl px-6 py-8">
-        <Outlet />
-      </main>
-    </div>
+    <SidebarProvider
+      style={{
+        '--sidebar-width': 'calc(var(--spacing) * 68)',
+        '--header-height': 'calc(var(--spacing) * 12)',
+      } as CSSProperties}
+    >
+      <AppSidebar
+        variant="inset"
+        user={me.data}
+        onLogout={async () => {
+          try {
+            await client.logout()
+          } finally {
+            navigate('/login')
+          }
+        }}
+      />
+      <SidebarInset>
+        <SiteHeader />
+        <main className="@container/main flex flex-1 flex-col p-4 lg:p-6">
+          <Outlet />
+        </main>
+      </SidebarInset>
+    </SidebarProvider>
   )
 }

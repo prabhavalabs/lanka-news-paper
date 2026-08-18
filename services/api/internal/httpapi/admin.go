@@ -1,19 +1,141 @@
 package httpapi
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
+	"io"
+	"log/slog"
 	"net/http"
+	"strconv"
+	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/desk"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/media"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/registry"
 )
 
+const maxSourceLogoBytes = 768 << 10
+
 type adminHandler struct {
-	registry *registry.Store
-	poller   *ingest.Poller
-	llm      *llm.Gateway
-	desk     *desk.Store
+	registry      *registry.Store
+	poller        *ingest.Poller
+	llm           *llm.Gateway
+	desk          *desk.Store
+	media         *media.Store
+	retryPipeline func(context.Context, string, string) error
+}
+
+func (handler adminHandler) sourceLogo(w http.ResponseWriter, request *http.Request) {
+	source, err := handler.registry.GetSource(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", "Source was not found.")
+		return
+	}
+
+	if request.Method == http.MethodDelete {
+		if err := handler.registry.SetSourceIconURL(request.Context(), source.ID, ""); err != nil {
+			writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not remove the source logo.")
+			return
+		}
+		handler.deleteManagedMedia(request, source.IconURL)
+		handler.registry.Audit(request.Context(), currentUser(request).Email, "remove_source_logo", source.ID, "ok")
+		writeJSON(w, http.StatusOK, map[string]string{"icon_url": ""})
+		return
+	}
+
+	request.Body = http.MaxBytesReader(w, request.Body, maxSourceLogoBytes+(64<<10))
+	if err := request.ParseMultipartForm(maxSourceLogoBytes); err != nil {
+		writeProblem(w, http.StatusRequestEntityTooLarge, "https://snap.local/problems/invalid", "Image too large", "Choose a PNG or JPEG smaller than 768 KB.")
+		return
+	}
+	if request.MultipartForm != nil {
+		defer request.MultipartForm.RemoveAll()
+	}
+	file, _, err := request.FormFile("file")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "A logo file is required.")
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxSourceLogoBytes+1))
+	if err != nil || len(data) > maxSourceLogoBytes {
+		writeProblem(w, http.StatusRequestEntityTooLarge, "https://snap.local/problems/invalid", "Image too large", "Choose a PNG or JPEG smaller than 768 KB.")
+		return
+	}
+	contentType, extension, err := validateSourceLogo(data)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid image", err.Error())
+		return
+	}
+
+	key := fmt.Sprintf("source-logos/%s/%s.%s", source.ID, uuid.NewString(), extension)
+	if err := handler.media.Put(request.Context(), key, contentType, data); err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Upload failed", "Could not store the source logo.")
+		return
+	}
+	iconURL := media.URL(key)
+	if err := handler.registry.SetSourceIconURL(request.Context(), source.ID, iconURL); err != nil {
+		_ = handler.media.Delete(request.Context(), key)
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Upload failed", "Could not attach the source logo.")
+		return
+	}
+	handler.deleteManagedMedia(request, source.IconURL)
+	handler.registry.Audit(request.Context(), currentUser(request).Email, "update_source_logo", source.ID, "ok")
+	writeJSON(w, http.StatusOK, map[string]string{"icon_url": iconURL})
+}
+
+func (handler adminHandler) mediaFile(w http.ResponseWriter, request *http.Request) {
+	body, contentType, err := handler.media.Open(request.Context(), request.PathValue("key"))
+	if err != nil {
+		http.NotFound(w, request)
+		return
+	}
+	defer body.Close()
+	if contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	if _, err := io.Copy(w, body); err != nil {
+		slog.WarnContext(request.Context(), "stream media", "error", err)
+	}
+}
+
+func (handler adminHandler) deleteManagedMedia(request *http.Request, value string) {
+	key, managed := media.KeyFromURL(value)
+	if managed {
+		if err := handler.media.Delete(request.Context(), key); err != nil {
+			slog.WarnContext(request.Context(), "delete replaced media", "key", key, "error", err)
+		}
+	}
+}
+
+func validateSourceLogo(data []byte) (string, string, error) {
+	contentType := http.DetectContentType(data)
+	extensions := map[string]string{"image/jpeg": "jpg", "image/png": "png"}
+	extension, ok := extensions[contentType]
+	if !ok {
+		return "", "", fmt.Errorf("only PNG and JPEG logos are supported")
+	}
+	configuration, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return "", "", fmt.Errorf("the uploaded file is not a valid image")
+	}
+	if configuration.Width < 64 || configuration.Height < 64 {
+		return "", "", fmt.Errorf("logo dimensions must be at least 64 × 64 pixels")
+	}
+	if configuration.Width > 4096 || configuration.Height > 4096 {
+		return "", "", fmt.Errorf("logo dimensions cannot exceed 4096 × 4096 pixels")
+	}
+	return contentType, extension, nil
 }
 
 func (handler adminHandler) sources(w http.ResponseWriter, request *http.Request) {
@@ -32,16 +154,49 @@ func (handler adminHandler) sources(w http.ResponseWriter, request *http.Request
 		writeJSON(w, http.StatusCreated, item)
 		return
 	}
-	items, err := handler.registry.ListSources(request.Context())
+	params, err := parsePagination(request)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	sourceType, err := parseFilter(request, "type", "private_media", "state_owned", "government", "independent", "international", "other")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	status, err := parseFilter(request, "status", "active", "held")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	items, total, err := handler.registry.ListSources(request.Context(), params, sourceType, status)
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not list sources.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writePage(w, items, total, params)
 }
 
 func (handler adminHandler) source(w http.ResponseWriter, request *http.Request) {
 	item, err := handler.registry.GetSource(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", "Source was not found.")
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (handler adminHandler) sourcePerformance(w http.ResponseWriter, request *http.Request) {
+	days := 30
+	if value := request.URL.Query().Get("days"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || (parsed != 7 && parsed != 30 && parsed != 90) {
+			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "days must be 7, 30, or 90.")
+			return
+		}
+		days = parsed
+	}
+	item, err := handler.registry.GetSourcePerformance(request.Context(), request.PathValue("id"), days)
 	if err != nil {
 		writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", "Source was not found.")
 		return
@@ -81,12 +236,27 @@ func (handler adminHandler) endpoints(w http.ResponseWriter, request *http.Reque
 		writeJSON(w, http.StatusCreated, item)
 		return
 	}
-	items, err := handler.registry.ListEndpoints(request.Context(), sourceID)
+	params, err := parsePagination(request)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	health, err := parseFilter(request, "health", "unknown", "healthy", "stale", "failed", "auth_denied")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	status, err := parseFilter(request, "status", "active", "paused")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	items, total, err := handler.registry.ListEndpoints(request.Context(), sourceID, params, health, status)
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not list endpoints.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writePage(w, items, total, params)
 }
 
 func (handler adminHandler) rights(w http.ResponseWriter, request *http.Request) {
@@ -106,12 +276,22 @@ func (handler adminHandler) rights(w http.ResponseWriter, request *http.Request)
 		writeJSON(w, http.StatusCreated, item)
 		return
 	}
-	items, err := handler.registry.ListRights(request.Context(), sourceID)
+	params, err := parsePagination(request)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	mode, err := parseFilter(request, "mode", "discovery_only", "licensed_excerpt", "licensed_media", "full_syndication", "internal_verification", "disabled")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	items, total, err := handler.registry.ListRights(request.Context(), sourceID, params, mode)
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not list rights.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writePage(w, items, total, params)
 }
 
 func (handler adminHandler) pause(w http.ResponseWriter, request *http.Request) {
@@ -163,12 +343,22 @@ func (handler adminHandler) providers(w http.ResponseWriter, request *http.Reque
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
-	items, err := handler.llm.ListProviders(request.Context())
+	params, err := parsePagination(request)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	state, err := parseFilter(request, "state", "enabled", "disabled")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	items, total, err := handler.llm.ListProviders(request.Context(), params, state)
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not list providers.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writePage(w, items, total, params)
 }
 
 func (handler adminHandler) overview(w http.ResponseWriter, request *http.Request) {
@@ -180,13 +370,179 @@ func (handler adminHandler) overview(w http.ResponseWriter, request *http.Reques
 	writeJSON(w, http.StatusOK, item)
 }
 
-func (handler adminHandler) queue(w http.ResponseWriter, request *http.Request) {
-	items, err := handler.desk.Queue(request.Context())
+func (handler adminHandler) trends(w http.ResponseWriter, request *http.Request) {
+	days, err := parseTrendDays(request.URL.Query().Get("days"))
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	items, err := handler.desk.Trends(request.Context(), days)
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (handler adminHandler) knowledgeGraph(w http.ResponseWriter, request *http.Request) {
+	start, end, err := parseKnowledgeWindow(
+		request.URL.Query().Get("days"),
+		request.URL.Query().Get("from"),
+		request.URL.Query().Get("to"),
+		time.Now(),
+	)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	category := request.URL.Query().Get("category")
+	if len(category) > 50 {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "category is too long")
+		return
+	}
+	item, err := handler.desk.KnowledgeGraph(request.Context(), start, end, category)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+func parseKnowledgeWindow(daysValue, fromValue, toValue string, now time.Time) (time.Time, time.Time, error) {
+	if fromValue == "" && toValue == "" {
+		days, err := parseKnowledgeDays(daysValue)
+		if err != nil {
+			return time.Time{}, time.Time{}, err
+		}
+		end := now.UTC()
+		return end.Add(-time.Duration(days) * 24 * time.Hour), end, nil
+	}
+	if fromValue == "" || toValue == "" {
+		return time.Time{}, time.Time{}, errors.New("from and to dates must be provided together")
+	}
+	start, err := time.Parse(time.DateOnly, fromValue)
+	if err != nil {
+		return time.Time{}, time.Time{}, errors.New("from must use YYYY-MM-DD")
+	}
+	lastDay, err := time.Parse(time.DateOnly, toValue)
+	if err != nil {
+		return time.Time{}, time.Time{}, errors.New("to must use YYYY-MM-DD")
+	}
+	if lastDay.Before(start) {
+		return time.Time{}, time.Time{}, errors.New("to must be on or after from")
+	}
+	end := lastDay.AddDate(0, 0, 1)
+	if end.Sub(start) > 366*24*time.Hour {
+		return time.Time{}, time.Time{}, errors.New("date range cannot exceed 366 days")
+	}
+	return start, end, nil
+}
+
+func parseKnowledgeDays(value string) (int, error) {
+	if value == "" {
+		return 1, nil
+	}
+	days, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, errors.New("days must be 1, 7, or 30")
+	}
+	switch days {
+	case 1, 7, 30:
+		return days, nil
+	default:
+		return 0, errors.New("days must be 1, 7, or 30")
+	}
+}
+
+func parseTrendDays(value string) (int, error) {
+	if value == "" {
+		return 90, nil
+	}
+	days, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, errors.New("days must be 7, 30, or 90")
+	}
+	switch days {
+	case 7, 30, 90:
+		return days, nil
+	default:
+		return 0, errors.New("days must be 7, 30, or 90")
+	}
+}
+
+func (handler adminHandler) queue(w http.ResponseWriter, request *http.Request) {
+	params, err := parsePagination(request)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	status, err := parseFilter(request, "status", "held", "quarantined", "low_confidence")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	items, total, err := handler.desk.Queue(request.Context(), params, status)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
+		return
+	}
+	writePage(w, items, total, params)
+}
+
+func (handler adminHandler) articles(w http.ResponseWriter, request *http.Request) {
+	params, err := parsePagination(request)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	status, err := parseFilter(request, "status", "held", "published", "unpublished", "removed", "quarantined")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	pipelineStatus, err := parseFilter(request, "pipeline", "not_started", "queued", "running", "succeeded", "failed")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	items, total, err := handler.desk.Articles(request.Context(), params, status, pipelineStatus)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
+		return
+	}
+	writePage(w, items, total, params)
+}
+
+func (handler adminHandler) article(w http.ResponseWriter, request *http.Request) {
+	item, err := handler.desk.Article(request.Context(), request.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", "Article was not found.")
+			return
+		}
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (handler adminHandler) retryArticlePipeline(w http.ResponseWriter, request *http.Request) {
+	var body struct {
+		Step string `json:"step"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
+		return
+	}
+	if handler.retryPipeline == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Pipeline unavailable", "The pipeline producer is not available.")
+		return
+	}
+	if err := handler.retryPipeline(request.Context(), request.PathValue("id"), body.Step); err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Could not retry pipeline", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
 }
 
 func (handler adminHandler) quarantine(w http.ResponseWriter, request *http.Request) {
@@ -245,12 +601,22 @@ func (handler adminHandler) articleNote(w http.ResponseWriter, request *http.Req
 }
 
 func (handler adminHandler) complaints(w http.ResponseWriter, request *http.Request) {
-	items, err := handler.desk.Complaints(request.Context())
+	params, err := parsePagination(request)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	status, err := parseFilter(request, "status", "open", "in_review", "resolved", "rejected")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	items, total, err := handler.desk.Complaints(request.Context(), params, status)
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writePage(w, items, total, params)
 }
 
 func (handler adminHandler) resolveComplaint(w http.ResponseWriter, request *http.Request) {
@@ -351,10 +717,20 @@ func (handler adminHandler) profiles(w http.ResponseWriter, request *http.Reques
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
-	items, err := handler.llm.ListProfiles(request.Context())
+	params, err := parsePagination(request)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	state, err := parseFilter(request, "state", "enabled", "disabled")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	items, total, err := handler.llm.ListProfiles(request.Context(), params, state)
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writePage(w, items, total, params)
 }

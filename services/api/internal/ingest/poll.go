@@ -16,7 +16,6 @@ import (
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/classify"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/cluster"
-	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/normalize"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/sinhala"
 )
@@ -26,15 +25,18 @@ type Poller struct {
 	logger   *slog.Logger
 	client   *http.Client
 	clusters *cluster.Store
-	llm      *llm.Gateway
+	pipeline func(context.Context, string) error
 }
 
-func NewPoller(pool *pgxpool.Pool, logger *slog.Logger, clusters *cluster.Store, gateway *llm.Gateway) *Poller {
+func (poller *Poller) SetArticlePipeline(start func(context.Context, string) error) {
+	poller.pipeline = start
+}
+
+func NewPoller(pool *pgxpool.Pool, logger *slog.Logger, clusters *cluster.Store) *Poller {
 	return &Poller{
 		pool:     pool,
 		logger:   logger,
 		clusters: clusters,
-		llm:      gateway,
 		client:   &http.Client{Timeout: 20 * time.Second, CheckRedirect: limitRedirects},
 	}
 }
@@ -50,6 +52,9 @@ func limitRedirects(req *http.Request, via []*http.Request) error {
 }
 
 func (poller *Poller) PollAll(ctx context.Context) error {
+	if err := poller.reclassifyLegacy(ctx); err != nil {
+		return fmt.Errorf("reclassify legacy articles: %w", err)
+	}
 	_, _ = poller.pool.Exec(ctx, `
 		UPDATE source_endpoints
 		SET health_state = 'stale'
@@ -58,13 +63,13 @@ func (poller *Poller) PollAll(ctx context.Context) error {
 	`)
 	rows, err := poller.pool.Query(ctx, `
 		SELECT DISTINCT ON (e.id)
-		       e.id::text, e.source_id::text, e.url, COALESCE(e.etag, ''), COALESCE(e.last_modified, ''),
-		       r.id::text, r.mode, s.active
+		       e.id::text, e.source_id::text, e.endpoint_type, e.url, COALESCE(e.etag, ''), COALESCE(e.last_modified, ''),
+		       r.id::text, r.mode, COALESCE(s.website, ''), s.active
 		FROM source_endpoints e
 		JOIN sources s ON s.id = e.source_id
 		JOIN rights_profiles r ON r.endpoint_id = e.id
 		WHERE NOT e.paused
-		  AND e.endpoint_type IN ('rss', 'atom')
+		  AND e.endpoint_type IN ('rss', 'atom', 'rest_api')
 		  AND r.mode NOT IN ('disabled', 'internal_verification')
 		  AND (r.expires_at IS NULL OR r.expires_at > clock_timestamp())
 		  AND (e.backoff_until IS NULL OR e.backoff_until < clock_timestamp())
@@ -78,13 +83,13 @@ func (poller *Poller) PollAll(ctx context.Context) error {
 	defer rows.Close()
 
 	type target struct {
-		endpointID, sourceID, rawURL, etag, lastModified, rightsID, mode string
-		active                                                           bool
+		endpointID, sourceID, endpointType, rawURL, etag, lastModified, rightsID, mode, website string
+		active                                                                                  bool
 	}
 	var targets []target
 	for rows.Next() {
 		var item target
-		if err := rows.Scan(&item.endpointID, &item.sourceID, &item.rawURL, &item.etag, &item.lastModified, &item.rightsID, &item.mode, &item.active); err != nil {
+		if err := rows.Scan(&item.endpointID, &item.sourceID, &item.endpointType, &item.rawURL, &item.etag, &item.lastModified, &item.rightsID, &item.mode, &item.website, &item.active); err != nil {
 			return err
 		}
 		targets = append(targets, item)
@@ -93,14 +98,68 @@ func (poller *Poller) PollAll(ctx context.Context) error {
 		return err
 	}
 	for _, item := range targets {
-		if err := poller.pollOne(ctx, item.endpointID, item.sourceID, item.rawURL, item.etag, item.lastModified, item.rightsID, item.mode, item.active); err != nil {
+		if err := poller.pollOne(ctx, item.endpointID, item.sourceID, item.endpointType, item.rawURL, item.etag, item.lastModified, item.rightsID, item.mode, item.website, item.active); err != nil {
 			poller.logger.Error("poll failed", "endpoint", item.endpointID, "error", err)
+		}
+	}
+	if poller.clusters != nil {
+		if err := poller.clusters.Backfill(ctx, 1000); err != nil {
+			return fmt.Errorf("backfill event clusters: %w", err)
 		}
 	}
 	return nil
 }
 
-func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, rawURL, etag, lastModified, rightsID, mode string, sourceActive bool) error {
+func (poller *Poller) reclassifyLegacy(ctx context.Context) error {
+	rows, err := poller.pool.Query(ctx, `
+		SELECT id::text, COALESCE(publisher_category, ''), headline, COALESCE(description, '')
+		FROM articles
+		WHERE classify_model IS NULL OR classify_model IN ('rules', 'keyword-rules')
+		ORDER BY received_at
+		LIMIT 1000
+	`)
+	if err != nil {
+		return err
+	}
+	type legacyArticle struct {
+		id, publisherCategory, headline, description string
+	}
+	items := make([]legacyArticle, 0)
+	for rows.Next() {
+		var item legacyArticle
+		if err := rows.Scan(&item.id, &item.publisherCategory, &item.headline, &item.description); err != nil {
+			rows.Close()
+			return err
+		}
+		items = append(items, item)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+
+	for _, item := range items {
+		categories := []string(nil)
+		if item.publisherCategory != "" {
+			categories = []string{item.publisherCategory}
+		}
+		result := classify.From(categories, item.headline, item.description)
+		if _, err := poller.pool.Exec(ctx, `
+			UPDATE articles
+			SET category_id = (SELECT id FROM categories WHERE slug = $2),
+			    classify_confidence = $3,
+			    classify_model = $4
+			WHERE id = $1
+		`, item.id, result.Slug, result.Confidence, result.Model); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, endpointType, rawURL, etag, lastModified, rightsID, mode, website string, sourceActive bool) error {
+	startedAt := time.Now().UTC()
 	if !strings.HasPrefix(rawURL, "https://") {
 		return poller.mark(ctx, endpointID, "failed", "only https endpoints are allowed", "", "")
 	}
@@ -121,6 +180,10 @@ func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, rawURL,
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusNotModified {
+		_, _ = poller.pool.Exec(ctx, `
+			INSERT INTO ingestion_runs (endpoint_id, started_at, ended_at, status, http_status)
+			VALUES ($1, $2, clock_timestamp(), 'ok', $3)
+		`, endpointID, startedAt, response.StatusCode)
 		return poller.mark(ctx, endpointID, "healthy", "", etag, lastModified)
 	}
 	if response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusUnauthorized {
@@ -136,7 +199,7 @@ func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, rawURL,
 	if err != nil {
 		return poller.mark(ctx, endpointID, "failed", err.Error(), "", "")
 	}
-	feed, err := gofeed.NewParser().ParseString(string(body))
+	feed, err := ParseEndpoint(endpointType, website, body)
 	if err != nil {
 		sample := string(body)
 		if len(sample) > 500 {
@@ -145,25 +208,27 @@ func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, rawURL,
 		_, _ = poller.pool.Exec(ctx, `INSERT INTO quarantine_payloads (endpoint_id, reason, sample) VALUES ($1, $2, $3)`, endpointID, err.Error(), sample)
 		return poller.mark(ctx, endpointID, "failed", err.Error(), response.Header.Get("ETag"), response.Header.Get("Last-Modified"))
 	}
-	published := 0
+	newItems := 0
 	for _, item := range feed.Items {
-		if err := poller.storeItem(ctx, endpointID, sourceID, rightsID, mode, sourceActive, item); err != nil {
-			poller.logger.Error("item failed", "guid", item.GUID, "error", err)
-			continue
+		inserted, err := poller.storeItem(ctx, endpointID, sourceID, rightsID, mode, sourceActive, item)
+		if inserted {
+			newItems++
 		}
-		published++
+		if err != nil {
+			poller.logger.Error("item failed", "guid", item.GUID, "error", err)
+		}
 	}
 	_, _ = poller.pool.Exec(ctx, `
-		INSERT INTO ingestion_runs (endpoint_id, ended_at, status, http_status, item_count, new_item_count)
-		VALUES ($1, clock_timestamp(), 'ok', $2, $3, $3)
-	`, endpointID, response.StatusCode, published)
+		INSERT INTO ingestion_runs (endpoint_id, started_at, ended_at, status, http_status, item_count, new_item_count)
+		VALUES ($1, $2, clock_timestamp(), 'ok', $3, $4, $5)
+	`, endpointID, startedAt, response.StatusCode, len(feed.Items), newItems)
 	return poller.mark(ctx, endpointID, "healthy", "", response.Header.Get("ETag"), response.Header.Get("Last-Modified"))
 }
 
-func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, rightsID, mode string, sourceActive bool, item *gofeed.Item) error {
+func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, rightsID, mode string, sourceActive bool, item *gofeed.Item) (bool, error) {
 	headline := sinhala.NFC(item.Title)
 	if headline == "" || !sinhala.Predominant(headline) {
-		return nil
+		return false, nil
 	}
 	link := item.Link
 	if link == "" && len(item.Links) > 0 {
@@ -185,14 +250,8 @@ func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, right
 	if len(item.Categories) > 0 {
 		publisherCat = item.Categories[0]
 	}
-	slug, confidence := classify.From(item.Categories, headline)
-	model := "keyword-rules"
-	if poller.llm != nil {
-		result, _ := poller.llm.Complete(ctx, llm.Request{Task: "classify", Input: headline})
-		if result.Text != "" {
-			slug, model = result.Text, result.Model
-		}
-	}
+	classification := classify.From(item.Categories, headline, item.Description)
+	slug, confidence, model := classification.Slug, classification.Confidence, classification.Model
 	var near uuid.UUID
 	err := poller.pool.QueryRow(ctx, `
 		SELECT id FROM articles
@@ -201,10 +260,10 @@ func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, right
 		LIMIT 1
 	`, sourceID, headline).Scan(&near)
 	if err == nil {
-		return nil
+		return false, nil
 	}
 	if err != pgx.ErrNoRows {
-		return err
+		return false, err
 	}
 	status := "held"
 	if sourceActive && (mode == "discovery_only" || mode == "licensed_excerpt" || mode == "licensed_media" || mode == "full_syndication") {
@@ -233,21 +292,24 @@ func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, right
 	`, sourceID, endpointID, rightsID, itemID, link, canonical, headline, item.Title, item.Description, fingerprint, publishedAt, status, publisherCat, confidence, model, author, slug).Scan(&articleID, &inserted)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
 	if !inserted {
 		_, _ = poller.pool.Exec(ctx, `
 			INSERT INTO article_versions (article_id, version, changed_fields)
 			SELECT $1, COALESCE((SELECT max(version) FROM article_versions WHERE article_id = $1), 0) + 1, '{"headline":true}'::jsonb
 		`, articleID)
-		return nil
+		return false, nil
+	}
+	if poller.pipeline != nil {
+		return true, poller.pipeline(ctx, articleID.String())
 	}
 	if status == "published" && poller.clusters != nil {
-		return poller.clusters.Attach(ctx, articleID.String(), headline, publishedAt)
+		return true, poller.clusters.Attach(ctx, articleID.String())
 	}
-	return nil
+	return true, nil
 }
 
 func (poller *Poller) mark(ctx context.Context, endpointID, state, detail, etag, lastModified string) error {
@@ -272,20 +334,20 @@ func (poller *Poller) mark(ctx context.Context, endpointID, state, detail, etag,
 }
 
 func (poller *Poller) PollEndpoint(ctx context.Context, endpointID string) error {
-	var sourceID, rawURL, etag, lastModified, rightsID, mode string
+	var sourceID, endpointType, rawURL, etag, lastModified, rightsID, mode, website string
 	var active bool
 	err := poller.pool.QueryRow(ctx, `
-		SELECT e.source_id::text, e.url, COALESCE(e.etag, ''), COALESCE(e.last_modified, ''),
-		       r.id::text, r.mode, s.active
+		SELECT e.source_id::text, e.endpoint_type, e.url, COALESCE(e.etag, ''), COALESCE(e.last_modified, ''),
+		       r.id::text, r.mode, COALESCE(s.website, ''), s.active
 		FROM source_endpoints e
 		JOIN sources s ON s.id = e.source_id
 		JOIN rights_profiles r ON r.endpoint_id = e.id
 		WHERE e.id = $1
 		ORDER BY r.version DESC
 		LIMIT 1
-	`, endpointID).Scan(&sourceID, &rawURL, &etag, &lastModified, &rightsID, &mode, &active)
+	`, endpointID).Scan(&sourceID, &endpointType, &rawURL, &etag, &lastModified, &rightsID, &mode, &website, &active)
 	if err != nil {
 		return err
 	}
-	return poller.pollOne(ctx, endpointID, sourceID, rawURL, etag, lastModified, rightsID, mode, active)
+	return poller.pollOne(ctx, endpointID, sourceID, endpointType, rawURL, etag, lastModified, rightsID, mode, website, active)
 }

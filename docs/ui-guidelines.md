@@ -196,6 +196,15 @@ Base library: shadcn/ui. Global overrides:
 | Skeletons | `Skeleton` | `--tint` shimmer-free (static block, opacity pulse only) |
 | Breaking banner | custom | full-width bar under masthead: `--ink` bg, `--paper` text, "විශේෂ පුවත්" label, dismissible, no animation beyond fade-in |
 
+### 5.1 Admin data-table contract
+
+- Every user-facing table uses API-backed pagination, including small result sets.
+- Page, page size, search, and filter state live in the browser URL so views are linkable and survive refreshes.
+- Search, filtering, counts, and row slicing run on the server; React must not paginate a fully fetched collection.
+- List endpoints return the shared `{ items, pagination }` response and validate query parameters at the HTTP boundary.
+- Database queries use a stable ordering before `LIMIT` and `OFFSET`.
+- Admin tables reuse the shared URL query hook and shadcn table toolbar/pagination controls.
+
 **Buttons:** two variants only.
 - Primary: `--ink` background, `--paper` text, square, `--text-meta` size, medium weight.
 - Ghost: transparent, 1px `--ink` border.
@@ -247,7 +256,7 @@ Reject any generated UI that contains:
 - Emoji in UI copy
 - Gradient text, glassmorphism, neumorphism
 - More than two font families on a page
-- Colored favicons/logos of publishers (MVP is text attribution only, per rights profiles)
+- Colored favicons/logos on public pages (the admin source registry may use publisher-hosted favicons for identification)
 
 ## 10. Page Inventory (public)
 
