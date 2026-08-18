@@ -1,0 +1,111 @@
+name: lanka-news-paper
+
+x-app-environment: &app-environment
+  SNAP_DATABASE_URL: ${SNAP_DATABASE_URL:?set SNAP_DATABASE_URL}
+  SNAP_ENV: production
+  SNAP_LLM_API_KEY: ${SNAP_LLM_API_KEY:?set SNAP_LLM_API_KEY}
+  SNAP_MEDIA_LOCAL_DIR: /data/media
+  SNAP_MIGRATIONS_PATH: /app/migrations
+  SNAP_SESSION_SECRET: ${SNAP_SESSION_SECRET:?set SNAP_SESSION_SECRET}
+
+services:
+  postgres:
+    image: postgres:16.10-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lanka_news
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_USER: lanka_news
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lanka_news -d lanka_news"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 1g
+    cpus: 1
+
+  migrate:
+    image: ghcr.io/prabhavalabs/lanka-news-paper-api:${IMAGE_TAG:?set IMAGE_TAG}
+    entrypoint: ["/app/migrate"]
+    environment: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: [tools]
+    mem_limit: 256m
+    cpus: 0.5
+
+  api:
+    image: ghcr.io/prabhavalabs/lanka-news-paper-api:${IMAGE_TAG:?set IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      <<: *app-environment
+      SNAP_ALLOWED_ORIGINS: ${SNAP_ALLOWED_ORIGINS:?set SNAP_ALLOWED_ORIGINS}
+      SNAP_API_ADDRESS: 0.0.0.0:8090
+      SNAP_BOOTSTRAP_ADMIN_EMAIL: ${SNAP_BOOTSTRAP_ADMIN_EMAIL:?set SNAP_BOOTSTRAP_ADMIN_EMAIL}
+      SNAP_BOOTSTRAP_ADMIN_PASSWORD_HASH: ${SNAP_BOOTSTRAP_ADMIN_PASSWORD_HASH:?set SNAP_BOOTSTRAP_ADMIN_PASSWORD_HASH}
+      SNAP_SESSION_COOKIE_SECURE: "true"
+    volumes:
+      - media-data:/data/media
+    ports:
+      - "127.0.0.1:18090:8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/api/v1/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    mem_limit: 512m
+    cpus: 0.75
+
+  worker:
+    image: ghcr.io/prabhavalabs/lanka-news-paper-api:${IMAGE_TAG:?set IMAGE_TAG}
+    entrypoint: ["/app/worker"]
+    restart: unless-stopped
+    environment: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 768m
+    cpus: 1
+
+  web:
+    image: ghcr.io/prabhavalabs/lanka-news-paper-web:${IMAGE_TAG:?set IMAGE_TAG}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18173:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    mem_limit: 64m
+    cpus: 0.15
+
+  admin:
+    image: ghcr.io/prabhavalabs/lanka-news-paper-admin:${IMAGE_TAG:?set IMAGE_TAG}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18174:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    mem_limit: 64m
+    cpus: 0.15
+
+volumes:
+  media-data:
+  postgres-data:
