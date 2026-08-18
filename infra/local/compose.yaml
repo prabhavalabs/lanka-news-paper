@@ -21,6 +21,9 @@ services:
   worker:
     image: golang:1.25-alpine
     restart: unless-stopped
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
     working_dir: /workspace/services/api
     command: ["go", "run", "./cmd/worker"]
     environment:
