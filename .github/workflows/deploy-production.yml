@@ -38,6 +38,7 @@ jobs:
         working-directory: services/api
 
   build:
+    if: github.ref == 'refs/heads/main'
     needs: verify
     runs-on: ubuntu-latest
     strategy:
@@ -74,6 +75,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
   deploy:
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     environment: production
