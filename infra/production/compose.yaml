@@ -6,6 +6,10 @@ x-app-environment: &app-environment
   SNAP_LLM_API_KEY: ${SNAP_LLM_API_KEY:?set SNAP_LLM_API_KEY}
   SNAP_MEDIA_LOCAL_DIR: /data/media
   SNAP_MIGRATIONS_PATH: /app/migrations
+  SNAP_R2_ACCESS_KEY_ID: ${SNAP_R2_ACCESS_KEY_ID:-}
+  SNAP_R2_ACCOUNT_ID: ${SNAP_R2_ACCOUNT_ID:-}
+  SNAP_R2_BUCKET: ${SNAP_R2_BUCKET:-}
+  SNAP_R2_SECRET_ACCESS_KEY: ${SNAP_R2_SECRET_ACCESS_KEY:-}
   SNAP_SESSION_SECRET: ${SNAP_SESSION_SECRET:?set SNAP_SESSION_SECRET}
 
 services:
@@ -16,6 +20,8 @@ services:
       POSTGRES_DB: lanka_news
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_USER: lanka_news
+    ports:
+      - "127.0.0.1:15432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:

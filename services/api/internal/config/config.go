@@ -35,6 +35,13 @@ type Config struct {
 	ShutdownTimeout            time.Duration
 }
 
+func (config Config) BlockInSharedDevelopment(process string) error {
+	if config.Environment == "shared-development" {
+		return fmt.Errorf("%s is disabled when SNAP_ENV=shared-development", process)
+	}
+	return nil
+}
+
 var defaultAllowedOrigins = []string{
 	"http://127.0.0.1:5173",
 	"http://127.0.0.1:5174",

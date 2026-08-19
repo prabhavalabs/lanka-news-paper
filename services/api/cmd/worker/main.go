@@ -34,6 +34,9 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
+	if err := loaded.BlockInSharedDevelopment("worker"); err != nil {
+		return err
+	}
 
 	processContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
