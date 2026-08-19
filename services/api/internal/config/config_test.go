@@ -57,3 +57,9 @@ func TestLoadSecureCookieOverride(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, loaded.SessionCookieSecure)
 }
+
+func TestBlockInSharedDevelopment(t *testing.T) {
+	loaded := Config{Environment: "shared-development"}
+	require.ErrorContains(t, loaded.BlockInSharedDevelopment("worker"), "worker is disabled")
+	require.NoError(t, Config{Environment: "production"}.BlockInSharedDevelopment("worker"))
+}

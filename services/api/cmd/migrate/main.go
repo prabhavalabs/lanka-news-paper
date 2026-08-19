@@ -30,6 +30,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
+	if err := loaded.BlockInSharedDevelopment("migrations"); err != nil {
+		return err
+	}
 
 	absolutePath, err := filepath.Abs(loaded.MigrationsPath)
 	if err != nil {
