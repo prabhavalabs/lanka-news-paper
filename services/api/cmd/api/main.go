@@ -102,8 +102,8 @@ func run(logger *slog.Logger) error {
 			News:           news,
 			Poller:         poller,
 			Registry:       registry.NewStore(pool),
-			RetryPipeline: func(ctx context.Context, articleID, step string) error {
-				runID, err := pipelineStore.Retry(ctx, articleID, step)
+			RunPipeline: func(ctx context.Context, articleID, step string) error {
+				runID, err := pipelineStore.Run(ctx, articleID, step)
 				if err != nil {
 					return err
 				}

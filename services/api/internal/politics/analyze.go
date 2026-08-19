@@ -67,8 +67,8 @@ var schema = map[string]any{
 		"economic_policy_relevance": map[string]any{"type": "integer", "minimum": 0, "maximum": 1},
 		"narration_score":           map[string]any{"type": "number", "minimum": -1, "maximum": 1},
 		"confidence":                map[string]any{"type": "number", "minimum": 0, "maximum": 1},
-		"rationale":                 map[string]any{"type": "string", "maxLength": 240},
-		"evidence":                  map[string]any{"type": "array", "maxItems": 2, "items": map[string]any{"type": "string", "maxLength": 100}},
+		"rationale":                 map[string]any{"type": "string", "maxLength": 500},
+		"evidence":                  map[string]any{"type": "array", "maxItems": 3, "items": map[string]any{"type": "string", "maxLength": 160}},
 	},
 }
 
@@ -153,7 +153,7 @@ func (store *Store) AnalyzeArticle(ctx context.Context, articleID, runID, stepID
 		}
 		response, err := store.model.Complete(ctx, llm.Request{
 			Task: task, System: systemPrompt, Input: string(input), JSONSchema: schema,
-			DisableReasoning: true, MaxTokens: 320, ArticleID: articleID,
+			DisableReasoning: true, MaxTokens: 1024, ArticleID: articleID,
 			PipelineRunID: runID, PipelineStepID: stepID,
 		})
 		if err != nil {

@@ -161,34 +161,23 @@ None of these metrics determines truth, factual accuracy, intent, party support,
 
 Migration `000017_political_framing` introduced party references and article analysis. Migration `000019_narration_framing` adds relevance, label, rationale, evidence, and model provenance. Migration `000022_article_pipeline` adds durable article runs, step telemetry, and article-linked model calls.
 
-The LLM gateway uses database-configured provider and task profiles. Local development seeds:
-
-- provider: `local-ollama`;
-- kind: `openai_compatible`;
-- endpoint: `http://host.docker.internal:11434/v1`;
-- task: `narration_framing`;
-- model: `qwen3:8b`;
-- timeout: 90 seconds.
-
-The provider is disabled by default so a deployment without Ollama never pretends to have analyzed an article. When no enabled provider exists, the worker leaves articles untouched for a later retry. No API secret is required for the local Ollama endpoint.
-
-Migration `000021_remote_ollama` seeds the `vps-ollama` provider at
-`https://llm.lankanewspaper.prabhavalabs.com/v1`. It uses the exact
-`qwen3:8b-q4_K_M` tag and reads its bearer token from `SNAP_LLM_API_KEY`. The
-deployment enables it only after DNS, TLS, bearer authentication, and a structured
-completion are verified.
+The LLM gateway uses database-configured provider and task profiles. Migration
+`000026_openrouter_deepseek_v4_flash` routes classification and narration to the
+`openrouter` provider at `https://openrouter.ai/api/v1`, using the pinned
+`deepseek/deepseek-v4-flash-0731` model and `OPENROUTER_API_KEY`. The older local
+and VPS Ollama providers remain disabled as rollback records and receive no work.
 
 ### Durable per-article workflow
 
-Every new article creates one persisted run immediately after insertion. River executes three ordered steps on the single-worker analysis queue:
+Every new article creates one persisted run immediately after insertion. River executes three ordered steps with up to five concurrent analysis workers:
 
-1. `categorization` — publisher metadata and deterministic multilingual rules, with Qwen used only when confidence is below `0.55`;
+1. `categorization` — publisher metadata and deterministic multilingual rules, with DeepSeek used only when confidence is below `0.55`;
 2. `event_clustering` — attaches published reports to a cross-source event or creates one;
-3. `narration_analysis` — applies the economic-policy relevance gate and calls Qwen when semantic narration scoring is required.
+3. `narration_analysis` — applies the economic-policy relevance gate and calls DeepSeek when semantic narration scoring is required.
 
 River retries transient failures at most five times. A retry starts the same run, skips steps already marked `succeeded` or `skipped`, and resumes the failed step. The dispatcher recreates runs missing after an interrupted insertion and recovers runs left `running` for more than 20 minutes. An editor can retry the failed step from the article detail page; resetting an earlier step also resets its dependent later steps.
 
-The article explorer is server-paginated at `/articles`. `/articles/:id` shows the stored report, classification and cluster provenance, political score and evidence, each run and step attempt, duration and error, and every linked LLM call. The admin API equivalents are `GET /api/admin/articles`, `GET /api/admin/articles/{id}`, and `POST /api/admin/articles/{id}/pipeline/retry`.
+The article explorer is server-paginated at `/articles`. `/articles/:id` shows the stored report, classification and cluster provenance, political score and evidence, each run and step attempt, duration and error, and every linked LLM call. The admin API equivalents are `GET /api/admin/articles`, `GET /api/admin/articles/{id}`, and `POST /api/admin/articles/{id}/pipeline/run`.
 
 The knowledge-graph API returns current article evidence, party references, outlet aggregates, minimum sample, and model metadata for the selected server-side scope.
 

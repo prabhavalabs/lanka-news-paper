@@ -14,3 +14,9 @@ func TestCompletionSlug(t *testing.T) {
 	_, valid = completionSlug("The category is politics")
 	require.False(t, valid)
 }
+
+func TestValidStep(t *testing.T) {
+	require.True(t, validStep(""))
+	require.True(t, validStep("event_clustering"))
+	require.False(t, validStep("source_intake"))
+}

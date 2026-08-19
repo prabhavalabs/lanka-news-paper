@@ -149,3 +149,26 @@ body {
     @apply font-sans;
   }
 }
+
+.pipeline-edge {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 3;
+}
+
+.pipeline-edge[data-active='true'] {
+  stroke: var(--primary);
+  stroke-dasharray: 7 7;
+  animation: pipeline-flow 1s linear infinite;
+}
+
+@keyframes pipeline-flow {
+  to { stroke-dashoffset: -14; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pipeline-edge,
+  .animate-spin {
+    animation: none !important;
+  }
+}

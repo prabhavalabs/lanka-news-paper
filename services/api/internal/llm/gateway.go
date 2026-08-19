@@ -1,10 +1,12 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -35,6 +37,19 @@ type Response struct {
 	Model    string
 }
 
+type providerProfile struct {
+	id, kind, baseURL, keyRef, model string
+	timeout                          int
+}
+
+type providerResult struct {
+	Text         string
+	InputTokens  *int
+	OutputTokens *int
+	FirstTokenMS *int
+	FinishReason string
+}
+
 type Gateway struct {
 	pool   *pgxpool.Pool
 	client *http.Client
@@ -55,43 +70,56 @@ func (gateway *Gateway) Complete(ctx context.Context, request Request) (Response
 	if err != nil {
 		return gateway.fallback(request), nil
 	}
-	defer rows.Close()
-
+	profiles := make([]providerProfile, 0)
 	for rows.Next() {
-		var providerID, kind, baseURL, keyRef, model string
-		var timeout int
-		if err := rows.Scan(&providerID, &kind, &baseURL, &keyRef, &model, &timeout); err != nil {
+		var profile providerProfile
+		if err := rows.Scan(&profile.id, &profile.kind, &profile.baseURL, &profile.keyRef, &profile.model, &profile.timeout); err != nil {
 			continue
 		}
-		started := time.Now()
-		callContext, cancelCall := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
-		text, callErr := gateway.callProvider(callContext, kind, baseURL, keyRef, model, request)
-		cancelCall()
-		outcome := "ok"
-		if callErr != nil {
-			outcome = "fallback"
-			_, _ = gateway.pool.Exec(ctx, `
-				INSERT INTO llm_calls (
-				  task, provider_id, model, latency_ms, outcome, article_id,
-				  pipeline_run_id, pipeline_step_id, error_detail
-				)
-				VALUES ($1, $2, $3, $4, $5, NULLIF($6, '')::uuid, NULLIF($7, '')::uuid, NULLIF($8, '')::uuid, $9)
-			`, request.Task, providerID, model, time.Since(started).Milliseconds(), outcome,
-				request.ArticleID, request.PipelineRunID, request.PipelineStepID, callErr.Error())
-			continue
-		}
-		_, _ = gateway.pool.Exec(ctx, `
-			INSERT INTO llm_calls (
-			  task, provider_id, model, latency_ms, outcome, article_id,
-			  pipeline_run_id, pipeline_step_id
-			)
-			VALUES ($1, $2, $3, $4, 'ok', NULLIF($5, '')::uuid, NULLIF($6, '')::uuid, NULLIF($7, '')::uuid)
-		`, request.Task, providerID, model, time.Since(started).Milliseconds(),
-			request.ArticleID, request.PipelineRunID, request.PipelineStepID)
-		return Response{Text: text, Provider: providerID, Model: model}, nil
+		profiles = append(profiles, profile)
 	}
-	if err := rows.Err(); err != nil && err != pgx.ErrNoRows {
+	rowsError := rows.Err()
+	rows.Close()
+	if rowsError != nil && rowsError != pgx.ErrNoRows {
 		return gateway.fallback(request), nil
+	}
+
+	for _, profile := range profiles {
+		started := time.Now()
+		callID := gateway.startCall(ctx, request, profile)
+		gateway.logPipeline(ctx, request, "info", "provider_request_started", "Provider request started", map[string]any{
+			"call_id": callID, "provider": profile.id, "model": profile.model,
+			"task": request.Task, "timeout_seconds": profile.timeout, "streamed": true,
+		}, started)
+
+		callContext, cancelCall := context.WithTimeout(ctx, time.Duration(profile.timeout)*time.Second)
+		result, callErr := gateway.callProvider(callContext, profile.kind, profile.baseURL, profile.keyRef, profile.model, request, func(firstTokenMS int) {
+			gateway.recordFirstToken(ctx, callID, firstTokenMS)
+			gateway.logPipeline(ctx, request, "info", "provider_first_token", "First token received", map[string]any{
+				"call_id": callID, "provider": profile.id, "model": profile.model, "first_token_ms": firstTokenMS,
+			}, time.Now())
+		})
+		cancelCall()
+		latencyMS := time.Since(started).Milliseconds()
+		recordContext, cancelRecord := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		if callErr != nil {
+			gateway.finishCall(recordContext, callID, "fallback", latencyMS, result, callErr)
+			gateway.logPipeline(recordContext, request, "error", "provider_request_failed", "Provider request failed", map[string]any{
+				"call_id": callID, "provider": profile.id, "model": profile.model,
+				"latency_ms": latencyMS, "error": callErr.Error(),
+			}, time.Now())
+			cancelRecord()
+			continue
+		}
+		gateway.finishCall(recordContext, callID, "ok", latencyMS, result, nil)
+		gateway.logPipeline(recordContext, request, "info", "provider_response_completed", "Structured response completed", map[string]any{
+			"call_id": callID, "provider": profile.id, "model": profile.model,
+			"latency_ms": latencyMS, "first_token_ms": result.FirstTokenMS,
+			"input_tokens": result.InputTokens, "output_tokens": result.OutputTokens,
+			"finish_reason": result.FinishReason,
+		}, time.Now())
+		cancelRecord()
+		return Response{Text: result.Text, Provider: profile.id, Model: profile.model}, nil
 	}
 	return gateway.fallback(request), nil
 }
@@ -104,31 +132,34 @@ func (gateway *Gateway) fallback(request Request) Response {
 	return Response{Text: "", Provider: "none", Model: "none"}
 }
 
-func (gateway *Gateway) callProvider(ctx context.Context, kind, baseURL, keyRef, model string, request Request) (string, error) {
+func (gateway *Gateway) callProvider(ctx context.Context, kind, baseURL, keyRef, model string, request Request, onFirstToken func(int)) (providerResult, error) {
 	if kind != "openai_api" && kind != "openai_compatible" {
-		return "", fmt.Errorf("codex_cli is not configured")
+		return providerResult{}, fmt.Errorf("codex_cli is not configured")
 	}
 	if baseURL == "" {
-		return "", fmt.Errorf("missing base_url")
+		return providerResult{}, fmt.Errorf("missing base_url")
 	}
 	apiKey := ""
 	if keyRef != "" {
 		apiKey = os.Getenv(keyRef)
 	}
 	if kind == "openai_api" && keyRef == "" {
-		return "", fmt.Errorf("missing api key reference")
+		return providerResult{}, fmt.Errorf("missing api key reference")
 	}
 	if keyRef != "" && apiKey == "" {
-		return "", fmt.Errorf("missing secret %s", keyRef)
+		return providerResult{}, fmt.Errorf("missing secret %s", keyRef)
 	}
 	payloadValue := map[string]any{
-		"model":       model,
-		"temperature": 0,
+		"model":          model,
+		"stream":         true,
+		"stream_options": map[string]any{"include_usage": true},
+		"temperature":    0,
 		"messages": []map[string]string{
 			{"role": "system", "content": request.System},
 			{"role": "user", "content": request.Input},
 		},
 	}
+	isOpenRouter := strings.HasPrefix(strings.TrimRight(baseURL, "/"), "https://openrouter.ai/api/v1")
 	if request.JSONSchema != nil {
 		payloadValue["response_format"] = map[string]any{
 			"type": "json_schema",
@@ -138,47 +169,171 @@ func (gateway *Gateway) callProvider(ctx context.Context, kind, baseURL, keyRef,
 				"schema": request.JSONSchema,
 			},
 		}
+		if isOpenRouter {
+			payloadValue["provider"] = map[string]any{"require_parameters": true}
+		}
 	}
 	if request.DisableReasoning {
-		payloadValue["reasoning_effort"] = "none"
+		if isOpenRouter {
+			payloadValue["reasoning"] = map[string]any{"effort": "none"}
+		} else {
+			payloadValue["reasoning_effort"] = "none"
+		}
 	}
 	if request.MaxTokens > 0 {
 		payloadValue["max_tokens"] = request.MaxTokens
 	}
 	payload, err := json.Marshal(payloadValue)
 	if err != nil {
-		return "", fmt.Errorf("encode provider request: %w", err)
+		return providerResult{}, fmt.Errorf("encode provider request: %w", err)
 	}
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
-		return "", err
+		return providerResult{}, err
 	}
 	if apiKey != "" {
 		httpRequest.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	httpRequest.Header.Set("Content-Type", "application/json")
+	started := time.Now()
 	response, err := gateway.client.Do(httpRequest)
 	if err != nil {
-		return "", err
+		return providerResult{}, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode >= 400 {
-		return "", fmt.Errorf("provider status %d", response.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		detail := strings.TrimSpace(string(body))
+		if detail == "" {
+			return providerResult{}, fmt.Errorf("provider status %d", response.StatusCode)
+		}
+		return providerResult{}, fmt.Errorf("provider status %d: %s", response.StatusCode, detail)
 	}
-	var parsed struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
+
+	var result providerResult
+	scanner := bufio.NewScanner(response.Body)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ":") || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+				FinishReason *string `json:"finish_reason"`
+			} `json:"choices"`
+			Usage *struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+			} `json:"usage"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return result, fmt.Errorf("decode provider stream: %w", err)
+		}
+		if chunk.Error != nil && chunk.Error.Message != "" {
+			return result, fmt.Errorf("provider stream: %s", chunk.Error.Message)
+		}
+		if chunk.Usage != nil {
+			result.InputTokens = intPointer(chunk.Usage.PromptTokens)
+			result.OutputTokens = intPointer(chunk.Usage.CompletionTokens)
+		}
+		for _, choice := range chunk.Choices {
+			if choice.Delta.Content != "" {
+				if result.FirstTokenMS == nil {
+					elapsed := int(time.Since(started).Milliseconds())
+					result.FirstTokenMS = &elapsed
+					if onFirstToken != nil {
+						onFirstToken(elapsed)
+					}
+				}
+				result.Text += choice.Delta.Content
+			}
+			if choice.FinishReason != nil {
+				result.FinishReason = *choice.FinishReason
+			}
+		}
 	}
-	if err := json.NewDecoder(response.Body).Decode(&parsed); err != nil {
-		return "", err
+	if err := scanner.Err(); err != nil {
+		return result, fmt.Errorf("read provider stream: %w", err)
 	}
-	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("empty completion")
+	if result.Text == "" {
+		return result, fmt.Errorf("empty completion")
 	}
-	return parsed.Choices[0].Message.Content, nil
+	return result, nil
+}
+
+func intPointer(value int) *int {
+	return &value
+}
+
+func (gateway *Gateway) startCall(ctx context.Context, request Request, profile providerProfile) int64 {
+	if request.PipelineStepID != "" {
+		_, _ = gateway.pool.Exec(ctx, `
+			UPDATE llm_calls
+			SET outcome = 'fallback', error_detail = 'Superseded by a retried provider request.',
+			    latency_ms = GREATEST(0, (extract(epoch FROM clock_timestamp() - created_at) * 1000)::integer),
+			    completed_at = clock_timestamp()
+			WHERE pipeline_step_id = $1 AND outcome = 'running'
+		`, request.PipelineStepID)
+	}
+	var id int64
+	_ = gateway.pool.QueryRow(ctx, `
+		INSERT INTO llm_calls (
+		  task, provider_id, model, outcome, article_id, pipeline_run_id, pipeline_step_id, streamed
+		)
+		VALUES ($1, $2, $3, 'running', NULLIF($4, '')::uuid, NULLIF($5, '')::uuid, NULLIF($6, '')::uuid, true)
+		RETURNING id
+	`, request.Task, profile.id, profile.model, request.ArticleID, request.PipelineRunID, request.PipelineStepID).Scan(&id)
+	return id
+}
+
+func (gateway *Gateway) recordFirstToken(ctx context.Context, callID int64, firstTokenMS int) {
+	if callID == 0 {
+		return
+	}
+	_, _ = gateway.pool.Exec(ctx, `UPDATE llm_calls SET first_token_ms = $2 WHERE id = $1`, callID, firstTokenMS)
+}
+
+func (gateway *Gateway) finishCall(ctx context.Context, callID int64, outcome string, latencyMS int64, result providerResult, callErr error) {
+	if callID == 0 {
+		return
+	}
+	errorDetail := ""
+	if callErr != nil {
+		errorDetail = callErr.Error()
+	}
+	_, _ = gateway.pool.Exec(ctx, `
+		UPDATE llm_calls
+		SET latency_ms = $2, outcome = $3, input_tokens = $4, output_tokens = $5,
+		    first_token_ms = COALESCE(first_token_ms, $6), response_text = NULLIF($7, ''),
+		    finish_reason = NULLIF($8, ''), error_detail = NULLIF($9, ''), completed_at = clock_timestamp()
+		WHERE id = $1
+	`, callID, latencyMS, outcome, result.InputTokens, result.OutputTokens, result.FirstTokenMS,
+		result.Text, result.FinishReason, errorDetail)
+}
+
+func (gateway *Gateway) logPipeline(ctx context.Context, request Request, level, event, message string, details map[string]any, createdAt time.Time) {
+	if request.PipelineRunID == "" {
+		return
+	}
+	payload, err := json.Marshal(details)
+	if err != nil {
+		return
+	}
+	_, _ = gateway.pool.Exec(ctx, `
+		INSERT INTO article_pipeline_logs (run_id, step_id, level, event, message, details, created_at)
+		VALUES ($1, NULLIF($2, '')::uuid, $3, $4, $5, $6, $7)
+	`, request.PipelineRunID, request.PipelineStepID, level, event, message, payload, createdAt)
 }
 
 type Provider struct {

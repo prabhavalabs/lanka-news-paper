@@ -3,7 +3,7 @@ name: lanka-news-paper
 x-app-environment: &app-environment
   SNAP_DATABASE_URL: ${SNAP_DATABASE_URL:?set SNAP_DATABASE_URL}
   SNAP_ENV: production
-  SNAP_LLM_API_KEY: ${SNAP_LLM_API_KEY:?set SNAP_LLM_API_KEY}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY}
   SNAP_MEDIA_LOCAL_DIR: /data/media
   SNAP_MIGRATIONS_PATH: /app/migrations
   SNAP_R2_ACCESS_KEY_ID: ${SNAP_R2_ACCESS_KEY_ID:-}

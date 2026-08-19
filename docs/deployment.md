@@ -25,6 +25,9 @@ The `production` environment needs these secrets:
 
 Application and database secrets are deliberately not copied through GitHub Actions. They are provisioned once in `/opt/lanka-news-paper/.env` with mode `0600`.
 
+`OPENROUTER_API_KEY` must be present in that file. Both API and worker containers
+receive it; the database stores only the environment-variable reference.
+
 ## DNS and TLS
 
 Create proxied or DNS-only `A` records pointing to `178.104.111.17` for:

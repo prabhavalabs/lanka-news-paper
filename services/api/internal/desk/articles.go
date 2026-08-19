@@ -87,6 +87,16 @@ type PipelineStep struct {
 	DurationMS  *int64          `json:"duration_ms"`
 	ErrorDetail *string         `json:"error_detail"`
 	Output      json.RawMessage `json:"output"`
+	Logs        []PipelineLog   `json:"logs"`
+}
+
+type PipelineLog struct {
+	ID        int64           `json:"id"`
+	Level     string          `json:"level"`
+	Event     string          `json:"event"`
+	Message   string          `json:"message"`
+	Details   json.RawMessage `json:"details"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
 type PipelineRun struct {
@@ -103,14 +113,22 @@ type PipelineRun struct {
 }
 
 type LLMCall struct {
-	ID          int64     `json:"id"`
-	Task        string    `json:"task"`
-	ProviderID  string    `json:"provider_id"`
-	Model       string    `json:"model"`
-	LatencyMS   *int      `json:"latency_ms"`
-	Outcome     string    `json:"outcome"`
-	ErrorDetail *string   `json:"error_detail"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID             int64      `json:"id"`
+	PipelineStepID *string    `json:"pipeline_step_id"`
+	Task           string     `json:"task"`
+	ProviderID     string     `json:"provider_id"`
+	Model          string     `json:"model"`
+	InputTokens    *int       `json:"input_tokens"`
+	OutputTokens   *int       `json:"output_tokens"`
+	LatencyMS      *int       `json:"latency_ms"`
+	FirstTokenMS   *int       `json:"first_token_ms"`
+	Outcome        string     `json:"outcome"`
+	Streamed       bool       `json:"streamed"`
+	ResponseText   string     `json:"response_text"`
+	FinishReason   string     `json:"finish_reason"`
+	ErrorDetail    *string    `json:"error_detail"`
+	CreatedAt      time.Time  `json:"created_at"`
+	CompletedAt    *time.Time `json:"completed_at"`
 }
 
 type ArticleDetail struct {
@@ -207,6 +225,12 @@ func (store *Store) articlePolitical(ctx context.Context, articleID string) (*Ar
 	if err := json.Unmarshal(evidence, &item.Evidence); err != nil {
 		return nil, err
 	}
+	if item.Mentions == nil {
+		item.Mentions = []PoliticalMention{}
+	}
+	if item.Evidence == nil {
+		item.Evidence = []string{}
+	}
 	return &item, nil
 }
 
@@ -253,10 +277,40 @@ func (store *Store) pipelineRuns(ctx context.Context, articleID string) ([]Pipel
 				stepRows.Close()
 				return nil, err
 			}
+			step.Logs = make([]PipelineLog, 0)
 			runs[index].Steps = append(runs[index].Steps, step)
 		}
 		err = stepRows.Err()
 		stepRows.Close()
+		if err != nil {
+			return nil, err
+		}
+		logRows, err := store.pool.Query(ctx, `
+			SELECT step_id::text, id, level, event, message, details, created_at
+			FROM article_pipeline_logs
+			WHERE run_id = $1 AND step_id IS NOT NULL
+			ORDER BY created_at, id
+		`, runs[index].ID)
+		if err != nil {
+			return nil, err
+		}
+		stepIndexes := make(map[string]int, len(runs[index].Steps))
+		for stepIndex, step := range runs[index].Steps {
+			stepIndexes[step.ID] = stepIndex
+		}
+		for logRows.Next() {
+			var stepID string
+			var log PipelineLog
+			if err := logRows.Scan(&stepID, &log.ID, &log.Level, &log.Event, &log.Message, &log.Details, &log.CreatedAt); err != nil {
+				logRows.Close()
+				return nil, err
+			}
+			if stepIndex, ok := stepIndexes[stepID]; ok {
+				runs[index].Steps[stepIndex].Logs = append(runs[index].Steps[stepIndex].Logs, log)
+			}
+		}
+		err = logRows.Err()
+		logRows.Close()
 		if err != nil {
 			return nil, err
 		}
@@ -266,8 +320,9 @@ func (store *Store) pipelineRuns(ctx context.Context, articleID string) ([]Pipel
 
 func (store *Store) articleLLMCalls(ctx context.Context, articleID string) ([]LLMCall, error) {
 	rows, err := store.pool.Query(ctx, `
-		SELECT id, COALESCE(task, ''), COALESCE(provider_id, ''), COALESCE(model, ''),
-		       latency_ms, COALESCE(outcome, ''), error_detail, created_at
+		SELECT id, pipeline_step_id::text, COALESCE(task, ''), COALESCE(provider_id, ''), COALESCE(model, ''),
+		       input_tokens, output_tokens, latency_ms, first_token_ms, COALESCE(outcome, ''), streamed,
+		       COALESCE(response_text, ''), COALESCE(finish_reason, ''), error_detail, created_at, completed_at
 		FROM llm_calls WHERE article_id = $1 ORDER BY created_at DESC LIMIT 50
 	`, articleID)
 	if err != nil {
@@ -277,8 +332,10 @@ func (store *Store) articleLLMCalls(ctx context.Context, articleID string) ([]LL
 	items := make([]LLMCall, 0)
 	for rows.Next() {
 		var item LLMCall
-		if err := rows.Scan(&item.ID, &item.Task, &item.ProviderID, &item.Model, &item.LatencyMS,
-			&item.Outcome, &item.ErrorDetail, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.PipelineStepID, &item.Task, &item.ProviderID, &item.Model,
+			&item.InputTokens, &item.OutputTokens, &item.LatencyMS, &item.FirstTokenMS, &item.Outcome,
+			&item.Streamed, &item.ResponseText, &item.FinishReason, &item.ErrorDetail,
+			&item.CreatedAt, &item.CompletedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
