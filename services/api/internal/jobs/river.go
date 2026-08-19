@@ -99,7 +99,7 @@ func (worker *ArticlePipelineWorker) Work(ctx context.Context, job *river.Job[Ar
 }
 
 func (worker *ArticlePipelineWorker) Timeout(*river.Job[ArticlePipelineArgs]) time.Duration {
-	return 12 * time.Minute
+	return 20 * time.Minute
 }
 
 type PipelineDispatchArgs struct{}
@@ -186,7 +186,7 @@ func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, p
 		},
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: 2},
-			"analysis":         {MaxWorkers: 1},
+			"analysis":         {MaxWorkers: 5},
 		},
 		Workers: workers,
 	})

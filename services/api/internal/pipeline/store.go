@@ -33,6 +33,29 @@ func NewStore(pool *pgxpool.Pool, model *llm.Gateway, clusters *cluster.Store, p
 }
 
 func (store *Store) Start(ctx context.Context, articleID, trigger string) (string, error) {
+	return store.start(ctx, articleID, trigger, "", false)
+}
+
+func (store *Store) Run(ctx context.Context, articleID, stepName string) (string, error) {
+	if !validStep(stepName) {
+		return "", fmt.Errorf("unknown pipeline step %q", stepName)
+	}
+	return store.start(ctx, articleID, "manual", stepName, true)
+}
+
+func validStep(name string) bool {
+	if name == "" {
+		return true
+	}
+	for _, stepName := range steps {
+		if name == stepName {
+			return true
+		}
+	}
+	return false
+}
+
+func (store *Store) start(ctx context.Context, articleID, trigger, selectedStep string, rejectActive bool) (string, error) {
 	if trigger == "" {
 		trigger = "ingestion"
 	}
@@ -43,13 +66,25 @@ func (store *Store) Start(ctx context.Context, articleID, trigger string) (strin
 	defer tx.Rollback(ctx)
 
 	var runID string
-	err = tx.QueryRow(ctx, `
+	insertRun := `
 		INSERT INTO article_pipeline_runs (article_id, trigger)
 		VALUES ($1, $2)
 		ON CONFLICT (article_id) WHERE status IN ('queued', 'running')
 		DO UPDATE SET updated_at = article_pipeline_runs.updated_at
 		RETURNING id::text
-	`, articleID, trigger).Scan(&runID)
+	`
+	if rejectActive {
+		insertRun = `
+			INSERT INTO article_pipeline_runs (article_id, trigger)
+			VALUES ($1, $2)
+			ON CONFLICT (article_id) WHERE status IN ('queued', 'running') DO NOTHING
+			RETURNING id::text
+		`
+	}
+	err = tx.QueryRow(ctx, insertRun, articleID, trigger).Scan(&runID)
+	if rejectActive && err == pgx.ErrNoRows {
+		return "", fmt.Errorf("article pipeline is already queued or running")
+	}
 	if err != nil {
 		return "", fmt.Errorf("create article pipeline: %w", err)
 	}
@@ -60,6 +95,33 @@ func (store *Store) Start(ctx context.Context, articleID, trigger string) (strin
 		`, runID, name, position+1); err != nil {
 			return "", fmt.Errorf("create pipeline step %s: %w", name, err)
 		}
+	}
+	if selectedStep != "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE article_pipeline_steps
+			SET status = 'skipped', finished_at = clock_timestamp(), duration_ms = 0,
+			    output = jsonb_build_object('reason', 'Not selected for this manual run.')
+			WHERE run_id = $1 AND name <> $2
+		`, runID, selectedStep); err != nil {
+			return "", fmt.Errorf("select pipeline step: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO article_pipeline_logs (run_id, step_id, event, message, details)
+		SELECT $1, id,
+		       CASE WHEN $3::text = '' OR name = $3 THEN 'step_queued' ELSE 'step_skipped' END,
+		       CASE WHEN $3::text = '' OR name = $3 THEN 'Step queued' ELSE 'Step not selected' END,
+		       jsonb_build_object('position', position, 'trigger', $2::text,
+		                          'selected_step', NULLIF($3::text, ''))
+		FROM article_pipeline_steps step
+		WHERE step.run_id = $1
+		  AND NOT EXISTS (
+		    SELECT 1 FROM article_pipeline_logs log
+		    WHERE log.step_id = step.id AND log.event = 'step_queued'
+		  )
+		ORDER BY step.position
+	`, runID, trigger, selectedStep); err != nil {
+		return "", fmt.Errorf("log pipeline creation: %w", err)
 	}
 	return runID, tx.Commit(ctx)
 }
@@ -190,6 +252,9 @@ func (store *Store) Process(ctx context.Context, runID string) error {
 		_, _ = store.pool.Exec(ctx, `
 			UPDATE article_pipeline_runs SET current_step = $2, updated_at = clock_timestamp() WHERE id = $1
 		`, runID, item.name)
+		store.appendLog(ctx, runID, item.id, "info", "step_started", "Step started", map[string]any{
+			"attempt": item.attempt + 1, "max_attempts": item.maxAttempts,
+		})
 
 		result, err := store.execute(ctx, articleID, runID, item)
 		if err != nil {
@@ -206,6 +271,9 @@ func (store *Store) Process(ctx context.Context, runID string) error {
 				SET status = 'failed', last_error = $2, finished_at = clock_timestamp(), updated_at = clock_timestamp()
 				WHERE id = $1
 			`, runID, detail)
+			store.appendLog(ctx, runID, item.id, "error", "step_failed", "Step failed", map[string]any{
+				"attempt": item.attempt + 1, "error": detail,
+			})
 			return err
 		}
 		output, err := json.Marshal(result.output)
@@ -225,6 +293,13 @@ func (store *Store) Process(ctx context.Context, runID string) error {
 		`, item.id, status, output); err != nil {
 			return err
 		}
+		message := "Step completed"
+		if result.skipped {
+			message = "Step skipped"
+		}
+		store.appendLog(ctx, runID, item.id, "info", "step_"+status, message, map[string]any{
+			"attempt": item.attempt + 1, "output": result.output,
+		})
 	}
 
 	_, err = store.pool.Exec(ctx, `
@@ -319,51 +394,15 @@ func (store *Store) cluster(ctx context.Context, articleID string) (stepResult, 
 	return stepResult{output: map[string]any{"event_id": eventID}}, nil
 }
 
-func (store *Store) Retry(ctx context.Context, articleID, stepName string) (string, error) {
-	tx, err := store.pool.Begin(ctx)
+func (store *Store) appendLog(ctx context.Context, runID, stepID, level, event, message string, details any) {
+	payload, err := json.Marshal(details)
 	if err != nil {
-		return "", err
+		return
 	}
-	defer tx.Rollback(ctx)
-	var runID, runStatus string
-	if err := tx.QueryRow(ctx, `
-		SELECT id::text, status FROM article_pipeline_runs
-		WHERE article_id = $1 ORDER BY created_at DESC LIMIT 1 FOR UPDATE
-	`, articleID).Scan(&runID, &runStatus); err != nil {
-		if err == pgx.ErrNoRows {
-			return store.Start(ctx, articleID, "manual")
-		}
-		return "", err
-	}
-	if runStatus == "queued" || runStatus == "running" {
-		return "", fmt.Errorf("article pipeline is already %s", runStatus)
-	}
-	var position int
-	query := `SELECT position FROM article_pipeline_steps WHERE run_id = $1 AND name = $2`
-	if stepName == "" {
-		query = `SELECT position FROM article_pipeline_steps WHERE run_id = $1 AND status = $2 ORDER BY position LIMIT 1`
-		stepName = "failed"
-	}
-	if err := tx.QueryRow(ctx, query, runID, stepName).Scan(&position); err != nil {
-		return "", fmt.Errorf("select retry step: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE article_pipeline_steps
-		SET status = 'queued', attempt = 0, started_at = NULL, finished_at = NULL,
-		    duration_ms = NULL, error_detail = NULL, output = '{}'::jsonb
-		WHERE run_id = $1 AND position >= $2
-	`, runID, position); err != nil {
-		return "", err
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE article_pipeline_runs
-		SET status = 'queued', current_step = NULL, last_error = NULL,
-		    finished_at = NULL, updated_at = clock_timestamp()
-		WHERE id = $1
-	`, runID); err != nil {
-		return "", err
-	}
-	return runID, tx.Commit(ctx)
+	_, _ = store.pool.Exec(ctx, `
+		INSERT INTO article_pipeline_logs (run_id, step_id, level, event, message, details)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, runID, stepID, level, event, message, payload)
 }
 
 func truncate(value string, limit int) string {

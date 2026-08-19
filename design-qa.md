@@ -1,88 +1,51 @@
-# Login design QA
+# Pipeline Canvas Design QA
 
-- Source visual truth: `/var/folders/4c/_xd1rpdd3w1cxmr2qscmyxkr0000gn/T/codex-clipboard-e1c5dd77-d186-46eb-a964-42f05a16daef.png`
-- Implementation screenshot: `/Users/nipuntheekshana/.codex/visualizations/2026/08/16/01a00ba8-64ab-7820-af44-c5f7dde77079/admin-login-no-theme-toggle-1794x1046.png`
-- Combined comparison: `/Users/nipuntheekshana/.codex/visualizations/2026/08/16/01a00ba8-64ab-7820-af44-c5f7dde77079/admin-login-theme-removal-comparison-matched.png`
-- Viewport: 1794 × 1046 CSS px
-- Density normalization: source 3588 × 2092 px treated as a 2× capture and downsampled to 1794 × 1046; implementation captured at 1794 × 1046 with device scale factor 1
-- State: signed out, dark theme
+- Source visual truth: `/var/folders/4c/_xd1rpdd3w1cxmr2qscmyxkr0000gn/T/codex-clipboard-59c7364a-d811-4ab8-a6b0-bd2aa5f051b9.png`
+- Desktop implementation: `/Users/nipuntheekshana/.codex/visualizations/2026/08/19/01a01904-53c3-7222-bb13-523546b64545/pipeline-implementation-desktop.png`
+- Source inspector state: `/Users/nipuntheekshana/.codex/visualizations/2026/08/19/01a01904-53c3-7222-bb13-523546b64545/pipeline-source-inspector.png`
+- Mobile implementation: `/Users/nipuntheekshana/.codex/visualizations/2026/08/19/01a01904-53c3-7222-bb13-523546b64545/pipeline-implementation-mobile.png`
+- Combined comparison: `/Users/nipuntheekshana/.codex/visualizations/2026/08/19/01a01904-53c3-7222-bb13-523546b64545/pipeline-design-comparison.png`
+- Viewports: desktop 1440 × 1100 CSS px; mobile 390 × 844 CSS px; device pixel ratio 1.
+- Pixels: source 2892 × 624; desktop implementation 1097 × 986; mobile implementation 358 × 1270. The combined image normalizes both desktop artifacts to 1440 px wide before stacking.
+- State: light theme, successful ingestion run, categorization selected, execution log visible.
 
-## Full-view comparison
+## Full-view comparison evidence
 
-The reference identifies the theme switcher in the upper-right corner. The updated implementation removes that control from the login route while preserving the centered login card and all form content. The theme provider remains active, so the page still follows the selected or system theme without exposing a login-page switcher.
+The implementation preserves the reference's pale bounded canvas, horizontal workflow, visible connection ports, compact status cards, clear success state, and right-aligned canvas control. Four cards are intentional because the product workflow has four visible stages rather than the reference's three jobs. Application blue replaces GitHub green so state styling remains consistent with the existing control-room design system.
 
-Focused-region comparison was not needed because the requested change is isolated in a large, empty corner and is unambiguous in the matched full-view comparison.
+## Focused region comparison evidence
+
+The implementation capture is already an element-level screenshot of the pipeline card, and the node labels, ports, status icons, execution controls, and selected-node log panel remain readable in the combined comparison. A second element-level capture verifies the source-intake state, endpoint provenance, origin log, and `Run source` control.
 
 ## Required fidelity surfaces
 
-- Fonts and typography: unchanged.
-- Spacing and layout rhythm: unchanged; removing the absolutely positioned switcher does not affect the centered card.
-- Colors and visual tokens: unchanged; the active theme still supplies the page tokens.
-- Image quality and asset fidelity: no image assets exist in this view.
-- Copy and content: login copy and fields are unchanged.
+- Typography: existing Inter hierarchy is retained; labels, metadata, and controls remain legible without wrapping or clipping.
+- Spacing and layout: node rhythm, connector alignment, canvas breathing room, and inspector separation match the reference's workflow composition.
+- Colors and tokens: background, borders, text, and status colors use the application's existing semantic tokens.
+- Image and icon quality: no raster assets were required; existing Lucide icons render sharply and consistently.
+- Copy and content: controls clearly distinguish full-pipeline execution, individual-step execution, node movement, reset, selection, queued state, and skipped state.
+
+## Interaction and runtime checks
+
+- Pointer drag moved a node and its connected path updated with it.
+- Reset restored the default layout.
+- Keyboard arrow movement is available on focused nodes.
+- Clicking a node switched the detailed execution log.
+- Full-run, source-capture, and single-step controls render with busy-state protection; full runs poll the source before queuing all processing steps.
+- The run endpoint rejected an unknown step with HTTP 400 without changing data.
+- A fresh authenticated page load produced no console errors or warnings.
+- Desktop and mobile layouts were captured; the mobile canvas scrolls horizontally while controls and logs remain accessible.
 
 ## Comparison history
 
-1. Previous P2 — the first login implementation used an oversized card and controls.
-   - Fix: normalized the card, padding, controls, typography, radii, and spacing.
-   - Post-fix evidence: `admin-login-dark-827x624-final.png`.
-2. Current request — the theme switcher was visible on the login page.
-   - Fix: removed only the login-page import and rendered control.
-   - Post-fix evidence: `admin-login-no-theme-toggle-1794x1046.png` and `admin-login-theme-removal-comparison-matched.png`.
+### Pass 1
 
-## Interaction and responsive checks
+- P2: node metadata overflowed the fixed card height. Fixed by sizing the node for its actual content and tightening internal spacing.
+- P2: the mobile reset control overlapped the canvas instruction. Fixed by moving both into a responsive toolbar above the scrollable canvas.
+- P2: the full-run action wrapped below the title at desktop width. Fixed by restoring the intended desktop header row.
 
-- Browser query confirms zero System, Light, or Dark theme buttons on the login route.
-- Login heading and form remain rendered.
-- Browser console errors: none.
-- Admin production build and TypeScript compilation pass.
+### Pass 2
 
-## Findings
-
-No actionable P0, P1, or P2 differences remain for the requested removal.
-
-final result: passed
-
----
-
-# Dashboard design QA
-
-- Current-state reference: `/var/folders/4c/_xd1rpdd3w1cxmr2qscmyxkr0000gn/T/codex-clipboard-5e913106-f811-4ef6-aa39-f49af2acac63.png`
-- ShadCN target reference: `/var/folders/4c/_xd1rpdd3w1cxmr2qscmyxkr0000gn/T/codex-clipboard-277bf501-129f-4b23-b3fa-eca47c288124.png`
-- Implementation: `http://127.0.0.1:5174/`
-- Captures checked: 1600 × 900 wide dark, 1280 × 720 desktop dark, 1280 × 720 desktop light, and 390 × 844 mobile dark
-
-## Side-by-side comparison
-
-The implementation matches the reference hierarchy: inset collapsible sidebar, compact sticky header, four metric cards, a large interactive area chart, and an operational table. The generic ShadCN demo labels and fake revenue data were replaced with newsroom navigation, live publishing metrics, source health, editorial activity, and the real review queue.
-
-The wide layout renders four equal cards in one row and the main chart beneath them. At the normal desktop width the cards form a balanced two-column grid, and on mobile they stack without horizontal page overflow. The typography, rounded surfaces, subtle gradients, blue primary action, quiet borders, and restrained shadows follow the installed preset in both light and dark themes.
-
-## Interaction and responsive checks
-
-- System theme is the default; light and dark modes both render correctly.
-- Trend controls load real 7, 30, and 90-day API ranges; mobile defaults to 7 days.
-- Queue search, status filter, column visibility menu, and pagination controls render and respond correctly.
-- Sidebar collapses out of the mobile viewport; mobile document width remains within the viewport.
-- One page-level `h1`; all icon-only controls have accessible names.
-- Fresh browser load reports no console warnings or errors.
-
-## QA fixes
-
-1. Linked buttons initially emitted Base UI accessibility warnings.
-   - Fix: declared non-native button rendering for link-backed actions.
-2. The mobile columns trigger had no accessible name.
-   - Fix: added an explicit control label.
-3. Opening the column menu initially failed because its label lacked a menu group.
-   - Fix: wrapped the label and checkbox items in the required group and retested column hiding.
-
-## Verification
-
-- `pnpm --filter @snap/admin build`
-- `go test -race ./...`
-- `go vet ./...`
-- Wide, desktop, light-theme, mobile, interaction, and clean-console browser checks
-
-No actionable P0, P1, or P2 differences remain for this dashboard revamp.
+Post-fix desktop and mobile captures show no remaining P0, P1, or P2 visual or interaction findings. Omitting zoom and fullscreen is an intentional P3 scope choice: draggable nodes plus reset satisfy the requested visualization without adding editor behavior.
 
 final result: passed

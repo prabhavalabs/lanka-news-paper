@@ -26,12 +26,12 @@ import (
 const maxSourceLogoBytes = 768 << 10
 
 type adminHandler struct {
-	registry      *registry.Store
-	poller        *ingest.Poller
-	llm           *llm.Gateway
-	desk          *desk.Store
-	media         *media.Store
-	retryPipeline func(context.Context, string, string) error
+	registry    *registry.Store
+	poller      *ingest.Poller
+	llm         *llm.Gateway
+	desk        *desk.Store
+	media       *media.Store
+	runPipeline func(context.Context, string, string) error
 }
 
 func (handler adminHandler) sourceLogo(w http.ResponseWriter, request *http.Request) {
@@ -526,7 +526,7 @@ func (handler adminHandler) article(w http.ResponseWriter, request *http.Request
 	writeJSON(w, http.StatusOK, item)
 }
 
-func (handler adminHandler) retryArticlePipeline(w http.ResponseWriter, request *http.Request) {
+func (handler adminHandler) runArticlePipeline(w http.ResponseWriter, request *http.Request) {
 	var body struct {
 		Step string `json:"step"`
 	}
@@ -534,12 +534,12 @@ func (handler adminHandler) retryArticlePipeline(w http.ResponseWriter, request 
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
 		return
 	}
-	if handler.retryPipeline == nil {
+	if handler.runPipeline == nil {
 		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Pipeline unavailable", "The pipeline producer is not available.")
 		return
 	}
-	if err := handler.retryPipeline(request.Context(), request.PathValue("id"), body.Step); err != nil {
-		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Could not retry pipeline", err.Error())
+	if err := handler.runPipeline(request.Context(), request.PathValue("id"), body.Step); err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Could not run pipeline", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})

@@ -237,6 +237,15 @@ export type AdminArticleListItem = {
   pipeline_finished_at: string | null;
 };
 
+export type PipelineLog = {
+  id: number;
+  level: "info" | "warning" | "error";
+  event: string;
+  message: string;
+  details: Record<string, unknown>;
+  created_at: string;
+};
+
 export type PipelineStep = {
   id: string;
   name: string;
@@ -249,6 +258,26 @@ export type PipelineStep = {
   duration_ms: number | null;
   error_detail: string | null;
   output: Record<string, unknown>;
+  logs: PipelineLog[];
+};
+
+export type LLMCall = {
+  id: number;
+  pipeline_step_id: string | null;
+  task: string;
+  provider_id: string;
+  model: string;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  latency_ms: number | null;
+  first_token_ms: number | null;
+  outcome: string;
+  streamed: boolean;
+  response_text: string;
+  finish_reason: string;
+  error_detail: string | null;
+  created_at: string;
+  completed_at: string | null;
 };
 
 export type PipelineRun = {
@@ -293,16 +322,7 @@ export type AdminArticleDetail = {
   } | null;
   political: KnowledgeArticle["political"] | null;
   pipeline_runs: PipelineRun[];
-  llm_calls: {
-    id: number;
-    task: string;
-    provider_id: string;
-    model: string;
-    latency_ms: number | null;
-    outcome: string;
-    error_detail: string | null;
-    created_at: string;
-  }[];
+  llm_calls: LLMCall[];
 };
 
 export type AdminComplaint = {
@@ -434,8 +454,8 @@ export function createClient(baseUrl = "") {
       ),
     adminArticle: (id: string) =>
       request<AdminArticleDetail>(url(`/api/admin/articles/${id}`)),
-    retryArticlePipeline: (id: string, step = "") =>
-      request<{ ok: boolean }>(url(`/api/admin/articles/${id}/pipeline/retry`), {
+    runArticlePipeline: (id: string, step = "") =>
+      request<{ ok: boolean }>(url(`/api/admin/articles/${id}/pipeline/run`), {
         method: "POST",
         body: JSON.stringify({ step })
       }),
