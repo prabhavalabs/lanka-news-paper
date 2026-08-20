@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -131,6 +132,7 @@ func (store *Store) EnsureBacklog(ctx context.Context, limit int) error {
 		SELECT a.id::text
 		FROM articles a
 		WHERE NOT EXISTS (SELECT 1 FROM article_pipeline_runs run WHERE run.article_id = a.id)
+		  AND (to_jsonb(a)->>'pipeline_enqueued_at') IS NULL
 		ORDER BY a.received_at DESC, a.id
 		LIMIT $1
 	`, limit)
@@ -188,6 +190,48 @@ func (store *Store) QueuedRuns(ctx context.Context, limit int) ([]string, error)
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+func (store *Store) DeleteHistory(ctx context.Context, before time.Time) (int64, error) {
+	var ready bool
+	if err := store.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+		  SELECT 1 FROM information_schema.columns
+		  WHERE table_schema = 'public' AND table_name = 'articles' AND column_name = 'pipeline_enqueued_at'
+		)
+	`).Scan(&ready); err != nil {
+		return 0, fmt.Errorf("check pipeline history retention readiness: %w", err)
+	}
+	if !ready {
+		return 0, nil
+	}
+
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin pipeline history cleanup: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM llm_calls
+		WHERE pipeline_run_id IN (
+		  SELECT id FROM article_pipeline_runs
+		  WHERE status IN ('succeeded', 'failed') AND finished_at < $1
+		)
+	`, before); err != nil {
+		return 0, fmt.Errorf("delete expired pipeline model calls: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `
+		DELETE FROM article_pipeline_runs
+		WHERE status IN ('succeeded', 'failed') AND finished_at < $1
+	`, before)
+	if err != nil {
+		return 0, fmt.Errorf("delete expired pipeline runs: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit pipeline history cleanup: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 type step struct {

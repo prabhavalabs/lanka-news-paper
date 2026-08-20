@@ -95,16 +95,37 @@ export type SourcePerformance = {
 
 export type LlmProvider = {
   id: string;
-  kind: string;
+  name: string;
   base_url: string;
   enabled: boolean;
+  available: boolean;
   status: string;
+  status_detail: string;
   key_set: boolean;
+  latency_ms: number;
+  checked_at: string;
+  free_tier: boolean;
+  limit_usd: number | null;
+  limit_remaining_usd: number | null;
+  expires_at: string | null;
+};
+
+export type LlmModel = {
+  id: string;
+  name: string;
+  context_length: number;
+  input_price_per_million: number;
+  output_price_per_million: number;
+  input_modalities: string[];
+  output_modalities: string[];
+  supported_parameters: string[];
+  compatible_tasks: string[];
 };
 
 export type LlmProfile = {
   task: string;
-  priority: number;
+  name: string;
+  purpose: string;
   provider_id: string;
   model: string;
   timeout_seconds: number;
@@ -293,6 +314,49 @@ export type PipelineRun = {
   steps: PipelineStep[];
 };
 
+export type QueueJobStatus =
+  | "queued"
+  | "processing"
+  | "completed"
+  | "partially_completed"
+  | "failed";
+
+export type QueueJob = {
+  id: string;
+  job_id: number | null;
+  run_id: string | null;
+  article_id: string | null;
+  title: string;
+  source: string | null;
+  source_icon: string;
+  kind: string;
+  queue: string;
+  status: QueueJobStatus;
+  river_state: string;
+  trigger: string | null;
+  attempt: number;
+  max_attempts: number;
+  current_step: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+  error_detail: string | null;
+  error_trace: string | null;
+  steps: PipelineStep[];
+};
+
+export type QueueMonitor = PageResponse<QueueJob> & {
+  summary: {
+    total: number;
+    queued: number;
+    processing: number;
+    completed: number;
+    partially_completed: number;
+    failed: number;
+  };
+};
+
 export type AdminArticleDetail = {
   id: string;
   headline: string;
@@ -448,6 +512,8 @@ export function createClient(baseUrl = "") {
       request<PageResponse<QueueItem>>(
         url(withQuery("/api/admin/queue", params))
       ),
+    queueJobs: (params: AdminTableQuery = {}) =>
+      request<QueueMonitor>(url(withQuery("/api/admin/jobs", params))),
     adminArticles: (params: AdminTableQuery = {}) =>
       request<PageResponse<AdminArticleListItem>>(
         url(withQuery("/api/admin/articles", params))
@@ -581,26 +647,13 @@ export function createClient(baseUrl = "") {
       request<{ ok: boolean }>(url(`/api/admin/endpoints/${endpointId}/run`), {
         method: "POST"
       }),
-    llmProviders: (params: AdminTableQuery = {}) =>
-      request<PageResponse<LlmProvider>>(
-        url(withQuery("/api/admin/llm/providers", params))
-      ),
-    upsertProvider: (body: {
-      id: string;
-      kind: string;
-      base_url: string;
-      enabled: boolean;
-      api_key_ref: string;
-    }) =>
-      request<{ ok: boolean }>(url("/api/admin/llm/providers"), {
-        method: "POST",
-        body: JSON.stringify(body)
-      }),
-    llmProfiles: (params: AdminTableQuery = {}) =>
-      request<PageResponse<LlmProfile>>(
-        url(withQuery("/api/admin/llm/profiles", params))
-      ),
-    upsertProfile: (body: LlmProfile) =>
+    llmProvider: () =>
+      request<LlmProvider>(url("/api/admin/llm/providers")),
+    llmModels: () =>
+      request<{ items: LlmModel[] }>(url("/api/admin/llm/models")),
+    llmProfiles: () =>
+      request<{ items: LlmProfile[] }>(url("/api/admin/llm/profiles")),
+    updateLlmProfile: (body: { task: string; model: string }) =>
       request<{ ok: boolean }>(url("/api/admin/llm/profiles"), {
         method: "POST",
         body: JSON.stringify(body)

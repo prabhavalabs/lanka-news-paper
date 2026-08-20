@@ -6,6 +6,7 @@ import { ArticlesPage } from './pages/articles-page'
 import { DashboardPage } from './pages/dashboard-page'
 import { LoginPage } from './pages/login-page'
 import { KnowledgeGraphPage } from './pages/knowledge-graph-page'
+import { JobsPage } from './pages/jobs-page'
 import { QueuePage } from './pages/queue-page'
 import { RoutingPage } from './pages/routing-page'
 import { ShellLayout } from './pages/shell-layout'
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
       { path: 'articles', element: <ArticlesPage /> },
       { path: 'articles/:id', element: <ArticleDetailPage /> },
       { path: 'knowledge', element: <KnowledgeGraphPage /> },
+      { path: 'jobs', element: <JobsPage /> },
       { path: 'queue', element: <QueuePage /> },
       { path: 'complaints', element: <ComplaintsPage /> },
       { path: 'routing', element: <RoutingPage /> },

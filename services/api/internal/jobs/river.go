@@ -151,6 +151,26 @@ func (worker *BriefWorker) Work(ctx context.Context, _ *river.Job[BriefArgs]) er
 	return worker.News.WriteBrief(ctx)
 }
 
+const queueHistoryRetention = 7 * 24 * time.Hour
+
+type QueueHistoryCleanupArgs struct{}
+
+func (QueueHistoryCleanupArgs) Kind() string { return "queue.history.cleanup" }
+
+type QueueHistoryCleanupWorker struct {
+	river.WorkerDefaults[QueueHistoryCleanupArgs]
+	Pipeline *pipeline.Store
+}
+
+func (worker *QueueHistoryCleanupWorker) Work(ctx context.Context, _ *river.Job[QueueHistoryCleanupArgs]) error {
+	_, err := worker.Pipeline.DeleteHistory(ctx, queueHistoryCutoff(time.Now().UTC()))
+	return err
+}
+
+func queueHistoryCutoff(now time.Time) time.Time {
+	return now.Add(-queueHistoryRetention)
+}
+
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	migrator, err := rivermigrate.New(riverpgxv5.New(pool), nil)
 	if err != nil {
@@ -170,6 +190,7 @@ func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, p
 	river.AddWorker(workers, &ArticlePipelineWorker{Pipeline: pipelineStore})
 	river.AddWorker(workers, dispatcher)
 	river.AddWorker(workers, &BriefWorker{News: news})
+	river.AddWorker(workers, &QueueHistoryCleanupWorker{Pipeline: pipelineStore})
 
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Logger: logger,
@@ -183,6 +204,9 @@ func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, p
 			river.NewPeriodicJob(river.PeriodicInterval(time.Hour), func() (river.JobArgs, *river.InsertOpts) {
 				return BriefArgs{}, nil
 			}, nil),
+			river.NewPeriodicJob(river.PeriodicInterval(24*time.Hour), func() (river.JobArgs, *river.InsertOpts) {
+				return QueueHistoryCleanupArgs{}, nil
+			}, &river.PeriodicJobOpts{RunOnStart: true}),
 		},
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: 2},

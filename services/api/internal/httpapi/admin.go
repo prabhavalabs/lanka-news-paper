@@ -327,38 +327,21 @@ func (handler adminHandler) runNow(w http.ResponseWriter, request *http.Request)
 }
 
 func (handler adminHandler) providers(w http.ResponseWriter, request *http.Request) {
-	if request.Method == http.MethodPost {
-		var body struct {
-			llm.Provider
-			KeyRef string `json:"api_key_ref"`
-		}
-		if err := decodeJSON(request, &body); err != nil {
-			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
-			return
-		}
-		if err := handler.llm.UpsertProvider(request.Context(), body.Provider, body.KeyRef); err != nil {
-			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-		return
-	}
-	params, err := parsePagination(request)
+	item, err := handler.llm.ProviderStatus(request.Context())
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not check OpenRouter.")
 		return
 	}
-	state, err := parseFilter(request, "state", "enabled", "disabled")
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (handler adminHandler) models(w http.ResponseWriter, request *http.Request) {
+	items, err := handler.llm.ListModels(request.Context())
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		writeProblem(w, http.StatusBadGateway, "https://snap.local/problems/upstream", "OpenRouter unavailable", "Could not load the OpenRouter model catalog.")
 		return
 	}
-	items, total, err := handler.llm.ListProviders(request.Context(), params, state)
-	if err != nil {
-		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not list providers.")
-		return
-	}
-	writePage(w, items, total, params)
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 func (handler adminHandler) overview(w http.ResponseWriter, request *http.Request) {
@@ -487,6 +470,45 @@ func (handler adminHandler) queue(w http.ResponseWriter, request *http.Request) 
 		return
 	}
 	writePage(w, items, total, params)
+}
+
+func (handler adminHandler) jobs(w http.ResponseWriter, request *http.Request) {
+	params, err := parsePagination(request)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	status, err := parseFilter(request, "status", "queued", "processing", "completed", "partially_completed", "failed")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	queue, err := parseFilter(request, "queue", "default", "analysis")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	kind, err := parseFilter(request, "kind", "article.pipeline", "article.pipeline.dispatch", "ingest.poll", "brief.daily", "intelligence.narration", "queue.history.cleanup")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	window, err := parseFilter(request, "window", "24h", "7d")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	duration := 7 * 24 * time.Hour
+	if window == "24h" {
+		duration = 24 * time.Hour
+	}
+	since := time.Now().UTC().Add(-duration)
+	result, err := handler.desk.QueueJobs(request.Context(), params, status, queue, kind, &since)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (handler adminHandler) articles(w http.ResponseWriter, request *http.Request) {
@@ -705,32 +727,25 @@ func (handler adminHandler) updateEndpoint(w http.ResponseWriter, request *http.
 
 func (handler adminHandler) profiles(w http.ResponseWriter, request *http.Request) {
 	if request.Method == http.MethodPost {
-		var body llm.TaskProfile
+		var body struct {
+			Task  string `json:"task"`
+			Model string `json:"model"`
+		}
 		if err := decodeJSON(request, &body); err != nil {
 			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
 			return
 		}
-		if err := handler.llm.UpsertProfile(request.Context(), body); err != nil {
+		if err := handler.llm.UpdateProfile(request.Context(), body.Task, body.Model); err != nil {
 			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
-	params, err := parsePagination(request)
-	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
-		return
-	}
-	state, err := parseFilter(request, "state", "enabled", "disabled")
-	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
-		return
-	}
-	items, total, err := handler.llm.ListProfiles(request.Context(), params, state)
+	items, err := handler.llm.ListProfiles(request.Context())
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
 		return
 	}
-	writePage(w, items, total, params)
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
