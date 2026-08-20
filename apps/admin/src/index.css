@@ -172,3 +172,19 @@ body {
     animation: none !important;
   }
 }
+
+@media (max-width: 639px) {
+  .routing-model-sheet[data-side='right'] {
+    inset: auto 0 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: 88svh !important;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .routing-model-sheet[data-side='right'][data-starting-style],
+  .routing-model-sheet[data-side='right'][data-ending-style] {
+    transform: translateY(2.5rem) !important;
+  }
+}

@@ -1,6 +1,7 @@
 import * as React from 'react'
 import {
   LayoutDashboardIcon,
+  ListTreeIcon,
   ListChecksIcon,
   MessageSquareWarningIcon,
   NetworkIcon,
@@ -27,6 +28,7 @@ const navigation: NavItem[] = [
   { title: 'Sources', url: '/sources', icon: RadioTowerIcon },
   { title: 'Articles', url: '/articles', icon: NewspaperIcon },
   { title: 'Knowledge graph', url: '/knowledge', icon: NetworkIcon },
+  { title: 'Queue monitor', url: '/jobs', icon: ListTreeIcon },
   { title: 'Editorial queue', url: '/queue', icon: ListChecksIcon },
   { title: 'Complaints', url: '/complaints', icon: MessageSquareWarningIcon },
   { title: 'AI & routing', url: '/routing', icon: SparklesIcon },

@@ -12,9 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCallProviderSupportsStructuredOpenAICompatibleResponses(t *testing.T) {
+func TestCallProviderSupportsStructuredOpenAIResponses(t *testing.T) {
+	t.Setenv("TEST_LLM_API_KEY", "test-secret")
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		require.Empty(t, request.Header.Get("Authorization"))
+		require.Equal(t, "Bearer test-secret", request.Header.Get("Authorization"))
 		var payload map[string]any
 		require.NoError(t, json.NewDecoder(request.Body).Decode(&payload))
 		require.Equal(t, "json_schema", payload["response_format"].(map[string]any)["type"])
@@ -34,7 +35,7 @@ func TestCallProviderSupportsStructuredOpenAICompatibleResponses(t *testing.T) {
 
 	gateway := &Gateway{client: server.Client()}
 	firstTokenObserved := false
-	response, err := gateway.callProvider(context.Background(), "openai_compatible", server.URL, "", "local-model", Request{
+	response, err := gateway.callProvider(context.Background(), "openai_api", server.URL, "TEST_LLM_API_KEY", "test-model", Request{
 		Task:             "narration_framing",
 		JSONSchema:       map[string]any{"type": "object"},
 		DisableReasoning: true,
@@ -61,12 +62,61 @@ func TestCallProviderSendsConfiguredBearerToken(t *testing.T) {
 
 	gateway := &Gateway{client: server.Client()}
 	response, err := gateway.callProvider(
-		context.Background(), "openai_compatible", server.URL,
+		context.Background(), "openai_api", server.URL,
 		"TEST_LLM_API_KEY", "remote-model", Request{}, nil,
 	)
 
 	require.NoError(t, err)
 	require.Equal(t, "ok", response.Text)
+}
+
+func TestCheckOpenRouterReportsHealthyAuthenticatedKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		require.Equal(t, "/key", request.URL.Path)
+		require.Equal(t, "Bearer test-secret", request.Header.Get("Authorization"))
+		writer.Header().Set("Content-Type", "application/json")
+		_, err := writer.Write([]byte(`{"data":{"is_free_tier":false,"limit":25,"limit_remaining":19.5,"expires_at":null}}`))
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	gateway := &Gateway{client: server.Client()}
+	status, err := gateway.checkOpenRouter(context.Background(), server.URL, "test-secret")
+
+	require.NoError(t, err)
+	require.False(t, status.FreeTier)
+	require.Equal(t, 25.0, *status.LimitUSD)
+	require.Equal(t, 19.5, *status.LimitRemainingUSD)
+	require.GreaterOrEqual(t, status.LatencyMS, int64(0))
+}
+
+func TestDecodeOpenRouterModelsPreservesPricingContextAndCapabilities(t *testing.T) {
+	models, err := decodeOpenRouterModels(strings.NewReader(`{"data":[{
+		"id":"deepseek/deepseek-v4-flash-0731",
+		"name":"DeepSeek: DeepSeek V4 Flash 0731",
+		"context_length":1310720,
+		"pricing":{"prompt":"0.00000014","completion":"0.00000028"},
+		"architecture":{"input_modalities":["text"],"output_modalities":["text"]},
+		"supported_parameters":["max_tokens","reasoning","structured_outputs"]
+	}]}`))
+
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+	require.Equal(t, 0.14, models[0].InputPricePerMillion)
+	require.Equal(t, 0.28, models[0].OutputPricePerMillion)
+	require.Equal(t, 1310720, models[0].ContextLength)
+	require.NotNil(t, models[0].CompatibleTasks)
+	require.ElementsMatch(t, []string{"classify", "narration_framing"}, models[0].CompatibleTasks)
+}
+
+func TestNarrationRejectsModelWithoutStructuredOutput(t *testing.T) {
+	model := Model{
+		OutputModalities:    []string{"text"},
+		SupportedParameters: []string{"max_tokens", "reasoning"},
+	}
+
+	require.True(t, modelSupportsTask(model, "classify"))
+	require.False(t, modelSupportsTask(model, "narration_framing"))
 }
 
 func TestCallProviderUsesOpenRouterReasoningAndRoutingParameters(t *testing.T) {

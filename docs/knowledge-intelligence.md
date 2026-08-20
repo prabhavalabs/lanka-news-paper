@@ -65,7 +65,7 @@ Initial evidence includes the [Election Commission party register](https://elect
 
 ### Machine-scored article narration
 
-The production analyzer is `political-narration-ml-v7`. A conservative multilingual signal gate first records clearly non-economic stories as irrelevant; plausible policy stories then use the local `qwen3:8b` transformer through Ollama's OpenAI-compatible structured-output endpoint. This cascade keeps crime, weather, sport, and routine state activity out of the political spectrum while reserving the model for semantic narration analysis. Qwen3's published language coverage includes Sinhala and Tamil, but that capability claim is not a substitute for a Sri Lankan evaluation set. The 8B model replaced the 4B baseline after corpus spot checks found that the smaller model could confuse government or private-sector involvement with the journalist's own economic stance.
+The production analyzer is `political-narration-ml-v7`. A conservative multilingual signal gate first records clearly non-economic stories as irrelevant; plausible policy stories then use the OpenRouter model assigned to the `narration_framing` task. This cascade keeps crime, weather, sport, and routine state activity out of the political spectrum while reserving model inference for semantic narration analysis. The assignment is currently `deepseek/deepseek-v4-flash-0731` and can be changed from the AI routing page.
 
 The score means:
 
@@ -164,8 +164,10 @@ Migration `000017_political_framing` introduced party references and article ana
 The LLM gateway uses database-configured provider and task profiles. Migration
 `000026_openrouter_deepseek_v4_flash` routes classification and narration to the
 `openrouter` provider at `https://openrouter.ai/api/v1`, using the pinned
-`deepseek/deepseek-v4-flash-0731` model and `OPENROUTER_API_KEY`. The older local
-and VPS Ollama providers remain disabled as rollback records and receive no work.
+`deepseek/deepseek-v4-flash-0731` model and `OPENROUTER_API_KEY`. Migration
+`000028_openrouter_routing` removes retired provider records and enforces one
+OpenRouter assignment per task; administrators can choose compatible catalog
+models from the AI routing page.
 
 ### Durable per-article workflow
 
@@ -176,6 +178,8 @@ Every new article creates one persisted run immediately after insertion. River e
 3. `narration_analysis` — applies the economic-policy relevance gate and calls DeepSeek when semantic narration scoring is required.
 
 River retries transient failures at most five times. A retry starts the same run, skips steps already marked `succeeded` or `skipped`, and resumes the failed step. The dispatcher recreates runs missing after an interrupted insertion and recovers runs left `running` for more than 20 minutes. An editor can retry the failed step from the article detail page; resetting an earlier step also resets its dependent later steps.
+
+Queue history is capped at seven days. A daily River maintenance job deletes terminal pipeline runs, their step logs, and their linked model-call telemetry after that window; active runs are preserved. Articles keep a compact `pipeline_enqueued_at` marker so deleting old telemetry never causes completed articles to enter the backfill queue again. The Queue Monitor API also enforces the seven-day window, and its UI defaults to article pipelines while exposing routine polling, dispatch, brief, narration, and cleanup jobs through the job-type filter.
 
 The article explorer is server-paginated at `/articles`. `/articles/:id` shows the stored report, classification and cluster provenance, political score and evidence, each run and step attempt, duration and error, and every linked LLM call. The admin API equivalents are `GET /api/admin/articles`, `GET /api/admin/articles/{id}`, and `POST /api/admin/articles/{id}/pipeline/run`.
 
@@ -188,7 +192,7 @@ Core implementation files:
 - `services/api/internal/jobs/river.go`
 - `services/api/internal/llm/gateway.go`
 - `services/api/internal/desk/articles.go`
-- `services/api/migrations/000018_openai_compatible.up.sql`
+- `services/api/migrations/000028_openrouter_routing.up.sql`
 - `services/api/migrations/000019_narration_framing.up.sql`
 - `apps/admin/src/pages/knowledge-graph-page.tsx`
 - `apps/admin/src/pages/articles-page.tsx`
@@ -196,7 +200,7 @@ Core implementation files:
 
 ## Validation and promotion path
 
-The local model is a zero-shot ML baseline, not a scientifically calibrated Sri Lankan media-bias classifier. Before production claims are made:
+The routing model is a zero-shot ML baseline, not a scientifically calibrated Sri Lankan media-bias classifier. Before production claims are made:
 
 1. Sample at least 500 excerpts balanced across Sinhala, Tamil, English, publishers, subjects, and score bands.
 2. Split evaluation data by event and time so syndicated or near-duplicate reports cannot leak between train and test.
@@ -225,9 +229,3 @@ After a model or migration change:
 10. Browser-test evidence tooltips, keyboard navigation, pan/zoom, and article-rail scrolling.
 
 Every visible score must remain traceable to a model version, confidence, rationale, and source-text evidence.
-
-## Model and runtime references
-
-- [Qwen3 multilingual capabilities](https://qwenlm.github.io/blog/qwen3/)
-- [Ollama `qwen3:8b` model card](https://ollama.com/library/qwen3:8b)
-- [Ollama structured outputs](https://docs.ollama.com/capabilities/structured-outputs)
