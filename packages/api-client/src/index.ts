@@ -45,6 +45,48 @@ export type PublicEvent = {
   articles: PublicArticle[];
 };
 
+export type PublicKnowledgeArticle = {
+  id: string;
+  headline: string;
+  source_id: string;
+  source: string;
+  published_at: string;
+  narrative?: {
+    label: string;
+    economic_frame: number;
+    confidence: number;
+  };
+};
+
+export type PublicKnowledgeEvent = {
+  id: string;
+  title: string;
+  category: string;
+  category_name_si: string;
+  is_breaking: boolean;
+  last_update_at: string;
+  articles: PublicKnowledgeArticle[];
+};
+
+export type PublicKnowledgeGraph = {
+  generated_at: string;
+  days: number;
+  summary: {
+    articles: number;
+    events: number;
+    multi_source_events: number;
+    sources: number;
+  };
+  categories: {
+    slug: string;
+    name_si: string;
+    name_en: string;
+    articles: number;
+    events: number;
+  }[];
+  events: PublicKnowledgeEvent[];
+};
+
 export type AdminSource = {
   id: string;
   name: string;
@@ -54,7 +96,14 @@ export type AdminSource = {
   icon_url: string;
   description: string;
   active: boolean;
+  published_article_count: number;
+  latest_published_at: string | null;
 };
+
+export type AdminSourceInput = Omit<
+  AdminSource,
+  "id" | "published_article_count" | "latest_published_at"
+>;
 
 export type AdminEndpoint = {
   id: string;
@@ -462,6 +511,14 @@ export function createClient(baseUrl = "") {
       request<PublicSource>(url(`/api/v1/sources/${id}`)),
     listEvents: () => request<{ items: PublicEvent[] }>(url("/api/v1/events")),
     getEvent: (id: string) => request<PublicEvent>(url(`/api/v1/events/${id}`)),
+    publicKnowledgeGraph: (params: {
+      days?: 1 | 7 | 30;
+      category?: string;
+      source?: string;
+      from?: string;
+      to?: string;
+    } = { days: 1 }) =>
+      request<PublicKnowledgeGraph>(url(withQuery("/api/v1/knowledge-graph", params))),
     breaking: () => request<{ items: PublicEvent[] }>(url("/api/v1/breaking")),
     brief: () =>
       request<{
@@ -568,12 +625,12 @@ export function createClient(baseUrl = "") {
       request<SourcePerformance>(
         url(`/api/admin/sources/${id}/performance?days=${days}`)
       ),
-    createSource: (body: Omit<AdminSource, "id">) =>
+    createSource: (body: AdminSourceInput) =>
       request<AdminSource>(url("/api/admin/sources"), {
         method: "POST",
         body: JSON.stringify(body)
       }),
-    updateSource: (id: string, body: Omit<AdminSource, "id">) =>
+    updateSource: (id: string, body: AdminSourceInput) =>
       request<{ ok: boolean }>(url(`/api/admin/sources/${id}`), {
         method: "POST",
         body: JSON.stringify(body)

@@ -50,9 +50,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useTableQuery } from '@/hooks/use-table-query'
+import { formatCompactRelativeTime, formatDateTime } from '@/lib/date-time'
 import { cn } from '@/lib/utils'
 
 const client = createClient()
+const articleCountFormatter = new Intl.NumberFormat('en')
 const types: SourceType[] = [
   'private_media',
   'state_owned',
@@ -143,7 +145,16 @@ export function SourcesPage() {
   })
   const update = useMutation({
     mutationFn: async (source: AdminSource) => {
-      const { id, ...body } = source
+      const { id } = source
+      const body = {
+        name: source.name,
+        legal_name: source.legal_name,
+        source_type: source.source_type,
+        website: source.website,
+        icon_url: source.icon_url,
+        description: source.description,
+        active: source.active,
+      }
       await client.updateSource(id, body)
       if (removeEditLogo) await client.removeSourceLogo(id)
       else if (editLogo) await client.uploadSourceLogo(id, editLogo)
@@ -312,12 +323,14 @@ export function SourcesPage() {
             </Select>
           </DataTableToolbar>
 
-          <Table className="min-w-[860px]">
+          <Table className="min-w-[1120px]">
             <TableHeader className="bg-muted/30">
               <TableRow>
                 <TableHead>Publisher</TableHead>
                 <TableHead>Ownership</TableHead>
                 <TableHead>Website</TableHead>
+                <TableHead className="text-center">Published</TableHead>
+                <TableHead>Latest published</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -326,7 +339,7 @@ export function SourcesPage() {
               {sources.isPending
                 ? Array.from({ length: 5 }, (_, index) => (
                     <TableRow key={index}>
-                      {Array.from({ length: 5 }, (_, cell) => (
+                      {Array.from({ length: 7 }, (_, cell) => (
                         <TableCell key={cell}>
                           <Skeleton className="h-5 w-full max-w-40" />
                         </TableCell>
@@ -336,14 +349,14 @@ export function SourcesPage() {
                 : null}
               {sources.isError ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-40 text-center text-muted-foreground">
+                  <TableCell colSpan={7} className="h-40 text-center text-muted-foreground">
                     Sources are temporarily unavailable.
                   </TableCell>
                 </TableRow>
               ) : null}
               {!sources.isPending && !sources.isError && sources.data.items.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-48 text-center">
+                  <TableCell colSpan={7} className="h-48 text-center">
                     <div className="flex flex-col items-center gap-2">
                       <RadioTower className="size-5 text-muted-foreground" />
                       <p className="font-medium">No sources found</p>
@@ -386,6 +399,23 @@ export function SourcesPage() {
                       </a>
                     ) : (
                       <span className="text-muted-foreground">Not set</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-center font-mono font-medium tabular-nums">
+                    {articleCountFormatter.format(source.published_article_count)}
+                  </TableCell>
+                  <TableCell>
+                    {source.latest_published_at ? (
+                      <div className="whitespace-nowrap">
+                        <time dateTime={source.latest_published_at} className="text-sm font-medium">
+                          {formatDateTime(source.latest_published_at)}
+                        </time>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {formatCompactRelativeTime(source.latest_published_at)}
+                        </p>
+                      </div>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">No articles yet</span>
                     )}
                   </TableCell>
                   <TableCell>

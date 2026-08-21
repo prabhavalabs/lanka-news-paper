@@ -46,6 +46,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/search", news.list)
 	mux.HandleFunc("GET /api/v1/events", news.events)
 	mux.HandleFunc("GET /api/v1/events/{id}", news.event)
+	mux.HandleFunc("GET /api/v1/knowledge-graph", news.knowledgeGraph)
 	mux.HandleFunc("GET /api/v1/breaking", news.breaking)
 	mux.HandleFunc("GET /api/v1/brief", news.brief)
 	mux.HandleFunc("POST /api/v1/complaints", news.complain)

@@ -66,7 +66,7 @@ export function RootLayout() {
           <div className="h-px bg-ink" />
         </div>
         <div className="relative mt-3 flex items-center">
-          <nav className="flex flex-1 gap-5 overflow-x-auto text-[0.8125rem] [scrollbar-width:none]" aria-label="කොටස්">
+          <nav className="flex min-w-0 flex-1 gap-5 overflow-x-auto text-[0.8125rem] [scrollbar-width:none]" aria-label="කොටස්">
             <Link to="/" className="shrink-0">
               පුවත්
             </Link>
@@ -79,7 +79,7 @@ export function RootLayout() {
               උදෑසන සංග්‍රහය
             </Link>
           </nav>
-          <button type="button" className="ms-3 size-11 shrink-0 border border-ink" aria-label="සොයන්න" onClick={() => setSearchOpen(true)}>
+          <button type="button" className="ms-3 h-11 shrink-0 border border-ink px-3" aria-label="සොයන්න" onClick={() => setSearchOpen(true)}>
             සොයන්න
           </button>
         </div>

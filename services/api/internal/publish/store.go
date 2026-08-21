@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
 )
 
 type Store struct {
@@ -324,6 +326,127 @@ func (store *Store) ListEvents(ctx context.Context) ([]Event, error) {
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (store *Store) KnowledgeGraph(ctx context.Context, start, end time.Time, category, sourceID string) (KnowledgeGraph, error) {
+	result := KnowledgeGraph{
+		GeneratedAt: time.Now().UTC(),
+		Days:        int((end.Sub(start) + 24*time.Hour - 1) / (24 * time.Hour)),
+		Categories:  make([]KnowledgeCategory, 0),
+		Events:      make([]KnowledgeEvent, 0),
+	}
+	rows, err := store.pool.Query(ctx, `
+		WITH scope AS (
+			SELECT a.event_id, max(a.published_at) latest
+			FROM articles a
+			JOIN sources s ON s.id = a.source_id
+			JOIN source_endpoints endpoint ON endpoint.id = a.endpoint_id
+			JOIN rights_profiles rights ON rights.id = a.rights_profile_id
+			JOIN event_clusters scoped_event ON scoped_event.id = a.event_id
+			LEFT JOIN categories c ON c.id = scoped_event.category_id
+			WHERE a.public_status = 'published'
+			  AND a.event_id IS NOT NULL
+			  AND s.active AND s.archived_at IS NULL
+			  AND rights.mode NOT IN ('disabled', 'internal_verification')
+			  AND (rights.expires_at IS NULL OR rights.expires_at > clock_timestamp())
+			  AND (c.id IS NULL OR NOT c.held)
+			  AND a.published_at >= $1 AND a.published_at < $2
+			  AND ($3 = '' OR c.slug = $3)
+			  AND ($4 = '' OR s.id = NULLIF($4, '')::uuid)
+			GROUP BY a.event_id
+			ORDER BY latest DESC
+			LIMIT 150
+		)
+		SELECT event.id::text, event.display_title,
+		       COALESCE(category.slug, 'latest'), COALESCE(category.name_si, 'නවතම'),
+		       COALESCE(category.name_en, 'Latest'), event.is_breaking, event.last_update_at,
+		       article.id::text, article.headline, source.id::text, source.name, article.published_at,
+		       analysis.label, analysis.economic_frame, analysis.confidence, analysis.relevant
+		FROM scope
+		JOIN event_clusters event ON event.id = scope.event_id
+		LEFT JOIN categories category ON category.id = event.category_id
+		JOIN articles article ON article.event_id = event.id
+		JOIN sources source ON source.id = article.source_id
+		JOIN source_endpoints endpoint ON endpoint.id = article.endpoint_id
+		JOIN rights_profiles rights ON rights.id = article.rights_profile_id
+		LEFT JOIN categories article_category ON article_category.id = article.category_id
+		LEFT JOIN article_political_analysis analysis
+		  ON analysis.article_id = article.id AND analysis.model = $5
+		WHERE article.public_status = 'published'
+		  AND source.active AND source.archived_at IS NULL
+		  AND rights.mode NOT IN ('disabled', 'internal_verification')
+		  AND (rights.expires_at IS NULL OR rights.expires_at > clock_timestamp())
+		  AND (category.id IS NULL OR NOT category.held)
+		  AND (article_category.id IS NULL OR NOT article_category.held)
+		  AND article.published_at >= $1 AND article.published_at < $2
+		ORDER BY scope.latest DESC, article.published_at DESC
+	`, start, end, category, sourceID, politics.Model)
+	if err != nil {
+		return KnowledgeGraph{}, fmt.Errorf("load public knowledge graph: %w", err)
+	}
+	defer rows.Close()
+
+	eventIndex := make(map[string]int)
+	categoryIndex := make(map[string]int)
+	sources := make(map[string]struct{})
+	for rows.Next() {
+		var event KnowledgeEvent
+		var article KnowledgeArticle
+		var categoryNameEN string
+		var label *string
+		var frame, confidence *float64
+		var relevant *bool
+		if err := rows.Scan(
+			&event.ID, &event.Title, &event.Category, &event.CategoryNameSI, &categoryNameEN,
+			&event.IsBreaking, &event.LastUpdateAt,
+			&article.ID, &article.Headline, &article.SourceID, &article.Source, &article.PublishedAt,
+			&label, &frame, &confidence, &relevant,
+		); err != nil {
+			return KnowledgeGraph{}, err
+		}
+		if relevant != nil && *relevant && label != nil && frame != nil && confidence != nil {
+			article.Narrative = &KnowledgeNarrative{Label: *label, EconomicFrame: *frame, Confidence: *confidence}
+		}
+		position, ok := eventIndex[event.ID]
+		if !ok {
+			event.Articles = make([]KnowledgeArticle, 0, 2)
+			result.Events = append(result.Events, event)
+			position = len(result.Events) - 1
+			eventIndex[event.ID] = position
+			categoryPosition, exists := categoryIndex[event.Category]
+			if !exists {
+				result.Categories = append(result.Categories, KnowledgeCategory{
+					Slug: event.Category, NameSI: event.CategoryNameSI, NameEN: categoryNameEN,
+				})
+				categoryPosition = len(result.Categories) - 1
+				categoryIndex[event.Category] = categoryPosition
+			}
+			result.Categories[categoryPosition].Events++
+		}
+		result.Events[position].Articles = append(result.Events[position].Articles, article)
+		result.Categories[categoryIndex[event.Category]].Articles++
+		sources[article.SourceID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return KnowledgeGraph{}, err
+	}
+	result.Summary.Events = len(result.Events)
+	result.Summary.Sources = len(sources)
+	for _, event := range result.Events {
+		result.Summary.Articles += len(event.Articles)
+		if sourceCount(event.Articles) > 1 {
+			result.Summary.MultiSourceEvents++
+		}
+	}
+	return result, nil
+}
+
+func sourceCount(articles []KnowledgeArticle) int {
+	items := make(map[string]struct{}, len(articles))
+	for _, article := range articles {
+		items[article.SourceID] = struct{}{}
+	}
+	return len(items)
 }
 
 func scanArticle(row rowScanner) (Article, error) {

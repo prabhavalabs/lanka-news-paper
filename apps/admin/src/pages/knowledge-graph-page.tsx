@@ -2,21 +2,19 @@ import { createClient, type KnowledgeEvent, type KnowledgeGraph } from '@snap/ap
 import { useQuery } from '@tanstack/react-query'
 import {
   CalendarRangeIcon,
-  ExternalLinkIcon,
+  ArrowRightIcon,
   GitMergeIcon,
-  MinusIcon,
-  MoveIcon,
   NetworkIcon,
   NewspaperIcon,
-  PlusIcon,
   RadioTowerIcon,
-  RotateCcwIcon,
   ScaleIcon,
   ShieldCheckIcon,
+  Share2Icon,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router'
+import { lazy, Suspense, useState } from 'react'
+import { Link, useSearchParams } from 'react-router'
 import { Label, Pie, PieChart } from 'recharts'
+import { toast } from 'sonner'
 
 import { SourceAvatar } from '@/components/source-avatar'
 import { Badge } from '@/components/ui/badge'
@@ -56,13 +54,10 @@ import {
 } from '@/components/ui/select'
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  initialGraphViewport,
-  layoutKnowledgeGraph,
-  zoomGraphViewport,
-} from '@/lib/knowledge-graph'
 
 const client = createClient()
+const KnowledgeGraphView = lazy(() => import('@snap/ui/knowledge-graph-view')
+  .then((module) => ({ default: module.KnowledgeGraphView })))
 const dayOptions = [1, 7, 30] as const
 const dateFormatter = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' })
 const rangeDateFormatter = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' })
@@ -74,21 +69,38 @@ export function KnowledgeGraphPage() {
   const to = searchParams.get('to') || ''
   const customRange = isDateInputValue(from) && isDateInputValue(to) && from <= to ? { from, to } : undefined
   const category = searchParams.get('category') || ''
-  const [selectedID, setSelectedID] = useState('')
+  const requestedNode = searchParams.get('node') || ''
   const graph = useQuery({
     queryKey: ['knowledge-graph', days, customRange?.from, customRange?.to, category],
     queryFn: () => client.knowledgeGraph(customRange
       ? { ...customRange, category }
       : { days, category }),
   })
-  const selected = graph.data?.events.find((event) => event.id === selectedID)
-    ?? graph.data?.events.find((event) => event.articles.length > 1)
-    ?? graph.data?.events[0]
+  const selectedNodeID = graph.data && graphNodeExists(graph.data, requestedNode)
+    ? requestedNode
+    : ''
+  const selected = selectedNodeID.startsWith('event:')
+    ? graph.data?.events.find((event) => `event:${event.id}` === selectedNodeID)
+    : undefined
 
-  function setFilter(key: string, value: string) {
+  function selectNode(nodeID: string) {
     const next = new URLSearchParams(searchParams)
-    if (value) next.set(key, value)
-    else next.delete(key)
+    next.set('node', nodeID)
+    if (nodeID.startsWith('category:')) {
+      next.set('category', nodeID.slice(9))
+      next.delete('source')
+    } else if (nodeID.startsWith('source:')) {
+      next.set('source', nodeID.slice(7))
+      next.delete('category')
+    }
+    setSearchParams(next, { replace: true })
+  }
+
+  function resetGraph() {
+    const next = new URLSearchParams(searchParams)
+    next.delete('category')
+    next.delete('source')
+    next.delete('node')
     setSearchParams(next, { replace: true })
   }
 
@@ -123,6 +135,7 @@ export function KnowledgeGraphPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <ShareGraphButton searchParams={searchParams} selectedNodeID={selectedNodeID} />
           <div className="flex rounded-4xl bg-muted/60 p-1" aria-label="Graph time range">
             {dayOptions.map((option) => (
               <Button
@@ -143,7 +156,11 @@ export function KnowledgeGraphPage() {
           <Select
             value={category || 'all'}
             onValueChange={(value) => {
-              if (value !== null) setFilter('category', value === 'all' ? '' : value)
+              if (value !== null) {
+                const selectedCategory = value === 'all' ? '' : value
+                if (selectedCategory) selectNode(`category:${selectedCategory}`)
+                else resetGraph()
+              }
             }}
           >
             <SelectTrigger className="min-w-44" aria-label="Filter graph by category">
@@ -170,8 +187,8 @@ export function KnowledgeGraphPage() {
             Categories feed events; events connect to every publisher reporting the story.
           </CardDescription>
           <CardAction className="col-start-1 row-span-1 row-start-3 mt-2 flex items-center gap-3 justify-self-start text-xs text-muted-foreground sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:justify-self-end">
-            <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-primary" />Multi-source</span>
-            <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-muted-foreground/50" />Single report</span>
+            <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full border border-black bg-[#a3a3a3]" />1 report</span>
+            <span className="flex items-center gap-1.5"><span className="size-3.5 rounded-full border border-black bg-[#2563eb]" />5+ reports</span>
           </CardAction>
         </CardHeader>
         <CardContent className="px-0">
@@ -188,7 +205,9 @@ export function KnowledgeGraphPage() {
               </div>
             ) : null}
             {graph.data?.events.length ? (
-              <EventGraph data={graph.data} selectedID={selected?.id ?? ''} onSelect={setSelectedID} />
+              <Suspense fallback={<Skeleton className="m-6 h-[512px]" />}>
+                <KnowledgeGraphView data={graph.data} selectedID={selectedNodeID} onSelect={selectNode} onReset={resetGraph} />
+              </Suspense>
             ) : null}
           </div>
           <EventArticleRail event={selected} />
@@ -198,6 +217,34 @@ export function KnowledgeGraphPage() {
       <PoliticalSpectrum data={graph.data} />
       <CategoryBreakdown data={graph.data} />
     </section>
+  )
+}
+
+function ShareGraphButton({ searchParams, selectedNodeID }: { searchParams: URLSearchParams; selectedNodeID: string }) {
+  async function copyPublicURL() {
+    const query = new URLSearchParams()
+    for (const key of ['days', 'from', 'to', 'category', 'source']) {
+      const value = searchParams.get(key)
+      if (value) query.set(key, value)
+    }
+    if (selectedNodeID) query.set('node', selectedNodeID)
+    if (!query.has('days') && !query.has('from')) query.set('days', '1')
+    const origin = window.location.hostname === 'admin.lankanewspaper.prabhavalabs.com'
+      ? 'https://lankanewspaper.prabhavalabs.com'
+      : `${window.location.protocol}//${window.location.hostname}${window.location.port === '5174' ? ':5173' : window.location.port ? `:${window.location.port}` : ''}`
+    const url = `${origin}/analysis/knowledge?${query}`
+    try {
+      await navigator.clipboard.writeText(url)
+      toast.success('Public analysis URL copied')
+    } catch {
+      window.prompt('Copy this public analysis URL', url)
+    }
+  }
+
+  return (
+    <Button variant="outline" onClick={copyPublicURL} disabled={!selectedNodeID}>
+      <Share2Icon /> Share
+    </Button>
   )
 }
 
@@ -312,182 +359,7 @@ function SummaryCards({ data, loading }: { data?: KnowledgeGraph; loading: boole
   )
 }
 
-function EventGraph({
-  data,
-  selectedID,
-  onSelect,
-}: {
-  data: KnowledgeGraph
-  selectedID: string
-  onSelect: (id: string) => void
-}) {
-  const width = 1240
-  const height = 560
-  const graph = useMemo(() => layoutKnowledgeGraph(data, width, height), [data])
-  const positions = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes])
-  const events = useMemo(() => new Map(data.events.map((event) => [event.id, event])), [data.events])
-  const [viewport, setViewport] = useState(initialGraphViewport)
-  const drag = useRef<{ pointerID: number; x: number; y: number } | null>(null)
-  const svg = useRef<SVGSVGElement>(null)
-
-  useEffect(() => {
-    const element = svg.current
-    if (!element) return
-    function handleWheel(event: WheelEvent) {
-      event.preventDefault()
-      const bounds = (event.currentTarget as SVGSVGElement).getBoundingClientRect()
-      const point = {
-        x: ((event.clientX - bounds.left) / bounds.width) * width,
-        y: ((event.clientY - bounds.top) / bounds.height) * height,
-      }
-      setViewport((current) => zoomGraphViewport(
-        current,
-        current.scale * (event.deltaY < 0 ? 1.12 : 0.89),
-        point,
-      ))
-    }
-    element.addEventListener('wheel', handleWheel, { passive: false })
-    return () => element.removeEventListener('wheel', handleWheel)
-  }, [])
-
-  function zoom(nextScale: number, point = { x: width / 2, y: height / 2 }) {
-    setViewport((current) => zoomGraphViewport(current, nextScale, point))
-  }
-
-  return (
-    <div className="relative">
-      <div className="absolute top-4 right-4 z-10 flex items-center gap-1 rounded-2xl border bg-background/90 p-1 shadow-sm backdrop-blur">
-        <Button size="icon" variant="ghost" aria-label="Zoom out" onClick={() => zoom(viewport.scale / 1.25)}>
-          <MinusIcon />
-        </Button>
-        <span className="w-12 text-center text-xs tabular-nums text-muted-foreground" aria-live="polite">
-          {Math.round(viewport.scale * 100)}%
-        </span>
-        <Button size="icon" variant="ghost" aria-label="Zoom in" onClick={() => zoom(viewport.scale * 1.25)}>
-          <PlusIcon />
-        </Button>
-        <Button size="icon" variant="ghost" aria-label="Reset graph view" onClick={() => setViewport(initialGraphViewport)}>
-          <RotateCcwIcon />
-        </Button>
-      </div>
-      <div className="pointer-events-none absolute bottom-4 left-4 z-10 hidden items-center gap-2 rounded-xl border bg-background/85 px-3 py-2 text-xs text-muted-foreground backdrop-blur sm:flex">
-        <MoveIcon className="size-3.5" /> Drag to move · Scroll to zoom
-      </div>
-      <svg
-        ref={svg}
-        viewBox={`0 0 ${width} ${height}`}
-        className="h-[560px] w-full cursor-grab touch-none overscroll-contain select-none active:cursor-grabbing"
-        style={{ touchAction: 'none' }}
-        role="img"
-        aria-label="Interactive knowledge graph of news categories, events, and sources. Drag to pan and scroll to zoom."
-        onPointerDown={(event) => {
-          if ((event.target as SVGElement).closest('[data-graph-node]')) return
-          event.currentTarget.setPointerCapture(event.pointerId)
-          drag.current = { pointerID: event.pointerId, x: event.clientX, y: event.clientY }
-        }}
-        onPointerMove={(event) => {
-          if (drag.current?.pointerID !== event.pointerId) return
-          const bounds = event.currentTarget.getBoundingClientRect()
-          const factor = width / bounds.width
-          const deltaX = (event.clientX - drag.current.x) * factor
-          const deltaY = (event.clientY - drag.current.y) * factor
-          drag.current = { pointerID: event.pointerId, x: event.clientX, y: event.clientY }
-          setViewport((current) => ({ ...current, x: current.x + deltaX, y: current.y + deltaY }))
-        }}
-        onPointerUp={(event) => {
-          if (drag.current?.pointerID !== event.pointerId) return
-          drag.current = null
-          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-            event.currentTarget.releasePointerCapture(event.pointerId)
-          }
-        }}
-        onPointerCancel={() => { drag.current = null }}
-      >
-        <title>News categories connected to clustered events and their reporting sources</title>
-        <g transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.scale})`}>
-          <g aria-hidden="true" className="pointer-events-none">
-            {graph.edges.map((edge, index) => {
-              const source = positions.get(edge.source)
-              const target = positions.get(edge.target)
-              if (!source || !target) return null
-              return (
-                <line
-                  key={`${edge.source}-${edge.target}-${index}`}
-                  x1={source.x}
-                  y1={source.y}
-                  x2={target.x}
-                  y2={target.y}
-                  className={edge.kind === 'category' ? 'stroke-primary/15' : 'stroke-foreground/8'}
-                  strokeWidth={edge.kind === 'category' ? 1.25 : 1}
-                />
-              )
-            })}
-          </g>
-          {graph.nodes.map((node) => {
-        if (node.kind === 'category') {
-          return (
-            <g key={node.id} aria-hidden="true" data-graph-node>
-              <circle cx={node.x} cy={node.y} r={node.radius} className="fill-primary/15 stroke-primary" />
-              <text x={node.x + node.radius + 8} y={node.y + 4} className="fill-foreground text-[11px] font-medium">{truncate(node.label, 18)}</text>
-            </g>
-          )
-        }
-        if (node.kind === 'source') {
-          return (
-            <g key={node.id} aria-hidden="true" data-graph-node>
-              <circle cx={node.x} cy={node.y} r={node.radius} className="fill-background stroke-muted-foreground/60" />
-              <text x={node.x + 10} y={node.y + 4} className="fill-muted-foreground text-[10px]">{truncate(node.label, 20)}</text>
-            </g>
-          )
-        }
-        const event = node.eventId ? events.get(node.eventId) : undefined
-        const selected = node.eventId === selectedID
-        const multiSource = new Set(event?.articles.map((article) => article.source_id)).size > 1
-        return (
-          <g
-            key={node.id}
-            data-graph-node
-            role="button"
-            tabIndex={0}
-            aria-label={`${event?.title ?? 'Event'}, ${event?.articles.length ?? 0} reports`}
-            className="cursor-pointer outline-none"
-            onClick={() => node.eventId && onSelect(node.eventId)}
-            onKeyDown={(keyboardEvent) => {
-              if ((keyboardEvent.key === 'Enter' || keyboardEvent.key === ' ') && node.eventId) onSelect(node.eventId)
-            }}
-          >
-            <circle
-              cx={node.x}
-              cy={node.y}
-              r={node.radius + (selected ? 4 : 0)}
-              className={selected ? 'fill-primary/10 stroke-primary' : 'fill-transparent stroke-transparent'}
-              strokeWidth={2}
-            />
-            <circle
-              cx={node.x}
-              cy={node.y}
-              r={node.radius}
-              className={multiSource ? 'fill-primary stroke-primary-foreground/40' : 'fill-muted-foreground/45 stroke-background'}
-              strokeWidth={2}
-            />
-            <title>{event?.title}</title>
-            {selected ? (
-              <text x={node.x + node.radius + 8} y={node.y - node.radius - 3} className="fill-foreground text-[11px] font-medium">
-                {truncate(event?.title ?? '', 46)}
-              </text>
-            ) : null}
-          </g>
-        )
-          })}
-        </g>
-      </svg>
-    </div>
-  )
-}
-
 function EventArticleRail({ event }: { event?: KnowledgeEvent }) {
-  const drag = useRef<{ pointerId: number; startX: number; scrollLeft: number; moved: boolean } | null>(null)
-  const suppressClick = useRef(false)
   const sourceCount = new Set(event?.articles.map((article) => article.source_id)).size
   return (
     <section className="border-t px-6 py-5" aria-label="Articles reporting the selected event">
@@ -508,57 +380,14 @@ function EventArticleRail({ event }: { event?: KnowledgeEvent }) {
             <p className="shrink-0 text-xs text-muted-foreground">{event.articles.length} relevant reports · {event.algorithm_version}</p>
           </div>
           <ScrollArea
-            className="h-[190px] w-full cursor-grab select-none active:cursor-grabbing"
-            aria-label="Drag or scroll through relevant article cards"
-            onDragStart={(pointerEvent) => pointerEvent.preventDefault()}
-            onPointerDown={(pointerEvent) => {
-              if (pointerEvent.pointerType !== 'mouse' || pointerEvent.button !== 0) return
-              if ((pointerEvent.target as HTMLElement).closest('[data-slot="scroll-area-scrollbar"]')) return
-              const viewport = pointerEvent.currentTarget.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')
-              if (!viewport) return
-              suppressClick.current = false
-              drag.current = {
-                pointerId: pointerEvent.pointerId,
-                startX: pointerEvent.clientX,
-                scrollLeft: viewport.scrollLeft,
-                moved: false,
-              }
-              pointerEvent.currentTarget.setPointerCapture(pointerEvent.pointerId)
-            }}
-            onPointerMove={(pointerEvent) => {
-              if (!drag.current || drag.current.pointerId !== pointerEvent.pointerId) return
-              const viewport = pointerEvent.currentTarget.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')
-              if (!viewport) return
-              const distance = pointerEvent.clientX - drag.current.startX
-              drag.current.moved ||= Math.abs(distance) > 4
-              if (!drag.current.moved) return
-              pointerEvent.preventDefault()
-              viewport.scrollLeft = drag.current.scrollLeft - distance
-            }}
-            onPointerUp={(pointerEvent) => {
-              if (!drag.current || drag.current.pointerId !== pointerEvent.pointerId) return
-              suppressClick.current = drag.current.moved
-              drag.current = null
-              pointerEvent.currentTarget.releasePointerCapture(pointerEvent.pointerId)
-            }}
-            onPointerCancel={() => {
-              drag.current = null
-              suppressClick.current = false
-            }}
-            onClickCapture={(clickEvent) => {
-              if (!suppressClick.current) return
-              clickEvent.preventDefault()
-              clickEvent.stopPropagation()
-              suppressClick.current = false
-            }}
+            className="h-[190px] w-full"
+            aria-label="Scroll through relevant article cards"
           >
             <div className="flex w-max snap-x snap-mandatory gap-3 pb-3">
               {event.articles.map((article) => (
-                <a
+                <Link
                   key={article.id}
-                  href={article.original_url}
-                  target="_blank"
-                  rel="noreferrer"
+                  to={`/articles/${article.id}`}
                   draggable={false}
                   className="group flex min-h-36 w-[285px] shrink-0 snap-start flex-col justify-between rounded-2xl border bg-card p-4 transition-colors hover:bg-muted/50 sm:w-[340px]"
                 >
@@ -586,9 +415,9 @@ function EventArticleRail({ event }: { event?: KnowledgeEvent }) {
                 ) : null}
                 <span className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
                   <span>{formatDate(article.published_at)}</span>
-                  <ExternalLinkIcon className="size-3.5 group-hover:text-foreground" />
+                  <ArrowRightIcon className="size-3.5 group-hover:text-foreground" />
                 </span>
-                </a>
+                </Link>
               ))}
             </div>
             <ScrollBar orientation="horizontal" />
@@ -818,15 +647,20 @@ function isDateInputValue(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))
 }
 
+function graphNodeExists(data: KnowledgeGraph, nodeID: string) {
+  if (nodeID.startsWith('event:')) return data.events.some((event) => `event:${event.id}` === nodeID)
+  if (nodeID.startsWith('category:')) return data.categories.some((item) => `category:${item.slug}` === nodeID)
+  if (nodeID.startsWith('source:')) return data.events.some((event) =>
+    event.articles.some((article) => `source:${article.source_id}` === nodeID),
+  )
+  return false
+}
+
 function toDateInputValue(value: Date) {
   const year = value.getFullYear()
   const month = String(value.getMonth() + 1).padStart(2, '0')
   const day = String(value.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
-}
-
-function truncate(value: string, length: number) {
-  return value.length > length ? `${value.slice(0, length - 1)}…` : value
 }
 
 function spectrumPosition(value: number) {

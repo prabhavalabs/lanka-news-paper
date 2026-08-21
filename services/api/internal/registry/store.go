@@ -16,14 +16,16 @@ import (
 )
 
 type Source struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	LegalName   string `json:"legal_name"`
-	SourceType  string `json:"source_type"`
-	Website     string `json:"website"`
-	IconURL     string `json:"icon_url"`
-	Description string `json:"description"`
-	Active      bool   `json:"active"`
+	ID                    string     `json:"id"`
+	Name                  string     `json:"name"`
+	LegalName             string     `json:"legal_name"`
+	SourceType            string     `json:"source_type"`
+	Website               string     `json:"website"`
+	IconURL               string     `json:"icon_url"`
+	Description           string     `json:"description"`
+	Active                bool       `json:"active"`
+	PublishedArticleCount int64      `json:"published_article_count"`
+	LatestPublishedAt     *time.Time `json:"latest_published_at"`
 }
 
 type Endpoint struct {
@@ -89,14 +91,18 @@ func (store *Store) ListSources(ctx context.Context, params pagination.Params, s
 	}
 
 	rows, err := store.pool.Query(ctx, `
-		SELECT id::text, name, legal_name, source_type, COALESCE(website, ''), COALESCE(icon_url, ''), COALESCE(description, ''), active
-		FROM sources
-		WHERE archived_at IS NULL
-		  AND ($1 = '' OR name ILIKE '%' || $1 || '%' OR legal_name ILIKE '%' || $1 || '%'
-		       OR COALESCE(website, '') ILIKE '%' || $1 || '%')
-		  AND ($2 = '' OR source_type = $2)
-		  AND ($3 = '' OR ($3 = 'active' AND active) OR ($3 = 'held' AND NOT active))
-		ORDER BY name, id
+		SELECT source.id::text, source.name, source.legal_name, source.source_type,
+		       COALESCE(source.website, ''), COALESCE(source.icon_url, ''),
+		       COALESCE(source.description, ''), source.active,
+		       COALESCE(statistics.published_article_count, 0), statistics.latest_published_at
+		FROM sources AS source
+		LEFT JOIN source_article_statistics AS statistics ON statistics.source_id = source.id
+		WHERE source.archived_at IS NULL
+		  AND ($1 = '' OR source.name ILIKE '%' || $1 || '%' OR source.legal_name ILIKE '%' || $1 || '%'
+		       OR COALESCE(source.website, '') ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR source.source_type = $2)
+		  AND ($3 = '' OR ($3 = 'active' AND source.active) OR ($3 = 'held' AND NOT source.active))
+		ORDER BY source.name, source.id
 		LIMIT $4 OFFSET $5
 	`, params.Search, sourceType, status, params.Limit(), params.Offset())
 	if err != nil {
@@ -106,7 +112,18 @@ func (store *Store) ListSources(ctx context.Context, params pagination.Params, s
 	items := make([]Source, 0)
 	for rows.Next() {
 		var item Source
-		if err := rows.Scan(&item.ID, &item.Name, &item.LegalName, &item.SourceType, &item.Website, &item.IconURL, &item.Description, &item.Active); err != nil {
+		if err := rows.Scan(
+			&item.ID,
+			&item.Name,
+			&item.LegalName,
+			&item.SourceType,
+			&item.Website,
+			&item.IconURL,
+			&item.Description,
+			&item.Active,
+			&item.PublishedArticleCount,
+			&item.LatestPublishedAt,
+		); err != nil {
 			return nil, 0, fmt.Errorf("scan source: %w", err)
 		}
 		items = append(items, item)
@@ -120,9 +137,25 @@ func (store *Store) ListSources(ctx context.Context, params pagination.Params, s
 func (store *Store) GetSource(ctx context.Context, id string) (Source, error) {
 	var item Source
 	err := store.pool.QueryRow(ctx, `
-		SELECT id::text, name, legal_name, source_type, COALESCE(website, ''), COALESCE(icon_url, ''), COALESCE(description, ''), active
-		FROM sources WHERE id = $1 AND archived_at IS NULL
-	`, id).Scan(&item.ID, &item.Name, &item.LegalName, &item.SourceType, &item.Website, &item.IconURL, &item.Description, &item.Active)
+		SELECT source.id::text, source.name, source.legal_name, source.source_type,
+		       COALESCE(source.website, ''), COALESCE(source.icon_url, ''),
+		       COALESCE(source.description, ''), source.active,
+		       COALESCE(statistics.published_article_count, 0), statistics.latest_published_at
+		FROM sources AS source
+		LEFT JOIN source_article_statistics AS statistics ON statistics.source_id = source.id
+		WHERE source.id = $1 AND source.archived_at IS NULL
+	`, id).Scan(
+		&item.ID,
+		&item.Name,
+		&item.LegalName,
+		&item.SourceType,
+		&item.Website,
+		&item.IconURL,
+		&item.Description,
+		&item.Active,
+		&item.PublishedArticleCount,
+		&item.LatestPublishedAt,
+	)
 	return item, err
 }
 
