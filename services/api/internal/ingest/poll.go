@@ -309,7 +309,7 @@ func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, endpo
 			if lookupErr := poller.pool.QueryRow(ctx, `
 				SELECT id FROM articles WHERE source_id = $1 AND source_item_id = $2
 			`, sourceID, itemID).Scan(&articleID); lookupErr == nil {
-				poller.captureArticleContent(ctx, articleID.String(), endpointType, item.Content)
+				poller.captureArticleContent(ctx, articleID.String(), endpointType, preferredItemContent(item))
 			}
 			return false, nil
 		}
@@ -320,10 +320,10 @@ func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, endpo
 			INSERT INTO article_versions (article_id, version, changed_fields)
 			SELECT $1, COALESCE((SELECT max(version) FROM article_versions WHERE article_id = $1), 0) + 1, '{"headline":true}'::jsonb
 		`, articleID)
-		poller.captureArticleContent(ctx, articleID.String(), endpointType, item.Content)
+		poller.captureArticleContent(ctx, articleID.String(), endpointType, preferredItemContent(item))
 		return false, nil
 	}
-	poller.captureArticleContent(ctx, articleID.String(), endpointType, item.Content)
+	poller.captureArticleContent(ctx, articleID.String(), endpointType, preferredItemContent(item))
 	if allowAI && poller.pipeline != nil {
 		return true, poller.pipeline(ctx, articleID.String())
 	}
@@ -331,6 +331,13 @@ func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, endpo
 		return true, poller.clusters.Attach(ctx, articleID.String())
 	}
 	return true, nil
+}
+
+func preferredItemContent(item *gofeed.Item) string {
+	if strings.TrimSpace(item.Content) != "" {
+		return item.Content
+	}
+	return item.Description
 }
 
 func (poller *Poller) captureArticleContent(ctx context.Context, articleID, endpointType, rawContent string) {

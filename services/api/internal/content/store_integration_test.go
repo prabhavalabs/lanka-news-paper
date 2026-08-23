@@ -133,12 +133,32 @@ func TestCaptureStructuredIntegration(t *testing.T) {
 	`, articleID).Scan(&remains))
 	require.False(t, remains)
 
+	structuredBackfillBody := `<article><p>` + strings.Repeat("පැරණි සම්පූර්ණ සිංහල පුවත් අන්තර්ගතය. ", 12) + `</p></article>`
+	_, err = pool.Exec(ctx, `
+		UPDATE articles SET description = $2 WHERE id = $1
+	`, articleID, structuredBackfillBody)
+	require.NoError(t, err)
+	require.NoError(t, store.Enrich(ctx, articleID.String()))
+	err = pool.QueryRow(ctx, `
+		SELECT body_text, acquisition_method
+		FROM article_contents WHERE article_id = $1 AND current
+	`, articleID).Scan(&captured, &method)
+	require.NoError(t, err)
+	require.Contains(t, captured, "පැරණි සම්පූර්ණ")
+	require.Equal(t, "feed_content", method)
+	_, err = pool.Exec(ctx, `DELETE FROM article_contents WHERE article_id = $1`, articleID)
+	require.NoError(t, err)
+
+	candidates, err := store.BackfillCandidates(ctx, 500)
+	require.NoError(t, err)
+	require.Contains(t, candidates, articleID.String())
+
 	_, err = pool.Exec(ctx, `
 		UPDATE source_collection_profiles SET article_method = 'html_static'
 		WHERE endpoint_id = $1 AND active
 	`, endpointID)
 	require.NoError(t, err)
-	candidates, err := store.BackfillCandidates(ctx, 500)
+	candidates, err = store.BackfillCandidates(ctx, 500)
 	require.NoError(t, err)
 	require.Contains(t, candidates, articleID.String())
 	report, err := store.BackfillReport(ctx)
