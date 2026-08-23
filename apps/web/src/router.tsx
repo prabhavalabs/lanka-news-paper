@@ -5,6 +5,7 @@ import { BriefPage } from './pages/brief-page'
 import { EventPage } from './pages/event-page'
 import { FeedPage } from './pages/feed-page'
 import { FrontPage } from './pages/front-page'
+import { KnowledgeAnalysisPage } from './pages/knowledge-analysis-page'
 import { RootLayout } from './pages/root-layout'
 import { SourcesPage } from './pages/sources-page'
 import { StaticPage } from './pages/static-page'
@@ -21,6 +22,7 @@ export const router = createBrowserRouter([
       { path: 'search', element: <FeedPage mode="search" /> },
       { path: 'a/:id', element: <ArticlePage /> },
       { path: 'e/:id', element: <EventPage /> },
+      { path: 'analysis/knowledge', element: <KnowledgeAnalysisPage /> },
       { path: 'brief', element: <BriefPage /> },
       {
         path: 'about',

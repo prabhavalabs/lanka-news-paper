@@ -33,6 +33,7 @@ type apiPost struct {
 	GUID        renderedText `json:"guid"`
 	Title       renderedText `json:"title"`
 	Excerpt     renderedText `json:"excerpt"`
+	Content     renderedText `json:"content"`
 }
 
 type apiResponse struct {
@@ -94,6 +95,7 @@ func ParseEndpoint(endpointType, website string, body []byte) (*gofeed.Feed, err
 			Title:       html.UnescapeString(strings.TrimSpace(post.Title.Rendered)),
 			Link:        link,
 			Description: post.Excerpt.Rendered,
+			Content:     post.Content.Rendered,
 		}
 		if item.GUID == "" {
 			item.GUID = post.GUID.Rendered

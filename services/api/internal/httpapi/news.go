@@ -3,7 +3,9 @@ package httpapi
 import (
 	"net/http"
 	"strconv"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 )
 
@@ -84,6 +86,38 @@ func (handler newsHandler) event(w http.ResponseWriter, request *http.Request) {
 		writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", "Event is not public.")
 		return
 	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (handler newsHandler) knowledgeGraph(w http.ResponseWriter, request *http.Request) {
+	start, end, err := parseKnowledgeWindow(
+		request.URL.Query().Get("days"),
+		request.URL.Query().Get("from"),
+		request.URL.Query().Get("to"),
+		time.Now(),
+	)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	category := request.URL.Query().Get("category")
+	if len(category) > 50 {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "category is too long")
+		return
+	}
+	sourceID := request.URL.Query().Get("source")
+	if sourceID != "" {
+		if _, err := uuid.Parse(sourceID); err != nil {
+			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "source must be a UUID")
+			return
+		}
+	}
+	item, err := handler.reader.KnowledgeGraph(request.Context(), start, end, category, sourceID)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "The request could not be completed.")
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=60, stale-while-revalidate=300")
 	writeJSON(w, http.StatusOK, item)
 }
 

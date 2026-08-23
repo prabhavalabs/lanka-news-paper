@@ -27,6 +27,15 @@ const initialPositions: Record<string, { x: number; y: number }> = {
   event_clustering: { x: 570, y: 84 }, narration_analysis: { x: 840, y: 84 },
 }
 
+function safeExternalURL(value: string) {
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'https:' ? parsed.toString() : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function ArticleDetailPage() {
   const { id = '' } = useParams()
   const queryClient = useQueryClient()
@@ -68,7 +77,7 @@ export function ArticleDetailPage() {
             <span><strong className="font-medium text-foreground">{item.source}</strong><br />Published {date.format(new Date(item.published_at))}</span>
           </div>
         </div>
-        <Button variant="outline" nativeButton={false} render={<a href={item.original_url} target="_blank" rel="noreferrer" />}><ExternalLink /> Open original</Button>
+        {safeExternalURL(item.original_url) ? <Button variant="outline" nativeButton={false} render={<a href={safeExternalURL(item.original_url)} target="_blank" rel="noreferrer" />}><ExternalLink /> Open original</Button> : null}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -103,6 +112,26 @@ export function ArticleDetailPage() {
         </Card>
         <PoliticalCard political={political} />
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Restricted full content</CardTitle>
+          <CardDescription>{item.content ? `${item.content.characters.toLocaleString()} characters captured through ${item.content.acquisition_method.replaceAll('_', ' ')}.` : 'No approved full article body has been stored.'}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {item.content ? (
+            <div className="space-y-5">
+              <p className="max-h-[34rem] overflow-y-auto whitespace-pre-line rounded-2xl border bg-muted/10 p-4 text-sm leading-7">{item.content.body_text}</p>
+              <dl className="grid gap-4 border-t pt-5 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <Detail label="Acquired" value={date.format(new Date(item.content.fetched_at))} />
+                <Detail label="Extractor" value={item.content.extractor_version} />
+                <Detail label="Retention" value={item.content.retention_until ? date.format(new Date(item.content.retention_until)) : 'No automatic expiry'} />
+                <Detail label="Visibility" value="Admin only" />
+              </dl>
+            </div>
+          ) : <p className="rounded-2xl border border-dashed p-6 text-sm text-muted-foreground">Full text remains unavailable until the collection recipe and compliance review both authorize it.</p>}
+        </CardContent>
+      </Card>
 
       <Card className="gap-0 py-0">
         <CardHeader className="border-b py-6"><CardTitle>LLM telemetry</CardTitle><CardDescription>Model calls linked to this article and pipeline run.</CardDescription></CardHeader>

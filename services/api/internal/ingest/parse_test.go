@@ -17,7 +17,7 @@ func TestParseRESTEndpoints(t *testing.T) {
 		{
 			name:    "WordPress",
 			website: "https://publisher.example",
-			body:    `[{"id":42,"date_gmt":"2026-08-16T15:59:19","link":"https://publisher.example/story","title":{"rendered":"සිංහල පුවත &#8211; අද"},"excerpt":{"rendered":"<p>විස්තරය</p>"}}]`,
+			body:    `[{"id":42,"date_gmt":"2026-08-16T15:59:19","link":"https://publisher.example/story","title":{"rendered":"සිංහල පුවත &#8211; අද"},"excerpt":{"rendered":"<p>විස්තරය</p>"},"content":{"rendered":"<p>සම්පූර්ණ අන්තර්ගතය</p>"}}]`,
 			link:    "https://publisher.example/story",
 			title:   "සිංහල පුවත – අද",
 		},
@@ -37,6 +37,9 @@ func TestParseRESTEndpoints(t *testing.T) {
 			require.Equal(t, test.link, feed.Items[0].Link)
 			require.Equal(t, test.title, feed.Items[0].Title)
 			require.NotNil(t, feed.Items[0].PublishedParsed)
+			if test.name == "WordPress" {
+				require.Contains(t, feed.Items[0].Content, "සම්පූර්ණ අන්තර්ගතය")
+			}
 		})
 	}
 }

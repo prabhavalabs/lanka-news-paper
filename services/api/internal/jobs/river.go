@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/riverqueue/river/rivermigrate"
 	"github.com/riverqueue/river/rivertype"
 
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/content"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
@@ -94,6 +96,80 @@ type ArticlePipelineWorker struct {
 	Pipeline *pipeline.Store
 }
 
+type ArticleContentArgs struct {
+	ArticleID string `json:"article_id"`
+}
+
+func (ArticleContentArgs) Kind() string { return "article.content" }
+
+func (args ArticleContentArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{
+		Queue:       "crawl",
+		MaxAttempts: 5,
+		UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: []rivertype.JobState{
+			rivertype.JobStateAvailable,
+			rivertype.JobStatePending,
+			rivertype.JobStateRunning,
+			rivertype.JobStateScheduled,
+			rivertype.JobStateRetryable,
+		}},
+	}
+}
+
+type ArticleContentWorker struct {
+	river.WorkerDefaults[ArticleContentArgs]
+	Content *content.Store
+}
+
+type ArticleContentBackfillArgs struct{}
+
+func (ArticleContentBackfillArgs) Kind() string { return "article.content.backfill" }
+
+func (ArticleContentBackfillArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{UniqueOpts: river.UniqueOpts{ByQueue: true, ByState: []rivertype.JobState{
+		rivertype.JobStateAvailable,
+		rivertype.JobStatePending,
+		rivertype.JobStateRunning,
+		rivertype.JobStateScheduled,
+		rivertype.JobStateRetryable,
+	}}}
+}
+
+type ArticleContentBackfillWorker struct {
+	river.WorkerDefaults[ArticleContentBackfillArgs]
+	Content *content.Store
+	Client  *river.Client[pgx.Tx]
+}
+
+func (worker *ArticleContentBackfillWorker) Work(ctx context.Context, _ *river.Job[ArticleContentBackfillArgs]) error {
+	articleIDs, err := worker.Content.BackfillCandidates(ctx, 100)
+	if err != nil {
+		return err
+	}
+	for _, articleID := range articleIDs {
+		if err := EnqueueContent(ctx, worker.Client, articleID); err != nil {
+			return err
+		}
+	}
+	if len(articleIDs) == 100 {
+		return river.JobSnooze(30 * time.Second)
+	}
+	return nil
+}
+
+func (worker *ArticleContentWorker) Work(ctx context.Context, job *river.Job[ArticleContentArgs]) error {
+	err := worker.Content.Enrich(ctx, job.Args.ArticleID)
+	var rateLimit *content.RateLimitError
+	if errors.As(err, &rateLimit) {
+		return river.JobSnooze(rateLimit.RetryAfter)
+	}
+	return err
+}
+
+func (worker *ArticleContentWorker) Timeout(*river.Job[ArticleContentArgs]) time.Duration {
+	return 2 * time.Minute
+}
+
 func (worker *ArticlePipelineWorker) Work(ctx context.Context, job *river.Job[ArticlePipelineArgs]) error {
 	return worker.Pipeline.Process(ctx, job.Args.RunID)
 }
@@ -162,6 +238,28 @@ type QueueHistoryCleanupWorker struct {
 	Pipeline *pipeline.Store
 }
 
+type ArticleContentCleanupArgs struct{}
+
+func (ArticleContentCleanupArgs) Kind() string { return "article.content.cleanup" }
+
+type ArticleContentCleanupWorker struct {
+	river.WorkerDefaults[ArticleContentCleanupArgs]
+	Content *content.Store
+}
+
+func (worker *ArticleContentCleanupWorker) Work(ctx context.Context, _ *river.Job[ArticleContentCleanupArgs]) error {
+	for range 10 {
+		deleted, err := worker.Content.DeleteExpired(ctx)
+		if err != nil {
+			return err
+		}
+		if deleted < 1000 {
+			return nil
+		}
+	}
+	return nil
+}
+
 func (worker *QueueHistoryCleanupWorker) Work(ctx context.Context, _ *river.Job[QueueHistoryCleanupArgs]) error {
 	_, err := worker.Pipeline.DeleteHistory(ctx, queueHistoryCutoff(time.Now().UTC()))
 	return err
@@ -169,6 +267,126 @@ func (worker *QueueHistoryCleanupWorker) Work(ctx context.Context, _ *river.Job[
 
 func queueHistoryCutoff(now time.Time) time.Time {
 	return now.Add(-queueHistoryRetention)
+}
+
+// PeriodicJobMetadata describes one scheduler-managed recurring job.
+type PeriodicJobMetadata struct {
+	Kind        string
+	Name        string
+	Description string
+	Queue       string
+	Interval    time.Duration
+	RunOnStart  bool
+}
+
+type periodicJobDefinition struct {
+	PeriodicJobMetadata
+	Constructor func() (river.JobArgs, *river.InsertOpts)
+}
+
+func periodicJobDefinitions() []periodicJobDefinition {
+	return []periodicJobDefinition{
+		{
+			PeriodicJobMetadata: PeriodicJobMetadata{
+				Kind:        PollArgs{}.Kind(),
+				Name:        "Source polling",
+				Description: "Retrieves due publisher feeds and prepares new articles.",
+				Queue:       river.QueueDefault,
+				Interval:    time.Minute,
+				RunOnStart:  true,
+			},
+			Constructor: func() (river.JobArgs, *river.InsertOpts) { return PollArgs{}, nil },
+		},
+		{
+			PeriodicJobMetadata: PeriodicJobMetadata{
+				Kind:        PipelineDispatchArgs{}.Kind(),
+				Name:        "Pipeline dispatch",
+				Description: "Moves queued article workflows onto analysis workers.",
+				Queue:       river.QueueDefault,
+				Interval:    time.Minute,
+				RunOnStart:  true,
+			},
+			Constructor: func() (river.JobArgs, *river.InsertOpts) { return PipelineDispatchArgs{}, nil },
+		},
+		{
+			PeriodicJobMetadata: PeriodicJobMetadata{
+				Kind:        BriefArgs{}.Kind(),
+				Name:        "News brief refresh",
+				Description: "Regenerates the cached daily news brief.",
+				Queue:       river.QueueDefault,
+				Interval:    time.Hour,
+			},
+			Constructor: func() (river.JobArgs, *river.InsertOpts) { return BriefArgs{}, nil },
+		},
+		{
+			PeriodicJobMetadata: PeriodicJobMetadata{
+				Kind:        QueueHistoryCleanupArgs{}.Kind(),
+				Name:        "Queue history cleanup",
+				Description: "Deletes completed workflow telemetry after the retention window.",
+				Queue:       river.QueueDefault,
+				Interval:    24 * time.Hour,
+				RunOnStart:  true,
+			},
+			Constructor: func() (river.JobArgs, *river.InsertOpts) { return QueueHistoryCleanupArgs{}, nil },
+		},
+		{
+			PeriodicJobMetadata: PeriodicJobMetadata{
+				Kind:        ArticleContentCleanupArgs{}.Kind(),
+				Name:        "Article content retention",
+				Description: "Deletes restricted full-text bodies when their rights retention window expires.",
+				Queue:       river.QueueDefault,
+				Interval:    24 * time.Hour,
+				RunOnStart:  true,
+			},
+			Constructor: func() (river.JobArgs, *river.InsertOpts) { return ArticleContentCleanupArgs{}, nil },
+		},
+	}
+}
+
+// PeriodicJobCatalog returns a copy of the configured recurring-job metadata.
+func PeriodicJobCatalog() []PeriodicJobMetadata {
+	definitions := periodicJobDefinitions()
+	catalog := make([]PeriodicJobMetadata, 0, len(definitions))
+	for _, definition := range definitions {
+		catalog = append(catalog, definition.PeriodicJobMetadata)
+	}
+	return catalog
+}
+
+func configuredPeriodicJobs() []*river.PeriodicJob {
+	definitions := periodicJobDefinitions()
+	configured := make([]*river.PeriodicJob, 0, len(definitions))
+	for _, definition := range definitions {
+		configured = append(configured, river.NewPeriodicJob(
+			river.PeriodicInterval(definition.Interval),
+			definition.Constructor,
+			&river.PeriodicJobOpts{RunOnStart: definition.RunOnStart},
+		))
+	}
+	return configured
+}
+
+// QueueMetadata describes one River queue and its configured concurrency.
+type QueueMetadata struct {
+	Name       string
+	MaxWorkers int
+}
+
+// QueueCatalog returns a copy of the configured worker queues.
+func QueueCatalog() []QueueMetadata {
+	return []QueueMetadata{
+		{Name: river.QueueDefault, MaxWorkers: 2},
+		{Name: "analysis", MaxWorkers: 5},
+		{Name: "crawl", MaxWorkers: 1},
+	}
+}
+
+func configuredQueues() map[string]river.QueueConfig {
+	configured := make(map[string]river.QueueConfig)
+	for _, queue := range QueueCatalog() {
+		configured[queue.Name] = river.QueueConfig{MaxWorkers: queue.MaxWorkers}
+	}
+	return configured
 }
 
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
@@ -182,42 +400,31 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
-func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, pipelineStore *pipeline.Store, news *publish.Store) (*river.Client[pgx.Tx], error) {
+func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, pipelineStore *pipeline.Store, contentStore *content.Store, news *publish.Store) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
 	dispatcher := &PipelineDispatchWorker{Pipeline: pipelineStore}
+	contentBackfill := &ArticleContentBackfillWorker{Content: contentStore}
 	river.AddWorker(workers, &PollWorker{Poller: poller, News: news})
 	river.AddWorker(workers, &NarrationWorker{})
 	river.AddWorker(workers, &ArticlePipelineWorker{Pipeline: pipelineStore})
+	river.AddWorker(workers, &ArticleContentWorker{Content: contentStore})
+	river.AddWorker(workers, contentBackfill)
 	river.AddWorker(workers, dispatcher)
 	river.AddWorker(workers, &BriefWorker{News: news})
 	river.AddWorker(workers, &QueueHistoryCleanupWorker{Pipeline: pipelineStore})
+	river.AddWorker(workers, &ArticleContentCleanupWorker{Content: contentStore})
 
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
-		Logger: logger,
-		PeriodicJobs: []*river.PeriodicJob{
-			river.NewPeriodicJob(river.PeriodicInterval(time.Minute), func() (river.JobArgs, *river.InsertOpts) {
-				return PollArgs{}, nil
-			}, &river.PeriodicJobOpts{RunOnStart: true}),
-			river.NewPeriodicJob(river.PeriodicInterval(time.Minute), func() (river.JobArgs, *river.InsertOpts) {
-				return PipelineDispatchArgs{}, nil
-			}, &river.PeriodicJobOpts{RunOnStart: true}),
-			river.NewPeriodicJob(river.PeriodicInterval(time.Hour), func() (river.JobArgs, *river.InsertOpts) {
-				return BriefArgs{}, nil
-			}, nil),
-			river.NewPeriodicJob(river.PeriodicInterval(24*time.Hour), func() (river.JobArgs, *river.InsertOpts) {
-				return QueueHistoryCleanupArgs{}, nil
-			}, &river.PeriodicJobOpts{RunOnStart: true}),
-		},
-		Queues: map[string]river.QueueConfig{
-			river.QueueDefault: {MaxWorkers: 2},
-			"analysis":         {MaxWorkers: 5},
-		},
-		Workers: workers,
+		Logger:       logger,
+		PeriodicJobs: configuredPeriodicJobs(),
+		Queues:       configuredQueues(),
+		Workers:      workers,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create river client: %w", err)
 	}
 	dispatcher.Client = client
+	contentBackfill.Client = client
 	return client, nil
 }
 
@@ -231,5 +438,15 @@ func NewProducer(pool *pgxpool.Pool, logger *slog.Logger) (*river.Client[pgx.Tx]
 
 func EnqueuePipeline(ctx context.Context, client *river.Client[pgx.Tx], runID string) error {
 	_, err := client.Insert(ctx, ArticlePipelineArgs{RunID: runID}, nil)
+	return err
+}
+
+func EnqueueContent(ctx context.Context, client *river.Client[pgx.Tx], articleID string) error {
+	_, err := client.Insert(ctx, ArticleContentArgs{ArticleID: articleID}, nil)
+	return err
+}
+
+func EnqueueContentBackfill(ctx context.Context, client *river.Client[pgx.Tx]) error {
+	_, err := client.Insert(ctx, ArticleContentBackfillArgs{}, nil)
 	return err
 }

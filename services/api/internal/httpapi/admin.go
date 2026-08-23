@@ -26,12 +26,14 @@ import (
 const maxSourceLogoBytes = 768 << 10
 
 type adminHandler struct {
-	registry    *registry.Store
-	poller      *ingest.Poller
-	llm         *llm.Gateway
-	desk        *desk.Store
-	media       *media.Store
-	runPipeline func(context.Context, string, string) error
+	registry           *registry.Store
+	poller             *ingest.Poller
+	llm                *llm.Gateway
+	desk               *desk.Store
+	monitor            monitorService
+	media              *media.Store
+	runPipeline        func(context.Context, string, string) error
+	runContentBackfill func(context.Context) error
 }
 
 func (handler adminHandler) sourceLogo(w http.ResponseWriter, request *http.Request) {
@@ -294,6 +296,70 @@ func (handler adminHandler) rights(w http.ResponseWriter, request *http.Request)
 	writePage(w, items, total, params)
 }
 
+func (handler adminHandler) collection(w http.ResponseWriter, request *http.Request) {
+	sourceID := request.PathValue("id")
+	if request.Method == http.MethodPost {
+		var body registry.CollectionProfile
+		if err := decodeJSON(request, &body); err != nil {
+			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
+			return
+		}
+		item, err := handler.registry.SaveCollectionProfile(request.Context(), sourceID, currentUser(request).Email, body)
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid collection profile", err.Error())
+			return
+		}
+		handler.registry.Audit(request.Context(), currentUser(request).Email, "update_source_collection", sourceID, "ok")
+		if item.ArticleMethod == "html_static" && handler.runContentBackfill != nil {
+			if err := handler.runContentBackfill(request.Context()); err != nil {
+				slog.WarnContext(request.Context(), "queue article content backfill after collection update", "source", sourceID, "error", err)
+			}
+		}
+		writeJSON(w, http.StatusCreated, item)
+		return
+	}
+	items, err := handler.registry.ListCollectionProfiles(request.Context(), sourceID)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not load collection profiles.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (handler adminHandler) compliance(w http.ResponseWriter, request *http.Request) {
+	sourceID := request.PathValue("id")
+	if request.Method == http.MethodPost {
+		var body registry.ComplianceReview
+		if err := decodeJSON(request, &body); err != nil {
+			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
+			return
+		}
+		item, err := handler.registry.SaveComplianceReview(request.Context(), sourceID, currentUser(request).Email, body)
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid compliance review", err.Error())
+			return
+		}
+		handler.registry.Audit(request.Context(), currentUser(request).Email, "update_source_compliance", sourceID, "ok")
+		if item.AllowFullTextStorage && handler.runContentBackfill != nil {
+			if err := handler.runContentBackfill(request.Context()); err != nil {
+				slog.WarnContext(request.Context(), "queue article content backfill after compliance update", "source", sourceID, "error", err)
+			}
+		}
+		writeJSON(w, http.StatusCreated, item)
+		return
+	}
+	item, err := handler.registry.GetComplianceReview(request.Context(), sourceID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", "No compliance review is configured.")
+			return
+		}
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not load the compliance review.")
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
 func (handler adminHandler) pause(w http.ResponseWriter, request *http.Request) {
 	var body struct {
 		Paused bool `json:"paused"`
@@ -473,37 +539,35 @@ func (handler adminHandler) queue(w http.ResponseWriter, request *http.Request) 
 }
 
 func (handler adminHandler) jobs(w http.ResponseWriter, request *http.Request) {
-	params, err := parsePagination(request)
+	query, err := parseQueueMonitorQuery(request)
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
 		return
 	}
-	status, err := parseFilter(request, "status", "queued", "processing", "completed", "partially_completed", "failed")
+	since := time.Now().UTC().Add(-query.Window)
+	result, err := handler.desk.QueueJobs(request.Context(), query.Params, query.Status, query.Queue, query.Kind, &since)
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
 		return
 	}
-	queue, err := parseFilter(request, "queue", "default", "analysis")
-	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (handler adminHandler) jobArtifacts(w http.ResponseWriter, request *http.Request) {
+	result, err := handler.desk.QueueJobArtifacts(request.Context(), request.PathValue("id"))
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", "Queue job was not found.")
 		return
 	}
-	kind, err := parseFilter(request, "kind", "article.pipeline", "article.pipeline.dispatch", "ingest.poll", "brief.daily", "intelligence.narration", "queue.history.cleanup")
 	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
 		return
 	}
-	window, err := parseFilter(request, "window", "24h", "7d")
-	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
-		return
-	}
-	duration := 7 * 24 * time.Hour
-	if window == "24h" {
-		duration = 24 * time.Hour
-	}
-	since := time.Now().UTC().Add(-duration)
-	result, err := handler.desk.QueueJobs(request.Context(), params, status, queue, kind, &since)
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (handler adminHandler) cronJobs(w http.ResponseWriter, request *http.Request) {
+	result, err := handler.desk.CronJobs(request.Context())
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
 		return

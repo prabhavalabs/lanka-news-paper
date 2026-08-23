@@ -19,7 +19,7 @@ services:
       retries: 20
 
   worker:
-    image: golang:1.25-alpine
+    image: golang:1.25.13-alpine
     restart: unless-stopped
     dns:
       - 1.1.1.1

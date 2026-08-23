@@ -69,7 +69,13 @@ func (store *Store) start(ctx context.Context, articleID, trigger, selectedStep 
 	var runID string
 	insertRun := `
 		INSERT INTO article_pipeline_runs (article_id, trigger)
-		VALUES ($1, $2)
+		SELECT article.id, $2
+		FROM articles article
+		JOIN source_compliance_reviews compliance
+		  ON compliance.source_id = article.source_id AND compliance.active
+		WHERE article.id = $1
+		  AND compliance.status IN ('approved', 'restricted')
+		  AND compliance.allow_ai_processing
 		ON CONFLICT (article_id) WHERE status IN ('queued', 'running')
 		DO UPDATE SET updated_at = article_pipeline_runs.updated_at
 		RETURNING id::text
@@ -77,14 +83,23 @@ func (store *Store) start(ctx context.Context, articleID, trigger, selectedStep 
 	if rejectActive {
 		insertRun = `
 			INSERT INTO article_pipeline_runs (article_id, trigger)
-			VALUES ($1, $2)
+			SELECT article.id, $2
+			FROM articles article
+			JOIN source_compliance_reviews compliance
+			  ON compliance.source_id = article.source_id AND compliance.active
+			WHERE article.id = $1
+			  AND compliance.status IN ('approved', 'restricted')
+			  AND compliance.allow_ai_processing
 			ON CONFLICT (article_id) WHERE status IN ('queued', 'running') DO NOTHING
 			RETURNING id::text
 		`
 	}
 	err = tx.QueryRow(ctx, insertRun, articleID, trigger).Scan(&runID)
-	if rejectActive && err == pgx.ErrNoRows {
-		return "", fmt.Errorf("article pipeline is already queued or running")
+	if err == pgx.ErrNoRows {
+		if rejectActive {
+			return "", fmt.Errorf("article pipeline is already active or AI processing is not approved")
+		}
+		return "", fmt.Errorf("AI processing is not approved for this article source")
 	}
 	if err != nil {
 		return "", fmt.Errorf("create article pipeline: %w", err)
@@ -131,8 +146,12 @@ func (store *Store) EnsureBacklog(ctx context.Context, limit int) error {
 	rows, err := store.pool.Query(ctx, `
 		SELECT a.id::text
 		FROM articles a
+		JOIN source_compliance_reviews compliance
+		  ON compliance.source_id = a.source_id AND compliance.active
 		WHERE NOT EXISTS (SELECT 1 FROM article_pipeline_runs run WHERE run.article_id = a.id)
 		  AND (to_jsonb(a)->>'pipeline_enqueued_at') IS NULL
+		  AND compliance.status IN ('approved', 'restricted')
+		  AND compliance.allow_ai_processing
 		ORDER BY a.received_at DESC, a.id
 		LIMIT $1
 	`, limit)
@@ -245,6 +264,14 @@ type stepResult struct {
 }
 
 func (store *Store) Process(ctx context.Context, runID string) error {
+	allowed, err := store.aiProcessingAllowed(ctx, runID)
+	if err != nil {
+		return fmt.Errorf("check pipeline compliance %s: %w", runID, err)
+	}
+	if !allowed {
+		return store.skipUnapprovedRun(ctx, runID)
+	}
+
 	var articleID string
 	if err := store.pool.QueryRow(ctx, `
 		UPDATE article_pipeline_runs
@@ -281,6 +308,13 @@ func (store *Store) Process(ctx context.Context, runID string) error {
 	for _, item := range pending {
 		if item.status == "succeeded" || item.status == "skipped" {
 			continue
+		}
+		allowed, err := store.aiProcessingAllowed(ctx, runID)
+		if err != nil {
+			return fmt.Errorf("recheck pipeline compliance %s: %w", runID, err)
+		}
+		if !allowed {
+			return store.skipUnapprovedRun(ctx, runID)
 		}
 		if item.attempt >= item.maxAttempts {
 			return fmt.Errorf("pipeline step %s exhausted %d attempts", item.name, item.maxAttempts)
@@ -353,6 +387,62 @@ func (store *Store) Process(ctx context.Context, runID string) error {
 		WHERE id = $1
 	`, runID)
 	return err
+}
+
+func (store *Store) aiProcessingAllowed(ctx context.Context, runID string) (bool, error) {
+	var allowed bool
+	err := store.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM article_pipeline_runs run
+			JOIN articles article ON article.id = run.article_id
+			JOIN source_compliance_reviews compliance
+			  ON compliance.source_id = article.source_id AND compliance.active
+			WHERE run.id = $1
+			  AND compliance.status IN ('approved', 'restricted')
+			  AND compliance.allow_ai_processing
+		)
+	`, runID).Scan(&allowed)
+	return allowed, err
+}
+
+func (store *Store) skipUnapprovedRun(ctx context.Context, runID string) error {
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	reason := "AI processing is not approved by the source's active compliance review."
+	if _, err := tx.Exec(ctx, `
+		UPDATE article_pipeline_steps
+		SET status = 'skipped', finished_at = clock_timestamp(), duration_ms = 0,
+		    output = jsonb_build_object('reason', $2::text), error_detail = NULL
+		WHERE run_id = $1 AND status NOT IN ('succeeded', 'skipped')
+	`, runID, reason); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO article_pipeline_logs (run_id, step_id, level, event, message, details)
+		SELECT $1, step.id, 'info', 'compliance_blocked', 'Step skipped',
+		       jsonb_build_object('reason', $2::text)
+		FROM article_pipeline_steps step
+		WHERE step.run_id = $1 AND step.status = 'skipped'
+		  AND NOT EXISTS (
+			SELECT 1 FROM article_pipeline_logs log
+			WHERE log.step_id = step.id AND log.event = 'compliance_blocked'
+		  )
+	`, runID, reason); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE article_pipeline_runs
+		SET status = 'succeeded', current_step = NULL, last_error = NULL,
+		    finished_at = clock_timestamp(), updated_at = clock_timestamp()
+		WHERE id = $1 AND status <> 'succeeded'
+	`, runID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (store *Store) execute(ctx context.Context, articleID, runID string, item step) (stepResult, error) {

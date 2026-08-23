@@ -1,9 +1,13 @@
 package httpapi
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,4 +38,23 @@ func TestParseKnowledgeWindow(t *testing.T) {
 
 	_, _, err = parseKnowledgeWindow("", "2026-08-07", "2026-08-01", now)
 	require.EqualError(t, err, "to must be on or after from")
+}
+
+func TestPublicKnowledgeGraphRejectsInvalidSource(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/knowledge-graph?source=not-a-uuid", nil)
+	recorder := httptest.NewRecorder()
+	NewRouter(Dependencies{}).ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
+func TestPublicKnowledgeGraphDTOExcludesAdminFields(t *testing.T) {
+	payload, err := json.Marshal(publish.KnowledgeGraph{Events: []publish.KnowledgeEvent{{
+		ID: "event", Articles: []publish.KnowledgeArticle{{
+			ID: "article", Narrative: &publish.KnowledgeNarrative{Label: "neutral"},
+		}},
+	}}})
+	require.NoError(t, err)
+	for _, field := range []string{"provider_id", "provider_model", "original_url", "algorithm_version", "locked", "evidence", "rationale"} {
+		require.NotContains(t, string(payload), field)
+	}
 }

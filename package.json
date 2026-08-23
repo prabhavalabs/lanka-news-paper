@@ -11,6 +11,7 @@
     "api:test": "cd services/api && go test ./...",
     "api:vet": "cd services/api && go vet ./...",
     "build": "pnpm -r --if-present build",
+    "content:backfill": "cd services/api && go run ./cmd/content-backfill",
     "dev:admin": "pnpm --filter @snap/admin dev",
     "dev:web": "pnpm --filter @snap/web dev",
     "lint": "pnpm -r --if-present lint",
