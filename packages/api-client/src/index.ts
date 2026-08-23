@@ -130,6 +130,63 @@ export type AdminRights = {
   attribution: string;
 };
 
+export type AdminCollectionConfig = {
+  discovery_urls: string[];
+  allowed_hosts: string[];
+  article_url_patterns: string[];
+  link_selector: string;
+  title_selector: string;
+  published_selector: string;
+  author_selector: string;
+  content_selector: string;
+  exclude_selectors: string[];
+  pagination_mode: "none" | "next_link" | "page_parameter";
+  next_page_selector: string;
+  page_parameter: string;
+  user_agent: string;
+  min_content_characters: number;
+  minimum_sinhala_ratio: number;
+};
+
+export type AdminCollectionProfile = {
+  id: string;
+  source_id: string;
+  endpoint_id: string;
+  version: number;
+  discovery_method: "rss" | "atom" | "json_feed" | "rest_api" | "sitemap" | "listing_page" | "webhook" | "youtube";
+  article_method: "metadata_only" | "feed_content" | "api_content" | "html_static";
+  config: AdminCollectionConfig;
+  min_delay_seconds: number;
+  max_requests_per_run: number;
+  max_pages: number;
+  request_timeout_seconds: number;
+  created_by: string;
+  activated_at: string | null;
+  created_at: string;
+};
+
+export type AdminComplianceReview = {
+  id: string;
+  source_id: string;
+  version: number;
+  status: "pending" | "approved" | "restricted" | "denied";
+  robots_url: string;
+  robots_checked_at: string | null;
+  robots_allowed: boolean | null;
+  terms_urls: string[];
+  allow_discovery: boolean;
+  allow_full_text_storage: boolean;
+  allow_ai_processing: boolean;
+  allow_embeddings: boolean;
+  allow_training: boolean;
+  allow_public_full_text: boolean;
+  notes: string;
+  reviewed_by: string;
+  reviewed_at: string | null;
+  review_on: string | null;
+  created_at: string;
+};
+
 export type SourcePerformance = {
   total_captured: number;
   captured_today: number;
@@ -406,6 +463,83 @@ export type QueueMonitor = PageResponse<QueueJob> & {
   };
 };
 
+export type QueueJobArtifact = {
+  id: string;
+  role: "input" | "output";
+  kind: string;
+  title: string;
+  description: string;
+  data: Record<string, unknown>;
+};
+
+export type QueueJobArtifacts = {
+  job_id: string;
+  inputs: QueueJobArtifact[];
+  outputs: QueueJobArtifact[];
+};
+
+export type CronJobHealth =
+  | "healthy"
+  | "running"
+  | "degraded"
+  | "failed"
+  | "overdue"
+  | "unknown";
+
+export type CronJobStatistic = {
+  kind: string;
+  name: string;
+  description: string;
+  queue: string;
+  interval_seconds: number;
+  run_on_start: boolean;
+  health: CronJobHealth;
+  state: string;
+  currently_running: number;
+  last_job_id: number | null;
+  last_run_at: string | null;
+  last_finished_at: string | null;
+  next_run_at: string | null;
+  last_duration_ms: number | null;
+  average_duration_ms: number | null;
+  runs_24h: number;
+  successful_runs_24h: number;
+  failed_runs_24h: number;
+  success_rate_24h: number | null;
+  attempt: number;
+  max_attempts: number;
+  worker_id: string | null;
+  last_error: string | null;
+};
+
+export type CronMonitor = {
+  items: CronJobStatistic[];
+  summary: {
+    total: number;
+    running: number;
+    healthy: number;
+    attention: number;
+  };
+  worker: {
+    status: "online" | "stale" | "offline";
+    leader_id: string | null;
+    elected_at: string | null;
+    lease_expires_at: string | null;
+    max_concurrency: number;
+    queues: {
+      name: string;
+      max_workers: number;
+      paused: boolean;
+    }[];
+  };
+  checked_at: string;
+};
+
+export type QueueMonitorSnapshot = {
+  queue: QueueMonitor;
+  cron: CronMonitor;
+};
+
 export type AdminArticleDetail = {
   id: string;
   headline: string;
@@ -436,6 +570,15 @@ export type AdminArticleDetail = {
   political: KnowledgeArticle["political"] | null;
   pipeline_runs: PipelineRun[];
   llm_calls: LLMCall[];
+  content: {
+    body_text: string;
+    acquisition_method: "feed_content" | "api_content" | "html_static";
+    source_url: string;
+    extractor_version: string;
+    fetched_at: string;
+    retention_until: string | null;
+    characters: number;
+  } | null;
 };
 
 export type AdminComplaint = {
@@ -571,6 +714,11 @@ export function createClient(baseUrl = "") {
       ),
     queueJobs: (params: AdminTableQuery = {}) =>
       request<QueueMonitor>(url(withQuery("/api/admin/jobs", params))),
+    queueJobArtifacts: (id: string) =>
+      request<QueueJobArtifacts>(url(`/api/admin/jobs/${encodeURIComponent(id)}`)),
+    queueMonitorStreamURL: (params: AdminTableQuery = {}) =>
+      url(withQuery("/api/admin/jobs/stream", params)),
+    cronJobs: () => request<CronMonitor>(url("/api/admin/cron-jobs")),
     adminArticles: (params: AdminTableQuery = {}) =>
       request<PageResponse<AdminArticleListItem>>(
         url(withQuery("/api/admin/articles", params))
@@ -685,6 +833,28 @@ export function createClient(baseUrl = "") {
       body: { endpoint_id: string; mode: string; attribution: string }
     ) =>
       request<AdminRights>(url(`/api/admin/sources/${sourceId}/rights`), {
+        method: "POST",
+        body: JSON.stringify(body)
+      }),
+    sourceCollections: (sourceId: string) =>
+      request<{ items: AdminCollectionProfile[] }>(
+        url(`/api/admin/sources/${sourceId}/collection`)
+      ),
+    saveSourceCollection: (
+      sourceId: string,
+      body: Omit<AdminCollectionProfile, "id" | "source_id" | "version" | "created_by" | "activated_at" | "created_at">
+    ) =>
+      request<AdminCollectionProfile>(url(`/api/admin/sources/${sourceId}/collection`), {
+        method: "POST",
+        body: JSON.stringify(body)
+      }),
+    sourceCompliance: (sourceId: string) =>
+      request<AdminComplianceReview>(url(`/api/admin/sources/${sourceId}/compliance`)),
+    saveSourceCompliance: (
+      sourceId: string,
+      body: Omit<AdminComplianceReview, "id" | "source_id" | "version" | "reviewed_by" | "reviewed_at" | "created_at">
+    ) =>
+      request<AdminComplianceReview>(url(`/api/admin/sources/${sourceId}/compliance`), {
         method: "POST",
         body: JSON.stringify(body)
       }),

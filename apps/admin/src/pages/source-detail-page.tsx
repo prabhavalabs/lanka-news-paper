@@ -24,6 +24,7 @@ import { Link, useParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { SourceAvatar } from '@/components/source-avatar'
+import { SourceCollectionControls } from '@/components/source-collection-controls'
 import { SourcePerformanceCharts } from '@/components/source-performance-charts'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -83,6 +84,15 @@ function hostname(value: string) {
     return new URL(value).hostname
   } catch {
     return value
+  }
+}
+
+function safeExternalURL(value: string) {
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'https:' ? parsed.toString() : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -374,9 +384,9 @@ export function SourceDetailPage() {
             <p className="mt-1 text-sm text-muted-foreground">{sourceData?.legal_name}</p>
             <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
               <span className="text-muted-foreground">{sourceData ? label(sourceData.source_type) : 'Loading…'}</span>
-              {sourceData?.website ? (
+              {sourceData?.website && safeExternalURL(sourceData.website) ? (
                 <a
-                  href={sourceData.website}
+                  href={safeExternalURL(sourceData.website)}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1.5 text-primary hover:underline"
@@ -456,6 +466,10 @@ export function SourceDetailPage() {
       ) : (
         <SourcePerformanceCharts daily={performance.data.daily} />
       )}
+
+      {!endpoints.isPending && !endpoints.isError ? (
+        <SourceCollectionControls sourceID={id} endpoints={endpointItems} />
+      ) : null}
 
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -565,7 +579,7 @@ export function SourceDetailPage() {
                         </Badge>
                       </div>
                       <a
-                        href={endpoint.url}
+                        href={safeExternalURL(endpoint.url)}
                         target="_blank"
                         rel="noreferrer"
                         className="mt-2 inline-flex max-w-full items-center gap-1.5 break-all text-sm text-primary hover:underline"
