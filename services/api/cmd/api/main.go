@@ -13,6 +13,7 @@ import (
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/cluster"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/config"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/content"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/database"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/desk"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/httpapi"
@@ -67,6 +68,7 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	poller := ingest.NewPoller(pool, logger, clusters)
+	contentStore := content.NewStore(pool)
 	startPipeline := func(ctx context.Context, articleID string) error {
 		runID, err := pipelineStore.Start(ctx, articleID, "ingestion")
 		if err != nil {
@@ -75,8 +77,17 @@ func run(logger *slog.Logger) error {
 		return jobs.EnqueuePipeline(ctx, producer, runID)
 	}
 	poller.SetArticlePipeline(startPipeline)
+	poller.SetArticleContent(func(ctx context.Context, articleID, body, method string) (bool, error) {
+		if _, err := contentStore.CaptureStructured(ctx, articleID, body, method); err != nil {
+			return false, err
+		}
+		return contentStore.NeedsStaticFetch(ctx, articleID)
+	}, func(ctx context.Context, articleID string) error {
+		return jobs.EnqueueContent(ctx, producer, articleID)
+	})
 	news := publish.NewStore(pool)
 	deskStore := desk.NewStore(pool)
+	monitorBroker := desk.NewMonitorBroker(processContext, pool, logger)
 	mediaStore, err := media.New(processContext, media.Config{
 		LocalDirectory: loaded.MediaLocalDirectory,
 		R2AccessKeyID:  loaded.R2AccessKeyID,
@@ -99,9 +110,13 @@ func run(logger *slog.Logger) error {
 			IAM:            users,
 			LLM:            gateway,
 			Media:          mediaStore,
+			Monitor:        monitorBroker,
 			News:           news,
 			Poller:         poller,
 			Registry:       registry.NewStore(pool),
+			RunContentBackfill: func(ctx context.Context) error {
+				return jobs.EnqueueContentBackfill(ctx, producer)
+			},
 			RunPipeline: func(ctx context.Context, articleID, step string) error {
 				runID, err := pipelineStore.Run(ctx, articleID, step)
 				if err != nil {

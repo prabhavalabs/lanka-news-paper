@@ -131,6 +131,16 @@ type LLMCall struct {
 	CompletedAt    *time.Time `json:"completed_at"`
 }
 
+type ArticleContent struct {
+	BodyText          string     `json:"body_text"`
+	AcquisitionMethod string     `json:"acquisition_method"`
+	SourceURL         string     `json:"source_url"`
+	ExtractorVersion  string     `json:"extractor_version"`
+	FetchedAt         time.Time  `json:"fetched_at"`
+	RetentionUntil    *time.Time `json:"retention_until"`
+	Characters        int        `json:"characters"`
+}
+
 type ArticleDetail struct {
 	ID                  string                    `json:"id"`
 	Headline            string                    `json:"headline"`
@@ -156,6 +166,7 @@ type ArticleDetail struct {
 	Political           *ArticlePoliticalAnalysis `json:"political"`
 	PipelineRuns        []PipelineRun             `json:"pipeline_runs"`
 	LLMCalls            []LLMCall                 `json:"llm_calls"`
+	Content             *ArticleContent           `json:"content"`
 }
 
 func (store *Store) Article(ctx context.Context, id string) (ArticleDetail, error) {
@@ -194,12 +205,37 @@ func (store *Store) Article(ctx context.Context, id string) (ArticleDetail, erro
 	if err != nil {
 		return ArticleDetail{}, err
 	}
+	item.Content, err = store.articleContent(ctx, id)
+	if err != nil {
+		return ArticleDetail{}, err
+	}
 	item.PipelineRuns, err = store.pipelineRuns(ctx, id)
 	if err != nil {
 		return ArticleDetail{}, err
 	}
 	item.LLMCalls, err = store.articleLLMCalls(ctx, id)
 	return item, err
+}
+
+func (store *Store) articleContent(ctx context.Context, articleID string) (*ArticleContent, error) {
+	var item ArticleContent
+	err := store.pool.QueryRow(ctx, `
+		SELECT body_text, acquisition_method, source_url, extractor_version,
+		       fetched_at, retention_until, length(body_text)
+		FROM article_contents
+		WHERE article_id = $1 AND current
+	`, articleID).Scan(
+		&item.BodyText, &item.AcquisitionMethod, &item.SourceURL,
+		&item.ExtractorVersion, &item.FetchedAt, &item.RetentionUntil,
+		&item.Characters,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
 }
 
 func (store *Store) articlePolitical(ctx context.Context, articleID string) (*ArticlePoliticalAnalysis, error) {

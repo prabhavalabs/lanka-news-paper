@@ -39,6 +39,17 @@ func run() error {
 		return fmt.Errorf("resolve migration path: %w", err)
 	}
 	sourceURL := (&url.URL{Scheme: "file", Path: absolutePath}).String()
+	ctx := context.Background()
+	pool, err := database.Open(ctx, loaded.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	// River owns its schema, while application migrations may attach integrations
+	// such as monitoring triggers to River tables. Ensure those tables exist first.
+	if err := jobs.Migrate(ctx, pool); err != nil {
+		return err
+	}
 
 	runner, err := migrate.New(sourceURL, loaded.DatabaseURL)
 	if err != nil {
@@ -56,16 +67,6 @@ func run() error {
 
 	if err := runner.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("apply migrations: %w", err)
-	}
-
-	ctx := context.Background()
-	pool, err := database.Open(ctx, loaded.DatabaseURL)
-	if err != nil {
-		return err
-	}
-	defer pool.Close()
-	if err := jobs.Migrate(ctx, pool); err != nil {
-		return err
 	}
 
 	version, dirty, err := runner.Version()

@@ -115,6 +115,9 @@ WITH pipeline_entries AS (
     CASE job.kind
       WHEN 'ingest.poll' THEN 'Poll all source endpoints'
       WHEN 'article.pipeline.dispatch' THEN 'Dispatch queued article pipelines'
+      WHEN 'article.content' THEN 'Retrieve approved full article content'
+	  WHEN 'article.content.backfill' THEN 'Dispatch historical full article retrieval'
+	  WHEN 'article.content.cleanup' THEN 'Delete expired full article content'
       WHEN 'brief.daily' THEN 'Generate daily news brief'
       WHEN 'intelligence.narration' THEN 'Run narration intelligence sweep'
       WHEN 'queue.history.cleanup' THEN 'Delete expired queue history'

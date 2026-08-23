@@ -15,18 +15,20 @@ import (
 )
 
 type Dependencies struct {
-	AllowedOrigins []string
-	CookieSecure   bool
-	Database       DatabaseChecker
-	Desk           *desk.Store
-	IAM            *iam.Store
-	LLM            *llm.Gateway
-	Media          *media.Store
-	News           *publish.Store
-	Poller         *ingest.Poller
-	Registry       *registry.Store
-	RunPipeline    func(context.Context, string, string) error
-	SessionTTL     time.Duration
+	AllowedOrigins     []string
+	CookieSecure       bool
+	Database           DatabaseChecker
+	Desk               *desk.Store
+	IAM                *iam.Store
+	LLM                *llm.Gateway
+	Media              *media.Store
+	Monitor            *desk.MonitorBroker
+	News               *publish.Store
+	Poller             *ingest.Poller
+	Registry           *registry.Store
+	RunPipeline        func(context.Context, string, string) error
+	RunContentBackfill func(context.Context) error
+	SessionTTL         time.Duration
 }
 
 func NewRouter(dependencies Dependencies) http.Handler {
@@ -34,7 +36,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	health := healthHandler{database: dependencies.Database}
 	news := newsHandler{reader: dependencies.News}
 	auth := newAuthHandler(dependencies.IAM, dependencies.SessionTTL, dependencies.CookieSecure)
-	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk, media: dependencies.Media, runPipeline: dependencies.RunPipeline}
+	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk, monitor: newMonitorService(dependencies.Desk, dependencies.Monitor), media: dependencies.Media, runPipeline: dependencies.RunPipeline, runContentBackfill: dependencies.RunContentBackfill}
 
 	mux.HandleFunc("GET /api/v1/health/live", health.liveness)
 	mux.HandleFunc("GET /api/v1/health/ready", health.readiness)
@@ -66,6 +68,10 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("POST /api/admin/sources/{id}/endpoints", admin.endpoints)
 	protected.HandleFunc("GET /api/admin/sources/{id}/rights", admin.rights)
 	protected.HandleFunc("POST /api/admin/sources/{id}/rights", admin.rights)
+	protected.HandleFunc("GET /api/admin/sources/{id}/collection", admin.collection)
+	protected.HandleFunc("POST /api/admin/sources/{id}/collection", admin.collection)
+	protected.HandleFunc("GET /api/admin/sources/{id}/compliance", admin.compliance)
+	protected.HandleFunc("POST /api/admin/sources/{id}/compliance", admin.compliance)
 	protected.HandleFunc("POST /api/admin/endpoints/{endpointId}/pause", admin.pause)
 	protected.HandleFunc("POST /api/admin/endpoints/{endpointId}/test", admin.test)
 	protected.HandleFunc("POST /api/admin/endpoints/{endpointId}/run", admin.runNow)
@@ -74,6 +80,9 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("GET /api/admin/knowledge-graph", admin.knowledgeGraph)
 	protected.HandleFunc("GET /api/admin/queue", admin.queue)
 	protected.HandleFunc("GET /api/admin/jobs", admin.jobs)
+	protected.HandleFunc("GET /api/admin/jobs/stream", admin.monitorStream)
+	protected.HandleFunc("GET /api/admin/jobs/{id}", admin.jobArtifacts)
+	protected.HandleFunc("GET /api/admin/cron-jobs", admin.cronJobs)
 	protected.HandleFunc("GET /api/admin/articles", admin.articles)
 	protected.HandleFunc("GET /api/admin/articles/{id}", admin.article)
 	protected.HandleFunc("POST /api/admin/articles/{id}/pipeline/run", admin.runArticlePipeline)
