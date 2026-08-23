@@ -6,6 +6,7 @@ RUN go mod download
 COPY services/api/ ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api \
     && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker \
+    && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/content-backfill ./cmd/content-backfill \
     && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate
 
 FROM alpine:3.22
