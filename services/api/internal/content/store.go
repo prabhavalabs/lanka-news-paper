@@ -123,7 +123,13 @@ func (store *Store) Enrich(ctx context.Context, articleID string) error {
 	if err != nil {
 		return err
 	}
-	if !policy.storageApproved() || policy.articleMethod != "html_static" {
+	if !policy.storageApproved() {
+		return nil
+	}
+	if policy.articleMethod == "feed_content" || policy.articleMethod == "api_content" {
+		return store.captureStoredStructured(ctx, policy)
+	}
+	if policy.articleMethod != "html_static" {
 		return nil
 	}
 	if policy.complianceStatus != "approved" && policy.complianceStatus != "restricted" {
@@ -204,6 +210,33 @@ func (store *Store) Enrich(ctx context.Context, articleID string) error {
 	}
 	store.finishAttempt(ctx, attemptID, "succeeded", result, extraction.Characters, nil)
 	return nil
+}
+
+func (store *Store) captureStoredStructured(ctx context.Context, policy eligibility) error {
+	var rawBody string
+	if err := store.pool.QueryRow(ctx, `
+		SELECT COALESCE(description, '') FROM articles WHERE id = $1
+	`, policy.articleID).Scan(&rawBody); err != nil {
+		return fmt.Errorf("load stored structured article body: %w", err)
+	}
+	if strings.TrimSpace(rawBody) == "" {
+		return fmt.Errorf("stored structured article body is empty")
+	}
+	body, err := extractStructuredText(rawBody)
+	if err != nil {
+		return err
+	}
+	result := Extraction{
+		BodyText:     body,
+		Method:       policy.articleMethod,
+		Characters:   len([]rune(body)),
+		SinhalaRatio: sinhalaRatio(body),
+	}
+	if err := validateExtraction(result, policy.config); err != nil {
+		return err
+	}
+	_, err = store.save(ctx, policy, result, policy.articleMethod, policy.originalURL)
+	return err
 }
 
 func (store *Store) eligibility(ctx context.Context, articleID string) (eligibility, error) {
@@ -473,21 +506,29 @@ func (store *Store) BackfillCandidates(ctx context.Context, limit int) ([]string
 		  ON profile.endpoint_id = article.endpoint_id AND profile.active
 		JOIN source_compliance_reviews compliance
 		  ON compliance.source_id = article.source_id AND compliance.active
-		WHERE profile.article_method = 'html_static'
+		WHERE profile.article_method IN ('feed_content', 'api_content', 'html_static')
 		  AND compliance.status IN ('approved', 'restricted')
 		  AND compliance.allow_full_text_storage
-		  AND compliance.robots_checked_at IS NOT NULL
-		  AND compliance.robots_allowed IS TRUE
+		  AND (
+			profile.article_method IN ('feed_content', 'api_content')
+			OR (
+			  compliance.robots_checked_at IS NOT NULL
+			  AND compliance.robots_allowed IS TRUE
+			)
+		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM article_contents body
 			WHERE body.article_id = article.id AND body.current
 		  )
 		  AND (
-			SELECT count(*) FROM crawl_attempts attempt
-			WHERE attempt.article_id = article.id
-			  AND attempt.collection_profile_id = profile.id
-			  AND attempt.status IN ('failed', 'blocked')
-		  ) < 3
+			profile.article_method IN ('feed_content', 'api_content')
+			OR (
+			  SELECT count(*) FROM crawl_attempts attempt
+			  WHERE attempt.article_id = article.id
+			    AND attempt.collection_profile_id = profile.id
+			    AND attempt.status IN ('failed', 'blocked')
+			) < 3
+		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM river_job job
 			WHERE job.kind = 'article.content'
@@ -560,11 +601,26 @@ func (store *Store) BackfillReport(ctx context.Context) (BackfillReport, error) 
 		SELECT count(*)::integer,
 		       count(*) FILTER (WHERE stored)::integer,
 		       count(*) FILTER (WHERE NOT stored AND NOT approved)::integer,
-		       count(*) FILTER (WHERE NOT stored AND approved AND article_method <> 'html_static')::integer,
+		       count(*) FILTER (
+		         WHERE NOT stored AND approved
+		           AND article_method NOT IN ('feed_content', 'api_content', 'html_static')
+		       )::integer,
 		       count(*) FILTER (WHERE NOT stored AND approved AND article_method = 'html_static' AND NOT robots_ready)::integer,
-		       count(*) FILTER (WHERE NOT stored AND approved AND article_method = 'html_static' AND robots_ready AND failures < 3)::integer,
+		       count(*) FILTER (
+		         WHERE NOT stored AND approved
+		           AND (
+		             article_method IN ('feed_content', 'api_content')
+		             OR (article_method = 'html_static' AND robots_ready AND failures < 3)
+		           )
+		       )::integer,
 		       count(*) FILTER (WHERE queued)::integer,
-		       count(*) FILTER (WHERE NOT stored AND approved AND article_method = 'html_static' AND robots_ready AND failures < 3 AND NOT queued)::integer,
+		       count(*) FILTER (
+		         WHERE NOT stored AND approved AND NOT queued
+		           AND (
+		             article_method IN ('feed_content', 'api_content')
+		             OR (article_method = 'html_static' AND robots_ready AND failures < 3)
+		           )
+		       )::integer,
 		       count(*) FILTER (WHERE NOT stored AND approved AND article_method = 'html_static' AND robots_ready AND failures >= 3)::integer
 		FROM state
 	`).Scan(
