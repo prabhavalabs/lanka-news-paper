@@ -141,17 +141,19 @@ type ArticleContentBackfillWorker struct {
 	Client  *river.Client[pgx.Tx]
 }
 
+const articleContentBackfillBatchSize = 25
+
 func (worker *ArticleContentBackfillWorker) Work(ctx context.Context, _ *river.Job[ArticleContentBackfillArgs]) error {
-	articleIDs, err := worker.Content.BackfillCandidates(ctx, 100)
+	articleIDs, err := worker.Content.BackfillCandidates(ctx, articleContentBackfillBatchSize)
 	if err != nil {
 		return err
 	}
 	for _, articleID := range articleIDs {
-		if err := EnqueueContent(ctx, worker.Client, articleID); err != nil {
+		if err := enqueueBackfillContent(ctx, worker.Client, articleID); err != nil {
 			return err
 		}
 	}
-	if len(articleIDs) == 100 {
+	if len(articleIDs) == articleContentBackfillBatchSize {
 		return river.JobSnooze(30 * time.Second)
 	}
 	return nil
@@ -444,6 +446,17 @@ func EnqueuePipeline(ctx context.Context, client *river.Client[pgx.Tx], runID st
 func EnqueueContent(ctx context.Context, client *river.Client[pgx.Tx], articleID string) error {
 	_, err := client.Insert(ctx, ArticleContentArgs{ArticleID: articleID}, nil)
 	return err
+}
+
+func enqueueBackfillContent(ctx context.Context, client *river.Client[pgx.Tx], articleID string) error {
+	_, err := client.Insert(ctx, ArticleContentArgs{ArticleID: articleID}, articleContentBackfillInsertOpts())
+	return err
+}
+
+func articleContentBackfillInsertOpts() *river.InsertOpts {
+	// River priority 1 is highest and 4 is lowest. Historical work must never
+	// delay content retrieval for articles discovered by the live poller.
+	return &river.InsertOpts{Priority: 4}
 }
 
 func EnqueueContentBackfill(ctx context.Context, client *river.Client[pgx.Tx]) error {

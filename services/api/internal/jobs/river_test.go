@@ -52,3 +52,8 @@ func TestArticleContentBackfillIsUnique(t *testing.T) {
 	require.True(t, opts.UniqueOpts.ByQueue)
 	require.Contains(t, opts.UniqueOpts.ByState, rivertype.JobStateRunning)
 }
+
+func TestArticleContentBackfillUsesBoundedLowPriorityBatches(t *testing.T) {
+	require.Equal(t, 25, articleContentBackfillBatchSize)
+	require.Equal(t, 4, articleContentBackfillInsertOpts().Priority)
+}
