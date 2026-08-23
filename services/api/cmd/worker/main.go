@@ -11,6 +11,7 @@ import (
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/cluster"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/config"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/content"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/database"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/jobs"
@@ -57,8 +58,9 @@ func run(logger *slog.Logger) error {
 	clusters := cluster.NewStore(pool)
 	politicsStore := politics.NewStore(pool, model)
 	pipelineStore := pipeline.NewStore(pool, model, clusters, politicsStore)
+	contentStore := content.NewStore(pool)
 	poller := ingest.NewPoller(pool, logger, clusters)
-	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, news)
+	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news)
 	if err != nil {
 		return err
 	}
@@ -68,6 +70,14 @@ func run(logger *slog.Logger) error {
 			return err
 		}
 		return jobs.EnqueuePipeline(ctx, client, runID)
+	})
+	poller.SetArticleContent(func(ctx context.Context, articleID, body, method string) (bool, error) {
+		if _, err := contentStore.CaptureStructured(ctx, articleID, body, method); err != nil {
+			return false, err
+		}
+		return contentStore.NeedsStaticFetch(ctx, articleID)
+	}, func(ctx context.Context, articleID string) error {
+		return jobs.EnqueueContent(ctx, client, articleID)
 	})
 	if err := client.Start(processContext); err != nil {
 		return fmt.Errorf("start river: %w", err)

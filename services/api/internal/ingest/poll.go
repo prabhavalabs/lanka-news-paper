@@ -26,10 +26,20 @@ type Poller struct {
 	client   *http.Client
 	clusters *cluster.Store
 	pipeline func(context.Context, string) error
+	content  func(context.Context, string, string, string) (bool, error)
+	enrich   func(context.Context, string) error
 }
 
 func (poller *Poller) SetArticlePipeline(start func(context.Context, string) error) {
 	poller.pipeline = start
+}
+
+func (poller *Poller) SetArticleContent(
+	capture func(context.Context, string, string, string) (bool, error),
+	enrich func(context.Context, string) error,
+) {
+	poller.content = capture
+	poller.enrich = enrich
 }
 
 func NewPoller(pool *pgxpool.Pool, logger *slog.Logger, clusters *cluster.Store) *Poller {
@@ -64,13 +74,17 @@ func (poller *Poller) PollAll(ctx context.Context) error {
 	rows, err := poller.pool.Query(ctx, `
 		SELECT DISTINCT ON (e.id)
 		       e.id::text, e.source_id::text, e.endpoint_type, e.url, COALESCE(e.etag, ''), COALESCE(e.last_modified, ''),
-		       r.id::text, r.mode, COALESCE(s.website, ''), s.active
+		       r.id::text, r.mode, COALESCE(s.website, ''), s.active,
+		       compliance.allow_ai_processing
 		FROM source_endpoints e
 		JOIN sources s ON s.id = e.source_id
 		JOIN rights_profiles r ON r.endpoint_id = e.id
+		JOIN source_compliance_reviews compliance ON compliance.source_id = s.id AND compliance.active
 		WHERE NOT e.paused
-		  AND e.endpoint_type IN ('rss', 'atom', 'rest_api')
+		  AND e.endpoint_type IN ('rss', 'atom', 'json_feed', 'rest_api')
 		  AND r.mode NOT IN ('disabled', 'internal_verification')
+		  AND compliance.status IN ('approved', 'restricted')
+		  AND compliance.allow_discovery
 		  AND (r.expires_at IS NULL OR r.expires_at > clock_timestamp())
 		  AND (e.backoff_until IS NULL OR e.backoff_until < clock_timestamp())
 		  AND (e.last_success_at IS NULL
@@ -84,12 +98,12 @@ func (poller *Poller) PollAll(ctx context.Context) error {
 
 	type target struct {
 		endpointID, sourceID, endpointType, rawURL, etag, lastModified, rightsID, mode, website string
-		active                                                                                  bool
+		active, allowAI                                                                         bool
 	}
 	var targets []target
 	for rows.Next() {
 		var item target
-		if err := rows.Scan(&item.endpointID, &item.sourceID, &item.endpointType, &item.rawURL, &item.etag, &item.lastModified, &item.rightsID, &item.mode, &item.website, &item.active); err != nil {
+		if err := rows.Scan(&item.endpointID, &item.sourceID, &item.endpointType, &item.rawURL, &item.etag, &item.lastModified, &item.rightsID, &item.mode, &item.website, &item.active, &item.allowAI); err != nil {
 			return err
 		}
 		targets = append(targets, item)
@@ -98,7 +112,7 @@ func (poller *Poller) PollAll(ctx context.Context) error {
 		return err
 	}
 	for _, item := range targets {
-		if err := poller.pollOne(ctx, item.endpointID, item.sourceID, item.endpointType, item.rawURL, item.etag, item.lastModified, item.rightsID, item.mode, item.website, item.active); err != nil {
+		if err := poller.pollOne(ctx, item.endpointID, item.sourceID, item.endpointType, item.rawURL, item.etag, item.lastModified, item.rightsID, item.mode, item.website, item.active, item.allowAI); err != nil {
 			poller.logger.Error("poll failed", "endpoint", item.endpointID, "error", err)
 		}
 	}
@@ -158,7 +172,7 @@ func (poller *Poller) reclassifyLegacy(ctx context.Context) error {
 	return nil
 }
 
-func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, endpointType, rawURL, etag, lastModified, rightsID, mode, website string, sourceActive bool) error {
+func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, endpointType, rawURL, etag, lastModified, rightsID, mode, website string, sourceActive, allowAI bool) error {
 	startedAt := time.Now().UTC()
 	if !strings.HasPrefix(rawURL, "https://") {
 		return poller.mark(ctx, endpointID, "failed", "only https endpoints are allowed", "", "")
@@ -210,7 +224,7 @@ func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, endpoin
 	}
 	newItems := 0
 	for _, item := range feed.Items {
-		inserted, err := poller.storeItem(ctx, endpointID, sourceID, rightsID, mode, sourceActive, item)
+		inserted, err := poller.storeItem(ctx, endpointID, sourceID, endpointType, rightsID, mode, sourceActive, allowAI, item)
 		if inserted {
 			newItems++
 		}
@@ -225,7 +239,7 @@ func (poller *Poller) pollOne(ctx context.Context, endpointID, sourceID, endpoin
 	return poller.mark(ctx, endpointID, "healthy", "", response.Header.Get("ETag"), response.Header.Get("Last-Modified"))
 }
 
-func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, rightsID, mode string, sourceActive bool, item *gofeed.Item) (bool, error) {
+func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, endpointType, rightsID, mode string, sourceActive, allowAI bool, item *gofeed.Item) (bool, error) {
 	headline := sinhala.NFC(item.Title)
 	if headline == "" || !sinhala.Predominant(headline) {
 		return false, nil
@@ -292,6 +306,11 @@ func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, right
 	`, sourceID, endpointID, rightsID, itemID, link, canonical, headline, item.Title, item.Description, fingerprint, publishedAt, status, publisherCat, confidence, model, author, slug).Scan(&articleID, &inserted)
 	if err != nil {
 		if err == pgx.ErrNoRows {
+			if lookupErr := poller.pool.QueryRow(ctx, `
+				SELECT id FROM articles WHERE source_id = $1 AND source_item_id = $2
+			`, sourceID, itemID).Scan(&articleID); lookupErr == nil {
+				poller.captureArticleContent(ctx, articleID.String(), endpointType, item.Content)
+			}
 			return false, nil
 		}
 		return false, err
@@ -301,15 +320,35 @@ func (poller *Poller) storeItem(ctx context.Context, endpointID, sourceID, right
 			INSERT INTO article_versions (article_id, version, changed_fields)
 			SELECT $1, COALESCE((SELECT max(version) FROM article_versions WHERE article_id = $1), 0) + 1, '{"headline":true}'::jsonb
 		`, articleID)
+		poller.captureArticleContent(ctx, articleID.String(), endpointType, item.Content)
 		return false, nil
 	}
-	if poller.pipeline != nil {
+	poller.captureArticleContent(ctx, articleID.String(), endpointType, item.Content)
+	if allowAI && poller.pipeline != nil {
 		return true, poller.pipeline(ctx, articleID.String())
 	}
 	if status == "published" && poller.clusters != nil {
 		return true, poller.clusters.Attach(ctx, articleID.String())
 	}
 	return true, nil
+}
+
+func (poller *Poller) captureArticleContent(ctx context.Context, articleID, endpointType, rawContent string) {
+	if poller.content != nil {
+		method := "feed_content"
+		if endpointType == "rest_api" {
+			method = "api_content"
+		}
+		needsStatic, contentErr := poller.content(ctx, articleID, rawContent, method)
+		if contentErr != nil {
+			poller.logger.Warn("full article content was not captured", "article", articleID, "error", contentErr)
+		}
+		if needsStatic && poller.enrich != nil {
+			if err := poller.enrich(ctx, articleID); err != nil {
+				poller.logger.Warn("full article enrichment was not queued", "article", articleID, "error", err)
+			}
+		}
+	}
 }
 
 func (poller *Poller) mark(ctx context.Context, endpointID, state, detail, etag, lastModified string) error {
@@ -335,19 +374,23 @@ func (poller *Poller) mark(ctx context.Context, endpointID, state, detail, etag,
 
 func (poller *Poller) PollEndpoint(ctx context.Context, endpointID string) error {
 	var sourceID, endpointType, rawURL, etag, lastModified, rightsID, mode, website string
-	var active bool
+	var active, allowAI bool
 	err := poller.pool.QueryRow(ctx, `
 		SELECT e.source_id::text, e.endpoint_type, e.url, COALESCE(e.etag, ''), COALESCE(e.last_modified, ''),
-		       r.id::text, r.mode, COALESCE(s.website, ''), s.active
+		       r.id::text, r.mode, COALESCE(s.website, ''), s.active,
+		       compliance.allow_ai_processing
 		FROM source_endpoints e
 		JOIN sources s ON s.id = e.source_id
 		JOIN rights_profiles r ON r.endpoint_id = e.id
+		JOIN source_compliance_reviews compliance ON compliance.source_id = s.id AND compliance.active
 		WHERE e.id = $1
+		  AND compliance.status IN ('approved', 'restricted')
+		  AND compliance.allow_discovery
 		ORDER BY r.version DESC
 		LIMIT 1
-	`, endpointID).Scan(&sourceID, &endpointType, &rawURL, &etag, &lastModified, &rightsID, &mode, &website, &active)
+	`, endpointID).Scan(&sourceID, &endpointType, &rawURL, &etag, &lastModified, &rightsID, &mode, &website, &active, &allowAI)
 	if err != nil {
 		return err
 	}
-	return poller.pollOne(ctx, endpointID, sourceID, endpointType, rawURL, etag, lastModified, rightsID, mode, website, active)
+	return poller.pollOne(ctx, endpointID, sourceID, endpointType, rawURL, etag, lastModified, rightsID, mode, website, active, allowAI)
 }
