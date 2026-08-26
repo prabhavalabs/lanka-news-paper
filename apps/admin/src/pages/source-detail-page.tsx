@@ -12,6 +12,7 @@ import {
   ExternalLink,
   FileCheck2,
   Gauge,
+  Newspaper,
   Pause,
   Play,
   Plus,
@@ -404,13 +405,19 @@ export function SourceDetailPage() {
         </div>
 
         {sourceData ? (
-          <Button
-            variant={sourceData.active ? 'outline' : 'default'}
-            onClick={() => setConfirmation({ kind: 'source', nextActive: !sourceData.active })}
-          >
-            {sourceData.active ? <Pause /> : <Play />}
-            {sourceData.active ? 'Hold source' : 'Activate source'}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" nativeButton={false} render={<Link to={`/sources/${id}/feed`} />}>
+              <Newspaper />
+              Source feed
+            </Button>
+            <Button
+              variant={sourceData.active ? 'outline' : 'default'}
+              onClick={() => setConfirmation({ kind: 'source', nextActive: !sourceData.active })}
+            >
+              {sourceData.active ? <Pause /> : <Play />}
+              {sourceData.active ? 'Hold source' : 'Activate source'}
+            </Button>
+          </div>
         ) : null}
       </div>
 

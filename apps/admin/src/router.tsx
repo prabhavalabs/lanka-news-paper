@@ -13,6 +13,7 @@ import { RoutingPage } from './pages/routing-page'
 import { SettingsPage } from './pages/settings-page'
 import { ShellLayout } from './pages/shell-layout'
 import { SourceDetailPage } from './pages/source-detail-page'
+import { SourceFeedPage } from './pages/source-feed-page'
 import { SourcesPage } from './pages/sources-page'
 
 export const router = createBrowserRouter([
@@ -25,6 +26,7 @@ export const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: 'sources', element: <SourcesPage /> },
       { path: 'sources/:id', element: <SourceDetailPage /> },
+      { path: 'sources/:id/feed', element: <SourceFeedPage /> },
       { path: 'articles', element: <ArticlesPage /> },
       { path: 'articles/:id', element: <ArticleDetailPage /> },
       { path: 'knowledge', element: <KnowledgeGraphPage /> },

@@ -14,7 +14,9 @@ const titles: Record<string, string> = {
 
 export function SiteHeader() {
   const location = useLocation()
-  const title = location.pathname.startsWith('/sources/')
+  const title = /^\/sources\/[^/]+\/feed\/?$/.test(location.pathname)
+    ? 'Source feed'
+    : location.pathname.startsWith('/sources/')
     ? 'Source details'
     : (titles[location.pathname] ?? 'News Control Room')
 

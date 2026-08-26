@@ -15,6 +15,8 @@ import (
 type ArticleListItem struct {
 	ID             string     `json:"id"`
 	Headline       string     `json:"headline"`
+	Snippet        string     `json:"snippet"`
+	OriginalURL    string     `json:"original_url"`
 	Status         string     `json:"public_status"`
 	Source         string     `json:"source"`
 	SourceIcon     string     `json:"source_icon"`
@@ -40,6 +42,7 @@ func (store *Store) Articles(ctx context.Context, params pagination.Params, filt
 		FROM articles a
 		JOIN sources s ON s.id = a.source_id
 		LEFT JOIN categories c ON c.id = a.category_id
+		LEFT JOIN article_analysis_documents analysis ON analysis.article_id = a.id
 		LEFT JOIN LATERAL (
 		  SELECT status, current_step, finished_at
 		  FROM article_pipeline_runs WHERE article_id = a.id
@@ -64,7 +67,9 @@ func (store *Store) Articles(ctx context.Context, params pagination.Params, filt
 		return nil, 0, fmt.Errorf("count articles: %w", err)
 	}
 	rows, err := store.pool.Query(ctx, `
-		SELECT a.id::text, a.headline, a.public_status, s.name, COALESCE(s.icon_url, ''),
+		SELECT a.id::text, a.headline,
+		       COALESCE(NULLIF(btrim(analysis.summary_text), ''), NULLIF(btrim(a.description), ''), ''),
+		       a.original_url, a.public_status, s.name, COALESCE(s.icon_url, ''),
 		       c.slug, a.received_at, a.published_at, run.status, run.current_step, run.finished_at
 	`+where+`
 		ORDER BY a.received_at DESC, a.id
@@ -78,7 +83,8 @@ func (store *Store) Articles(ctx context.Context, params pagination.Params, filt
 	for rows.Next() {
 		var item ArticleListItem
 		if err := rows.Scan(
-			&item.ID, &item.Headline, &item.Status, &item.Source, &item.SourceIcon,
+			&item.ID, &item.Headline, &item.Snippet, &item.OriginalURL,
+			&item.Status, &item.Source, &item.SourceIcon,
 			&item.Category, &item.ReceivedAt, &item.PublishedAt, &item.PipelineStatus,
 			&item.CurrentStep, &item.PipelineEnded,
 		); err != nil {

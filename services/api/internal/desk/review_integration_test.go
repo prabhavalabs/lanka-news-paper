@@ -80,6 +80,12 @@ func TestRemoveArticleRecordsActorAndDeleteAction(t *testing.T) {
 
 	articleID := seedEditorialTestArticle(t, ctx, pool)
 	actorID := uuid.New()
+	_, err = pool.Exec(ctx, `
+		INSERT INTO article_analysis_documents (
+			article_id, original_text, cleaned_text, summary_text, cleaner_version
+		) VALUES ($1, 'Original article text', 'Clean article text', 'Concise source feed summary.', 'test-cleaner')
+	`, articleID)
+	require.NoError(t, err)
 
 	err = NewStore(pool).RemoveArticle(ctx, articleID.String(), actorID, "Deleted in integration test")
 	require.NoError(t, err)
@@ -117,6 +123,8 @@ func TestRemoveArticleRecordsActorAndDeleteAction(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	require.Equal(t, 1, total)
+	require.Equal(t, "Concise source feed summary.", items[0].Snippet)
+	require.Equal(t, "https://review-test.invalid/"+articleID.String(), items[0].OriginalURL)
 
 	queueItems, queueTotal, err := NewStore(pool).Queue(ctx, params, "")
 	require.NoError(t, err)

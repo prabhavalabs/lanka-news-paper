@@ -452,6 +452,8 @@ export type QueueItem = {
 export type AdminArticleListItem = {
   id: string;
   headline: string;
+  snippet: string;
+  original_url: string;
   public_status: string;
   source: string;
   source_icon: string;

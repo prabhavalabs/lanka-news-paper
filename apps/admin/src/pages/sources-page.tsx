@@ -6,6 +6,7 @@ import {
   EllipsisVertical,
   ExternalLink,
   Eye,
+  Newspaper,
   Pencil,
   Plus,
   RadioTower,
@@ -441,6 +442,10 @@ export function SourcesPage() {
                         <EllipsisVertical />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-44">
+                        <DropdownMenuItem onClick={() => navigate(`/sources/${source.id}/feed`)}>
+                          <Newspaper />
+                          Source Feed
+                        </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => navigate(`/sources/${source.id}`)}>
                           <Eye />
                           View
