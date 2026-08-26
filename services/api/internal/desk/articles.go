@@ -123,6 +123,8 @@ type PipelineRun struct {
 	ID          string         `json:"id"`
 	Status      string         `json:"status"`
 	Trigger     string         `json:"trigger"`
+	ProviderID  string         `json:"provider_id"`
+	Model       string         `json:"model"`
 	CurrentStep *string        `json:"current_step"`
 	Attempt     int            `json:"attempt"`
 	LastError   *string        `json:"last_error"`
@@ -167,6 +169,8 @@ type ArticleAnalysisDocument struct {
 	SummaryText     string     `json:"summary_text"`
 	SummaryPoints   []string   `json:"summary_points"`
 	CleanerVersion  string     `json:"cleaner_version"`
+	CleanerProvider string     `json:"cleaner_provider"`
+	CleanerModel    string     `json:"cleaner_model"`
 	SummaryProvider string     `json:"summary_provider"`
 	SummaryModel    string     `json:"summary_model"`
 	CleanedAt       time.Time  `json:"cleaned_at"`
@@ -313,11 +317,13 @@ func (store *Store) articleAnalysisDocument(ctx context.Context, articleID strin
 	var points []byte
 	err := store.pool.QueryRow(ctx, `
 		SELECT original_text, cleaned_text, summary_text, summary_points,
-		       cleaner_version, summary_provider, summary_model, cleaned_at, summarized_at
+		       cleaner_version, cleaner_provider, cleaner_model,
+		       summary_provider, summary_model, cleaned_at, summarized_at
 		FROM article_analysis_documents WHERE article_id = $1
 	`, articleID).Scan(
 		&item.OriginalText, &item.CleanedText, &item.SummaryText, &points,
-		&item.CleanerVersion, &item.SummaryProvider, &item.SummaryModel,
+		&item.CleanerVersion, &item.CleanerProvider, &item.CleanerModel,
+		&item.SummaryProvider, &item.SummaryModel,
 		&item.CleanedAt, &item.SummarizedAt,
 	)
 	if err == pgx.ErrNoRows {
@@ -399,7 +405,8 @@ func (store *Store) articlePolitical(ctx context.Context, articleID string) (*Ar
 
 func (store *Store) pipelineRuns(ctx context.Context, articleID string) ([]PipelineRun, error) {
 	rows, err := store.pool.Query(ctx, `
-		SELECT id::text, status, trigger, current_step, attempt, last_error,
+		SELECT id::text, status, trigger, COALESCE(provider_id, ''), COALESCE(provider_model, ''),
+		       current_step, attempt, last_error,
 		       created_at, started_at, finished_at
 		FROM article_pipeline_runs WHERE article_id = $1
 		ORDER BY created_at DESC LIMIT 10
@@ -410,7 +417,8 @@ func (store *Store) pipelineRuns(ctx context.Context, articleID string) ([]Pipel
 	var runs []PipelineRun
 	for rows.Next() {
 		var run PipelineRun
-		if err := rows.Scan(&run.ID, &run.Status, &run.Trigger, &run.CurrentStep, &run.Attempt,
+		if err := rows.Scan(&run.ID, &run.Status, &run.Trigger, &run.ProviderID, &run.Model,
+			&run.CurrentStep, &run.Attempt,
 			&run.LastError, &run.CreatedAt, &run.StartedAt, &run.FinishedAt); err != nil {
 			rows.Close()
 			return nil, err

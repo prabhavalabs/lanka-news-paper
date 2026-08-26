@@ -122,21 +122,25 @@ func (client *CodexClient) Complete(ctx context.Context, model, prompt string, s
 		return "", fmt.Errorf("create isolated Codex workspace: %w", err)
 	}
 	defer os.RemoveAll(directory)
-	schemaData, err := json.Marshal(schema)
-	if err != nil {
-		return "", fmt.Errorf("encode Codex output schema: %w", err)
-	}
-	schemaPath := filepath.Join(directory, "output-schema.json")
-	if err := os.WriteFile(schemaPath, schemaData, 0o600); err != nil {
-		return "", fmt.Errorf("write Codex output schema: %w", err)
-	}
 	arguments := []string{
 		"exec", "--ephemeral", "--ignore-user-config", "--ignore-rules",
 		"--skip-git-repo-check", "--sandbox", "read-only", "--color", "never",
 		"--disable", "shell_tool", "--disable", "unified_exec", "--disable", "browser_use",
 		"--disable", "computer_use", "--disable", "apps", "--disable", "multi_agent",
-		"--model", model, "--output-schema", schemaPath, "-",
+		"--model", model,
 	}
+	if schema != nil {
+		schemaData, err := json.Marshal(schema)
+		if err != nil {
+			return "", fmt.Errorf("encode Codex output schema: %w", err)
+		}
+		schemaPath := filepath.Join(directory, "output-schema.json")
+		if err := os.WriteFile(schemaPath, schemaData, 0o600); err != nil {
+			return "", fmt.Errorf("write Codex output schema: %w", err)
+		}
+		arguments = append(arguments, "--output-schema", schemaPath)
+	}
+	arguments = append(arguments, "-")
 	stdout, stderr, err := client.runner.Run(ctx, path, arguments, prompt, directory)
 	if err != nil {
 		detail := truncateRunes(strings.TrimSpace(stderr), 1000)

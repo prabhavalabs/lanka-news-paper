@@ -507,6 +507,8 @@ export type PipelineRun = {
   id: string;
   status: "queued" | "running" | "succeeded" | "failed";
   trigger: string;
+  provider_id: string;
+  model: string;
   current_step: string | null;
   attempt: number;
   last_error: string | null;
@@ -681,6 +683,8 @@ export type AdminArticleDetail = {
     summary_text: string;
     summary_points: string[];
     cleaner_version: string;
+    cleaner_provider: string;
+    cleaner_model: string;
     summary_provider: string;
     summary_model: string;
     cleaned_at: string;

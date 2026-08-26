@@ -55,8 +55,11 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	news := publish.NewStore(pool)
-	model := llm.NewGateway(pool)
-	adminAnalysis := adminanalysis.NewService(adminanalysis.NewStore(pool), model, adminanalysis.NewCodexClient(nil))
+	gateway := llm.NewGateway(pool)
+	analysisStore := adminanalysis.NewStore(pool)
+	codex := adminanalysis.NewCodexClient(nil)
+	model := llm.NewRouter(gateway, adminanalysis.NewCodexProvider(analysisStore, codex))
+	adminAnalysis := adminanalysis.NewService(analysisStore, model, codex)
 	clusters := cluster.NewStore(pool)
 	politicsStore := politics.NewStore(pool, model)
 	pipelineStore := pipeline.NewStore(pool, model, clusters, politicsStore)

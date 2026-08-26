@@ -30,16 +30,11 @@ type CreateRequest struct {
 
 func ValidateCreateRequest(request CreateRequest) error {
 	workflow := normalizeWorkflow(request.Workflow)
-	if workflow == "full_pipeline" {
-		if request.Provider != "pipeline" {
-			return errors.New("provider must be pipeline for a full editorial pipeline")
-		}
-	} else if workflow == "single_pass" {
-		if request.Provider != "openrouter" && request.Provider != "codex_cli" {
-			return errors.New("provider must be openrouter or codex_cli for a single-pass analysis")
-		}
-	} else {
+	if workflow != "single_pass" && workflow != "full_pipeline" {
 		return errors.New("workflow must be single_pass or full_pipeline")
+	}
+	if request.Provider != "openrouter" && request.Provider != "codex_cli" {
+		return errors.New("provider must be openrouter or codex_cli")
 	}
 	request.Model = strings.TrimSpace(request.Model)
 	if request.Model == "" {

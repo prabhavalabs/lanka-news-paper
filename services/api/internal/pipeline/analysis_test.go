@@ -23,7 +23,7 @@ func TestCleanArticleTextNormalizesMarkupLinksAndWhitespace(t *testing.T) {
 
 	cleaned := cleanArticleText(input)
 
-	require.Equal(t, "The cabinet approved the proposal. Read more at More details follow.", cleaned)
+	require.Equal(t, "The cabinet approved the proposal.\n\nRead more at More details follow.", cleaned)
 }
 
 func TestCleanArticleTextCutsInlineWebsiteNavigation(t *testing.T) {
@@ -38,13 +38,32 @@ politics Sri Lanka Previous article වෙනත් පුවත Share post: Fac
 
 func TestParseArticleSummaryAcceptsStructuredSummary(t *testing.T) {
 	result, err := parseArticleSummary(`{
-	  "summary": "The cabinet approved the proposal after reviewing its financial impact.",
-	  "key_points": ["Cabinet approval", "Financial impact reviewed"]
+	  "summary": "The cabinet approved the proposal after reviewing its financial impact.\n\nThe change will now proceed to Parliament."
 	}`)
 
 	require.NoError(t, err)
-	require.Equal(t, "The cabinet approved the proposal after reviewing its financial impact.", result.Summary)
-	require.Equal(t, []string{"Cabinet approval", "Financial impact reviewed"}, result.KeyPoints)
+	require.Equal(t, "The cabinet approved the proposal after reviewing its financial impact.\n\nThe change will now proceed to Parliament.", result.Summary)
+}
+
+func TestCleanArticleTextPreservesReadableMarkdownAndRemovesArtifacts(t *testing.T) {
+	input := "\ufeff<h2>Policy update</h2><p>The cabinet\u200b approved the plan � today.</p><p>Read: [source](https://example.com/story)</p>"
+
+	cleaned := cleanArticleText(input)
+
+	require.Equal(t, "## Policy update\n\nThe cabinet approved the plan today.\n\nRead: source", cleaned)
+}
+
+func TestParseCleanedArticleRejectsEmptyMarkdown(t *testing.T) {
+	_, err := parseCleanedArticle(`{"markdown":"\u200b�"}`)
+
+	require.Error(t, err)
+}
+
+func TestParseArticleSummaryConvertsListsIntoParagraphs(t *testing.T) {
+	result, err := parseArticleSummary(`{"summary":"- Cabinet approved the plan.\n- Parliament will debate it tomorrow."}`)
+
+	require.NoError(t, err)
+	require.Equal(t, "Cabinet approved the plan. Parliament will debate it tomorrow.", result.Summary)
 }
 
 func TestParseEventSummaryRejectsEmptyOutput(t *testing.T) {

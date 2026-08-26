@@ -206,7 +206,9 @@ func (worker *AdminArticleAnalysisWorker) Work(ctx context.Context, job *river.J
 		}
 		var pipelineRunID string
 		if err == nil {
-			pipelineRunID, err = worker.Pipeline.Start(ctx, job.Args.ArticleID, "admin_backfill")
+			pipelineRunID, err = worker.Pipeline.StartWithModel(
+				ctx, job.Args.ArticleID, "admin_backfill", run.Provider, run.Model,
+			)
 		}
 		if err == nil {
 			err = worker.Pipeline.Process(ctx, pipelineRunID)

@@ -62,9 +62,12 @@ func run(logger *slog.Logger) error {
 
 	clusters := cluster.NewStore(pool)
 	gateway := llm.NewGateway(pool)
-	adminAnalysis := adminanalysis.NewService(adminanalysis.NewStore(pool), gateway, adminanalysis.NewCodexClient(nil))
-	politicsStore := politics.NewStore(pool, gateway)
-	pipelineStore := pipeline.NewStore(pool, gateway, clusters, politicsStore)
+	analysisStore := adminanalysis.NewStore(pool)
+	codex := adminanalysis.NewCodexClient(nil)
+	model := llm.NewRouter(gateway, adminanalysis.NewCodexProvider(analysisStore, codex))
+	adminAnalysis := adminanalysis.NewService(analysisStore, model, codex)
+	politicsStore := politics.NewStore(pool, model)
+	pipelineStore := pipeline.NewStore(pool, model, clusters, politicsStore)
 	producer, err := jobs.NewProducer(pool, logger)
 	if err != nil {
 		return err

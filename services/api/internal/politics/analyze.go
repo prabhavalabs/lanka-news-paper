@@ -56,10 +56,10 @@ type Result struct {
 
 type Store struct {
 	pool  *pgxpool.Pool
-	model *llm.Gateway
+	model llm.Completer
 }
 
-func NewStore(pool *pgxpool.Pool, model *llm.Gateway) *Store {
+func NewStore(pool *pgxpool.Pool, model llm.Completer) *Store {
 	return &Store{pool: pool, model: model}
 }
 
@@ -127,6 +127,10 @@ func (store *Store) Backfill(ctx context.Context, limit int) error {
 }
 
 func (store *Store) AnalyzeArticle(ctx context.Context, articleID, runID, stepID string) (Result, error) {
+	return store.AnalyzeArticleWithModel(ctx, articleID, runID, stepID, "", "")
+}
+
+func (store *Store) AnalyzeArticleWithModel(ctx context.Context, articleID, runID, stepID, provider, model string) (Result, error) {
 	var headline, description, cleaned, summary string
 	if err := store.pool.QueryRow(ctx, `
 		SELECT article.headline, COALESCE(article.description, ''),
@@ -146,11 +150,17 @@ func (store *Store) AnalyzeArticle(ctx context.Context, articleID, runID, stepID
 	if err != nil {
 		return Result{}, err
 	}
-	response, err := store.model.Complete(ctx, llm.Request{
+	request := llm.Request{
 		Task: task, System: systemPrompt, Input: string(input), JSONSchema: schema,
 		DisableReasoning: true, MaxTokens: 1024, ArticleID: articleID,
 		PipelineRunID: runID, PipelineStepID: stepID,
-	})
+	}
+	var response llm.Response
+	if provider != "" {
+		response, err = store.model.CompleteWithModel(ctx, request, provider, model)
+	} else {
+		response, err = store.model.Complete(ctx, request)
+	}
 	if err != nil {
 		return Result{}, fmt.Errorf("analyze article %s: %w", articleID, err)
 	}

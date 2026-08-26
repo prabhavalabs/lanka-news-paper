@@ -3,6 +3,7 @@ package adminanalysis
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -72,4 +73,28 @@ func TestCodexProbeReportsMissingBinary(t *testing.T) {
 	require.False(t, status.Installed)
 	require.False(t, status.Ready)
 	require.Contains(t, status.Detail, "not installed")
+}
+
+type recordingProcessRunner struct {
+	arguments []string
+}
+
+func (*recordingProcessRunner) LookPath(string) (string, error) {
+	return "/usr/local/bin/codex", nil
+}
+
+func (runner *recordingProcessRunner) Run(_ context.Context, _ string, arguments []string, _ string, _ string) (string, string, error) {
+	runner.arguments = append([]string(nil), arguments...)
+	return "politics", "", nil
+}
+
+func TestCodexCompletionAllowsTasksWithoutStructuredSchema(t *testing.T) {
+	runner := &recordingProcessRunner{}
+	client := NewCodexClient(runner)
+
+	output, err := client.Complete(context.Background(), "gpt-test", "Classify this article", nil)
+
+	require.NoError(t, err)
+	require.Equal(t, "politics", output)
+	require.False(t, slices.Contains(runner.arguments, "--output-schema"))
 }

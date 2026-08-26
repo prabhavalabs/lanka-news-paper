@@ -31,17 +31,32 @@ Use the article meaning, not isolated keywords. Return only the lowercase slug a
 
 type Store struct {
 	pool     *pgxpool.Pool
-	model    *llm.Gateway
+	model    llm.Completer
 	clusters *cluster.Store
 	politics *politics.Store
 }
 
-func NewStore(pool *pgxpool.Pool, model *llm.Gateway, clusters *cluster.Store, politicsStore *politics.Store) *Store {
+type modelSelection struct {
+	provider string
+	model    string
+}
+
+func NewStore(pool *pgxpool.Pool, model llm.Completer, clusters *cluster.Store, politicsStore *politics.Store) *Store {
 	return &Store{pool: pool, model: model, clusters: clusters, politics: politicsStore}
 }
 
 func (store *Store) Start(ctx context.Context, articleID, trigger string) (string, error) {
-	return store.start(ctx, articleID, trigger, "", false)
+	return store.start(ctx, articleID, trigger, "", modelSelection{}, false)
+}
+
+// StartWithModel freezes one provider/model selection for every AI-backed
+// stage in an administrative pipeline run.
+func (store *Store) StartWithModel(ctx context.Context, articleID, trigger, provider, model string) (string, error) {
+	selection := modelSelection{provider: strings.TrimSpace(provider), model: strings.TrimSpace(model)}
+	if selection.provider == "" || selection.model == "" {
+		return "", fmt.Errorf("provider and model are required for an explicit pipeline run")
+	}
+	return store.start(ctx, articleID, trigger, "", selection, true)
 }
 
 func (store *Store) Run(ctx context.Context, articleID, stepName string) (string, error) {
@@ -51,7 +66,7 @@ func (store *Store) Run(ctx context.Context, articleID, stepName string) (string
 	if !validStep(stepName) {
 		return "", fmt.Errorf("unknown pipeline step %q", stepName)
 	}
-	return store.start(ctx, articleID, "manual", stepName, true)
+	return store.start(ctx, articleID, "manual", stepName, modelSelection{}, true)
 }
 
 func validStep(name string) bool {
@@ -66,7 +81,7 @@ func validStep(name string) bool {
 	return false
 }
 
-func (store *Store) start(ctx context.Context, articleID, trigger, selectedStep string, rejectActive bool) (string, error) {
+func (store *Store) start(ctx context.Context, articleID, trigger, selectedStep string, selection modelSelection, rejectActive bool) (string, error) {
 	if trigger == "" {
 		trigger = "ingestion"
 	}
@@ -78,8 +93,8 @@ func (store *Store) start(ctx context.Context, articleID, trigger, selectedStep 
 
 	var runID string
 	insertRun := `
-		INSERT INTO article_pipeline_runs (article_id, trigger)
-		SELECT article.id, $2
+		INSERT INTO article_pipeline_runs (article_id, trigger, provider_id, provider_model)
+		SELECT article.id, $2, NULLIF($4, ''), NULLIF($5, '')
 		FROM articles article
 		JOIN source_compliance_reviews compliance
 		  ON compliance.source_id = article.source_id AND compliance.active
@@ -92,8 +107,8 @@ func (store *Store) start(ctx context.Context, articleID, trigger, selectedStep 
 	`
 	if rejectActive {
 		insertRun = `
-			INSERT INTO article_pipeline_runs (article_id, trigger)
-			SELECT article.id, $2
+			INSERT INTO article_pipeline_runs (article_id, trigger, provider_id, provider_model)
+			SELECT article.id, $2, NULLIF($4, ''), NULLIF($5, '')
 			FROM articles article
 			JOIN source_compliance_reviews compliance
 			  ON compliance.source_id = article.source_id AND compliance.active
@@ -104,7 +119,7 @@ func (store *Store) start(ctx context.Context, articleID, trigger, selectedStep 
 			RETURNING id::text
 		`
 	}
-	err = tx.QueryRow(ctx, insertRun, articleID, trigger).Scan(&runID)
+	err = tx.QueryRow(ctx, insertRun, articleID, trigger, selectedStep, selection.provider, selection.model).Scan(&runID)
 	if err == pgx.ErrNoRows {
 		if rejectActive {
 			return "", fmt.Errorf("article pipeline is already active or AI processing is not approved")
@@ -138,7 +153,8 @@ func (store *Store) start(ctx context.Context, articleID, trigger, selectedStep 
 		       CASE WHEN $3::text = '' OR name = $3 THEN 'step_queued' ELSE 'step_skipped' END,
 		       CASE WHEN $3::text = '' OR name = $3 THEN 'Step queued' ELSE 'Step not selected' END,
 		       jsonb_build_object('position', position, 'trigger', $2::text,
-		                          'selected_step', NULLIF($3::text, ''))
+		                          'selected_step', NULLIF($3::text, ''),
+		                          'provider', NULLIF($4::text, ''), 'model', NULLIF($5::text, ''))
 		FROM article_pipeline_steps step
 		WHERE step.run_id = $1
 		  AND NOT EXISTS (
@@ -146,7 +162,7 @@ func (store *Store) start(ctx context.Context, articleID, trigger, selectedStep 
 		    WHERE log.step_id = step.id AND log.event = 'step_queued'
 		  )
 		ORDER BY step.position
-	`, runID, trigger, selectedStep); err != nil {
+	`, runID, trigger, selectedStep, selection.provider, selection.model); err != nil {
 		return "", fmt.Errorf("log pipeline creation: %w", err)
 	}
 	return runID, tx.Commit(ctx)
@@ -273,6 +289,13 @@ type stepResult struct {
 	skipped bool
 }
 
+func (store *Store) complete(ctx context.Context, request llm.Request, selection modelSelection) (llm.Response, error) {
+	if selection.provider != "" {
+		return store.model.CompleteWithModel(ctx, request, selection.provider, selection.model)
+	}
+	return store.model.Complete(ctx, request)
+}
+
 func (store *Store) Process(ctx context.Context, runID string) error {
 	allowed, err := store.aiProcessingAllowed(ctx, runID)
 	if err != nil {
@@ -283,13 +306,14 @@ func (store *Store) Process(ctx context.Context, runID string) error {
 	}
 
 	var articleID string
+	var selection modelSelection
 	if err := store.pool.QueryRow(ctx, `
 		UPDATE article_pipeline_runs
 		SET status = 'running', attempt = attempt + 1, started_at = COALESCE(started_at, clock_timestamp()),
 		    finished_at = NULL, last_error = NULL, updated_at = clock_timestamp()
 		WHERE id = $1 AND status IN ('queued', 'running', 'failed')
-		RETURNING article_id::text
-	`, runID).Scan(&articleID); err != nil {
+		RETURNING article_id::text, COALESCE(provider_id, ''), COALESCE(provider_model, '')
+	`, runID).Scan(&articleID, &selection.provider, &selection.model); err != nil {
 		return fmt.Errorf("start pipeline run %s: %w", runID, err)
 	}
 
@@ -344,7 +368,7 @@ func (store *Store) Process(ctx context.Context, runID string) error {
 			"attempt": item.attempt + 1, "max_attempts": item.maxAttempts,
 		})
 
-		result, err := store.execute(ctx, articleID, runID, item)
+		result, err := store.execute(ctx, articleID, runID, item, selection)
 		if err != nil {
 			detail := truncate(err.Error(), 2000)
 			_, _ = store.pool.Exec(ctx, `
@@ -455,27 +479,27 @@ func (store *Store) skipUnapprovedRun(ctx context.Context, runID string) error {
 	return tx.Commit(ctx)
 }
 
-func (store *Store) execute(ctx context.Context, articleID, runID string, item step) (stepResult, error) {
+func (store *Store) execute(ctx context.Context, articleID, runID string, item step, selection modelSelection) (stepResult, error) {
 	switch item.name {
 	case "content_cleaning":
-		return store.cleanContent(ctx, articleID)
+		return store.cleanContent(ctx, articleID, runID, item.id, selection)
 	case "summarization":
-		return store.summarize(ctx, articleID, runID, item.id)
+		return store.summarize(ctx, articleID, runID, item.id, selection)
 	case "categorization":
-		return store.categorize(ctx, articleID, runID, item.id)
+		return store.categorize(ctx, articleID, runID, item.id, selection)
 	case "event_clustering":
 		return store.cluster(ctx, articleID)
 	case "stance_evaluation", "narration_analysis":
-		result, err := store.politics.AnalyzeArticle(ctx, articleID, runID, item.id)
+		result, err := store.politics.AnalyzeArticleWithModel(ctx, articleID, runID, item.id, selection.provider, selection.model)
 		return stepResult{output: result}, err
 	case "event_synthesis":
-		return store.synthesizeEvent(ctx, articleID, runID, item.id)
+		return store.synthesizeEvent(ctx, articleID, runID, item.id, selection)
 	default:
 		return stepResult{}, fmt.Errorf("unknown pipeline step %q", item.name)
 	}
 }
 
-func (store *Store) categorize(ctx context.Context, articleID, runID, stepID string) (stepResult, error) {
+func (store *Store) categorize(ctx context.Context, articleID, runID, stepID string, selection modelSelection) (stepResult, error) {
 	var publisherCategory, headline, description string
 	if err := store.pool.QueryRow(ctx, `
 		SELECT COALESCE(article.publisher_category, ''), article.headline,
@@ -493,12 +517,12 @@ func (store *Store) categorize(ctx context.Context, articleID, runID, stepID str
 	result := classify.From(categories, headline, description)
 	provider, model := "keyword-rules", result.Model
 	if result.Confidence < 0.55 && store.model != nil {
-		response, err := store.model.Complete(ctx, llm.Request{
+		response, err := store.complete(ctx, llm.Request{
 			Task: "classify", System: classificationPrompt,
 			Input:            headline + "\n\n" + truncate(description, 3000),
 			DisableReasoning: true, MaxTokens: 64, ArticleID: articleID,
 			PipelineRunID: runID, PipelineStepID: stepID,
-		})
+		}, selection)
 		if err != nil {
 			return stepResult{}, err
 		}

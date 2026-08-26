@@ -33,13 +33,13 @@ func TestValidateCreateRequestRejectsUnsupportedProvider(t *testing.T) {
 		Scope: "article", Provider: "unknown", Model: "model", ArticleID: "4dc5d133-073d-40a8-95ac-7d9871991b4a",
 	})
 
-	require.EqualError(t, err, "provider must be openrouter or codex_cli for a single-pass analysis")
+	require.EqualError(t, err, "provider must be openrouter or codex_cli")
 }
 
 func TestValidateCreateRequestAcceptsFullEditorialPipeline(t *testing.T) {
 	err := ValidateCreateRequest(CreateRequest{
-		Scope: "article", Workflow: "full_pipeline", Provider: "pipeline",
-		Model: "configured-profiles", ArticleID: "4dc5d133-073d-40a8-95ac-7d9871991b4a",
+		Scope: "article", Workflow: "full_pipeline", Provider: "codex_cli",
+		Model: "gpt-5.6-terra", ArticleID: "4dc5d133-073d-40a8-95ac-7d9871991b4a",
 	})
 
 	require.NoError(t, err)
@@ -51,7 +51,7 @@ func TestValidateCreateRequestRejectsPipelineProviderForSinglePass(t *testing.T)
 		Model: "configured-profiles", ArticleID: "4dc5d133-073d-40a8-95ac-7d9871991b4a",
 	})
 
-	require.EqualError(t, err, "provider must be openrouter or codex_cli for a single-pass analysis")
+	require.EqualError(t, err, "provider must be openrouter or codex_cli")
 }
 
 func TestParseInsightAcceptsStrictStructuredOutput(t *testing.T) {

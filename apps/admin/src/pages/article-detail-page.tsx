@@ -13,6 +13,7 @@ import { Link, useParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { SourceAvatar } from '@/components/source-avatar'
+import { RichArticleContent } from '@/components/rich-article-content'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -532,9 +533,10 @@ function RunContext({ run, runs, onChangeRun }: { run: PipelineRun; runs: Pipeli
           </select>
         ) : null}
       </div>
-      <dl className="mt-5 grid gap-4 rounded-2xl border bg-muted/15 p-4 text-sm sm:grid-cols-3">
+      <dl className="mt-5 grid gap-4 rounded-2xl border bg-muted/15 p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
         <Detail label="Run ID" value={run.id} />
         <Detail label="Trigger" value={run.trigger} />
+        <Detail label="Inference" value={run.provider_id ? `${run.provider_id} · ${run.model}` : 'Configured task profiles'} />
         <Detail label="Started" value={run.started_at ? date.format(new Date(run.started_at)) : 'Waiting'} />
       </dl>
       {run.last_error ? <div className="mt-4 flex gap-3 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm"><TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" /><div><p className="font-medium">Last failure</p><p className="mt-1 break-words text-muted-foreground">{run.last_error}</p></div></div> : null}
@@ -687,17 +689,17 @@ function ContentVersionsCard({ content, analysis }: {
   return (
     <Card>
       <CardHeader className="gap-4 border-b sm:flex sm:flex-row sm:items-start sm:justify-between">
-        <div><CardTitle>Article content versions</CardTitle><CardDescription>Compare the captured original, deterministic clean copy, and model-generated summary.</CardDescription></div>
+        <div><CardTitle>Article content versions</CardTitle><CardDescription>Compare the captured original, AI-formatted Markdown, and paragraph summary.</CardDescription></div>
         <div className="grid grid-cols-3 gap-1 rounded-xl bg-muted p-1" aria-label="Article content version">
           {(['original', 'cleaned', 'summary'] as const).map((item) => <Button key={item} size="sm" variant={version === item ? 'default' : 'ghost'} disabled={!versions[item]} onClick={() => setVersion(item)} className="capitalize">{item}</Button>)}
         </div>
       </CardHeader>
       <CardContent className="space-y-5 pt-6">
-        {selected ? <p className="max-h-[34rem] overflow-y-auto whitespace-pre-line rounded-2xl border bg-muted/10 p-4 text-sm leading-7">{selected}</p> : <p className="rounded-2xl border border-dashed p-6 text-sm text-muted-foreground">This version has not been produced yet.</p>}
+        {selected ? <ScrollArea className="h-[34rem] rounded-2xl border bg-muted/10"><RichArticleContent value={selected} className="p-4" /></ScrollArea> : <p className="rounded-2xl border border-dashed p-6 text-sm text-muted-foreground">This version has not been produced yet.</p>}
         {version === 'summary' && analysis?.summary_points.length ? <ul className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">{analysis.summary_points.map((point) => <li key={point} className="rounded-xl border p-3">{point}</li>)}</ul> : null}
         <dl className="grid gap-4 border-t pt-5 text-sm sm:grid-cols-2 lg:grid-cols-4">
           <Detail label="Original acquisition" value={content ? content.acquisition_method.replaceAll('_', ' ') : 'Unavailable'} />
-          <Detail label="Cleaner" value={analysis?.cleaner_version ?? 'Pending'} />
+          <Detail label="Cleaner" value={analysis?.cleaner_model ? `${analysis.cleaner_provider} · ${analysis.cleaner_model}` : analysis?.cleaner_version ?? 'Pending'} />
           <Detail label="Summary model" value={analysis?.summary_model || 'Pending'} />
           <Detail label="Visibility" value="Admin only" />
         </dl>

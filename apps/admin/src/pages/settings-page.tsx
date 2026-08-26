@@ -102,19 +102,19 @@ export function SettingsPage() {
   const backfillRequest = useMemo<AnalysisBackfillRequest>(() => ({
     scope,
     workflow,
-    provider: workflow === 'full_pipeline' ? 'pipeline' : provider,
-    model: workflow === 'full_pipeline' ? 'configured-profiles' : model,
+    provider,
+    model,
     ...(scope === 'date_range' ? { from, to } : {}),
     ...(scope === 'article' && selectedArticle ? { article_id: selectedArticle.id } : {}),
   }), [from, model, provider, scope, selectedArticle, to, workflow])
   const previewRequest = useMemo<AnalysisBackfillRequest>(() => ({
     scope,
     workflow,
-    provider: workflow === 'full_pipeline' ? 'pipeline' : 'openrouter',
-    model: workflow === 'full_pipeline' ? 'configured-profiles' : 'preview',
+    provider,
+    model: model || 'preview',
     ...(scope === 'date_range' ? { from, to } : {}),
     ...(scope === 'article' && selectedArticle ? { article_id: selectedArticle.id } : {}),
-  }), [from, scope, selectedArticle, to, workflow])
+  }), [from, model, provider, scope, selectedArticle, to, workflow])
   const previewReady = Boolean(
     (scope !== 'date_range' || (from && to && from <= to)) &&
     (scope !== 'article' || selectedArticle),
@@ -125,7 +125,7 @@ export function SettingsPage() {
     enabled: previewReady,
     staleTime: 10_000,
   })
-  const providerReady = workflow === 'full_pipeline' || (provider === 'openrouter' ? Boolean(openRouter.data?.available) : Boolean(codex.data?.ready))
+  const providerReady = provider === 'openrouter' ? Boolean(openRouter.data?.available) : Boolean(codex.data?.ready)
   const catalogConfirmed = scope !== 'catalog' || confirmation === 'BACKFILL ENTIRE CATALOG'
 
   const start = useMutation({
@@ -184,7 +184,7 @@ export function SettingsPage() {
         <ProviderCard
           icon={TerminalSquare}
           name="Codex CLI"
-          description="Available only for exceptional administrative backfills at this stage."
+          description="Pluggable local provider for single-pass analysis and complete editorial backfills."
           ready={Boolean(codex.data?.ready)}
           pending={codex.isPending}
           detail={codex.data?.detail ?? 'Checking installation and authentication…'}
@@ -227,29 +227,26 @@ export function SettingsPage() {
             </Field>
             {workflow === 'full_pipeline' ? (
               <div className="sm:col-span-2">
-                <PipelineStages />
+                <PipelineStages provider={provider} model={model} />
               </div>
-            ) : (
-              <>
-                <Field label="Provider" htmlFor="backfill-provider">
-                  <Select value={provider} onValueChange={(value) => { setProvider(value as AnalysisBackfillProvider); setSelectedModel('') }}>
-                    <SelectTrigger id="backfill-provider" className="w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="openrouter">OpenRouter (default)</SelectItem>
-                      <SelectItem value="codex_cli">Codex CLI</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field label="Model" htmlFor="backfill-model">
-                  <Select value={model} onValueChange={(value) => setSelectedModel(value ?? '')} disabled={availableModels.length === 0}>
-                    <SelectTrigger id="backfill-model" className="w-full min-w-0"><SelectValue placeholder="No compatible models available" /></SelectTrigger>
-                    <SelectContent className="max-w-[calc(100vw-2rem)] sm:max-w-xl">
-                      {availableModels.map((item) => <SelectItem key={item} value={item} className="max-w-full"><span className="block max-w-[70vw] truncate sm:max-w-lg">{modelName(item, models.data?.items)}</span></SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </Field>
-              </>
-            )}
+            ) : null}
+            <Field label="Provider" htmlFor="backfill-provider">
+              <Select value={provider} onValueChange={(value) => { setProvider(value as AnalysisBackfillProvider); setSelectedModel('') }}>
+                <SelectTrigger id="backfill-provider" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="openrouter">OpenRouter (default)</SelectItem>
+                  <SelectItem value="codex_cli">Codex CLI</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Model" htmlFor="backfill-model">
+              <Select value={model} onValueChange={(value) => setSelectedModel(value ?? '')} disabled={availableModels.length === 0}>
+                <SelectTrigger id="backfill-model" className="w-full min-w-0"><SelectValue placeholder="No compatible models available" /></SelectTrigger>
+                <SelectContent className="max-w-[calc(100vw-2rem)] sm:max-w-xl">
+                  {availableModels.map((item) => <SelectItem key={item} value={item} className="max-w-full"><span className="block max-w-[70vw] truncate sm:max-w-lg">{modelName(item, models.data?.items)}</span></SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
 
             {scope === 'date_range' ? (
               <>
@@ -297,7 +294,7 @@ export function SettingsPage() {
             <Button
               size="lg"
               className="w-full"
-              disabled={(workflow === 'single_pass' && !model) || !providerReady || !catalogConfirmed || !preview.data?.articles || start.isPending}
+              disabled={!model || !providerReady || !catalogConfirmed || !preview.data?.articles || start.isPending}
               onClick={() => start.mutate()}
             >
               {start.isPending ? <LoaderCircle className="animate-spin" /> : <DatabaseZap />}
@@ -349,7 +346,7 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor: string; c
   return <div className="min-w-0"><Label htmlFor={htmlFor}>{label}</Label><div className="mt-2">{children}</div></div>
 }
 
-function PipelineStages() {
+function PipelineStages({ provider, model }: { provider: AnalysisBackfillProvider; model: string }) {
   const stages = ['Clean', 'Summarize', 'Categorize', 'Cluster', 'Evaluate stance', 'Synthesize event']
   return (
     <div className="rounded-xl border bg-muted/20 p-4">
@@ -358,7 +355,7 @@ function PipelineStages() {
         <p className="text-sm font-medium">Full editorial pipeline</p>
       </div>
       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-        Uses the configured model profile for each stage and refreshes the cross-source event analysis as articles complete.
+        Pins {providerLabel(provider)}{model ? ` · ${model}` : ''} to every AI-backed stage and refreshes cross-source event analysis as articles complete.
       </p>
       <div className="mt-4 grid gap-2 sm:grid-cols-3">
         {stages.map((stage, index) => (
@@ -418,7 +415,7 @@ function BackfillRunRow({ run }: { run: AnalysisBackfillRun }) {
     <div className="grid gap-4 border-b p-5 last:border-b-0 sm:p-6 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)] xl:items-center">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2"><BackfillStatus status={run.status} /><Badge variant="secondary">{workflowLabel(run.workflow)}</Badge><Badge variant="outline">{scopeLabel(run.scope)}</Badge></div>
-        <p className="mt-3 truncate font-medium" title={run.model}>{run.workflow === 'full_pipeline' ? 'Configured stage profiles' : `${providerLabel(run.provider)} · ${run.model}`}</p>
+        <p className="mt-3 truncate font-medium" title={run.model}>{`${providerLabel(run.provider)} · ${run.model}`}</p>
         <p className="mt-1 text-xs text-muted-foreground">Created by {run.created_by} · {dateTime.format(new Date(run.created_at))}</p>
         {run.error_detail ? <p className="mt-2 text-xs text-destructive">{run.error_detail}</p> : null}
       </div>

@@ -9,7 +9,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
 )
 
-func (store *Store) cleanContent(ctx context.Context, articleID string) (stepResult, error) {
+func (store *Store) cleanContent(ctx context.Context, articleID, runID, stepID string, selection modelSelection) (stepResult, error) {
 	var sourceContentID *string
 	var original string
 	if err := store.pool.QueryRow(ctx, `
@@ -29,10 +29,31 @@ func (store *Store) cleanContent(ctx context.Context, articleID string) (stepRes
 	if cleaned == "" {
 		return stepResult{}, fmt.Errorf("article content is empty after cleaning")
 	}
+	provider, model := "deterministic", cleanerVersion
+	payload, err := json.Marshal(map[string]string{"article": truncate(cleaned, 45000)})
+	if err != nil {
+		return stepResult{}, err
+	}
+	response, err := store.complete(ctx, llm.Request{
+		Task: "content_cleaning", System: cleanedArticlePrompt, Input: string(payload),
+		JSONSchema: cleanedArticleSchema, DisableReasoning: true, MaxTokens: 12000,
+		ArticleID: articleID, PipelineRunID: runID, PipelineStepID: stepID,
+	}, selection)
+	if err != nil {
+		return stepResult{}, fmt.Errorf("clean article with %s: %w", selection.provider, err)
+	}
+	if response.Provider != "none" {
+		result, err := parseCleanedArticle(response.Text)
+		if err != nil {
+			return stepResult{}, err
+		}
+		cleaned, provider, model = result.Markdown, response.Provider, response.Model
+	}
 	if _, err := store.pool.Exec(ctx, `
 		INSERT INTO article_analysis_documents (
-		  article_id, source_content_id, original_text, cleaned_text, cleaner_version
-		) VALUES ($1, NULLIF($2, '')::uuid, $3, $4, $5)
+		  article_id, source_content_id, original_text, cleaned_text, cleaner_version,
+		  cleaner_provider, cleaner_model
+		) VALUES ($1, NULLIF($2, '')::uuid, $3, $4, $5, $6, $7)
 		ON CONFLICT (article_id) DO UPDATE SET
 		  source_content_id = EXCLUDED.source_content_id,
 		  original_text = EXCLUDED.original_text,
@@ -53,20 +74,24 @@ func (store *Store) cleanContent(ctx context.Context, articleID string) (stepRes
 		    WHEN article_analysis_documents.cleaned_text IS DISTINCT FROM EXCLUDED.cleaned_text THEN NULL
 		    ELSE article_analysis_documents.summarized_at END,
 		  cleaner_version = EXCLUDED.cleaner_version,
+		  cleaner_provider = EXCLUDED.cleaner_provider,
+		  cleaner_model = EXCLUDED.cleaner_model,
 		  cleaned_at = clock_timestamp(),
 		  updated_at = clock_timestamp()
-	`, articleID, valueOrEmpty(sourceContentID), original, cleaned, cleanerVersion); err != nil {
+	`, articleID, valueOrEmpty(sourceContentID), original, cleaned, cleanerVersion, provider, model); err != nil {
 		return stepResult{}, fmt.Errorf("save cleaned article: %w", err)
 	}
 	return stepResult{output: map[string]any{
 		"cleaner":             cleanerVersion,
+		"provider":            provider,
+		"model":               model,
 		"original_characters": len([]rune(original)),
 		"cleaned_characters":  len([]rune(cleaned)),
 		"removed_characters":  len([]rune(original)) - len([]rune(cleaned)),
 	}}, nil
 }
 
-func (store *Store) summarize(ctx context.Context, articleID, runID, stepID string) (stepResult, error) {
+func (store *Store) summarize(ctx context.Context, articleID, runID, stepID string, selection modelSelection) (stepResult, error) {
 	var headline, cleaned string
 	if err := store.pool.QueryRow(ctx, `
 		SELECT article.headline, document.cleaned_text
@@ -83,11 +108,11 @@ func (store *Store) summarize(ctx context.Context, articleID, runID, stepID stri
 	if err != nil {
 		return stepResult{}, err
 	}
-	response, err := store.model.Complete(ctx, llm.Request{
+	response, err := store.complete(ctx, llm.Request{
 		Task: "article_summary", System: articleSummaryPrompt, Input: string(input),
 		JSONSchema: articleSummarySchema, DisableReasoning: true, MaxTokens: 1800,
 		ArticleID: articleID, PipelineRunID: runID, PipelineStepID: stepID,
-	})
+	}, selection)
 	if err != nil {
 		return stepResult{}, fmt.Errorf("summarize article: %w", err)
 	}
@@ -98,20 +123,16 @@ func (store *Store) summarize(ctx context.Context, articleID, runID, stepID stri
 	if err != nil {
 		return stepResult{}, err
 	}
-	points, err := json.Marshal(summary.KeyPoints)
-	if err != nil {
-		return stepResult{}, err
-	}
 	if _, err := store.pool.Exec(ctx, `
 		UPDATE article_analysis_documents
 		SET summary_text = $2, summary_points = $3, summary_provider = $4,
 		    summary_model = $5, summarized_at = clock_timestamp(), updated_at = clock_timestamp()
 		WHERE article_id = $1
-	`, articleID, summary.Summary, points, response.Provider, response.Model); err != nil {
+	`, articleID, summary.Summary, []byte("[]"), response.Provider, response.Model); err != nil {
 		return stepResult{}, fmt.Errorf("save article summary: %w", err)
 	}
 	return stepResult{output: map[string]any{
-		"summary": summary.Summary, "key_points": summary.KeyPoints,
+		"summary":  summary.Summary,
 		"provider": response.Provider, "model": response.Model,
 	}}, nil
 }
@@ -142,7 +163,7 @@ type sourceSpectrumItem struct {
 	Confidence        float64 `json:"confidence"`
 }
 
-func (store *Store) synthesizeEvent(ctx context.Context, articleID, runID, stepID string) (stepResult, error) {
+func (store *Store) synthesizeEvent(ctx context.Context, articleID, runID, stepID string, selection modelSelection) (stepResult, error) {
 	var eventID *string
 	if err := store.pool.QueryRow(ctx, `SELECT event_id::text FROM articles WHERE id = $1`, articleID).Scan(&eventID); err != nil {
 		return stepResult{}, fmt.Errorf("load article event: %w", err)
@@ -191,7 +212,7 @@ func (store *Store) synthesizeEvent(ctx context.Context, articleID, runID, stepI
 		leftPercentage, centerPercentage, rightPercentage = 0, 0, 0
 	}
 
-	summary, provider, model, err := store.crossSourceSummary(ctx, articleID, runID, stepID, members)
+	summary, provider, model, err := store.crossSourceSummary(ctx, articleID, runID, stepID, members, selection)
 	if err != nil {
 		return stepResult{}, err
 	}
@@ -263,7 +284,7 @@ func (store *Store) eventMembers(ctx context.Context, eventID string) ([]eventMe
 	return members, rows.Err()
 }
 
-func (store *Store) crossSourceSummary(ctx context.Context, articleID, runID, stepID string, members []eventMember) (string, string, string, error) {
+func (store *Store) crossSourceSummary(ctx context.Context, articleID, runID, stepID string, members []eventMember, selection modelSelection) (string, string, string, error) {
 	if len(members) == 1 {
 		summary := strings.TrimSpace(members[0].Summary)
 		if summary == "" {
@@ -288,11 +309,11 @@ func (store *Store) crossSourceSummary(ctx context.Context, articleID, runID, st
 	if err != nil {
 		return "", "", "", err
 	}
-	response, err := store.model.Complete(ctx, llm.Request{
+	response, err := store.complete(ctx, llm.Request{
 		Task: "event_synthesis", System: eventSummaryPrompt, Input: string(payload),
 		JSONSchema: eventSummarySchema, DisableReasoning: true, MaxTokens: 2200,
 		ArticleID: articleID, PipelineRunID: runID, PipelineStepID: stepID,
-	})
+	}, selection)
 	if err != nil {
 		return "", "", "", fmt.Errorf("synthesize event coverage: %w", err)
 	}
