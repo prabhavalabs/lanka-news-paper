@@ -315,13 +315,14 @@ export type AnalysisBackfillRun = {
   from: string | null;
   to: string | null;
   article_id: string | null;
-  status: "queued" | "running" | "completed" | "partially_completed" | "failed";
+  status: "queued" | "running" | "paused" | "completed" | "partially_completed" | "failed" | "cancelled";
   total_articles: number;
   pending_articles: number;
   queued_articles: number;
   running_articles: number;
   succeeded_articles: number;
   failed_articles: number;
+  cancelled_articles: number;
   created_by: string;
   error_detail: string | null;
   created_at: string;
@@ -1020,6 +1021,22 @@ export function createClient(baseUrl = "") {
       url("/api/admin/settings/analysis-backfills/stream"),
     analysisBackfill: (id: string) =>
       request<AnalysisBackfillRun>(url(`/api/admin/settings/analysis-backfills/${encodeURIComponent(id)}`)),
+    pauseAnalysisBackfill: (id: string) =>
+      request<AnalysisBackfillRun>(url(`/api/admin/settings/analysis-backfills/${encodeURIComponent(id)}/pause`), {
+        method: "POST"
+      }),
+    resumeAnalysisBackfill: (id: string) =>
+      request<AnalysisBackfillRun>(url(`/api/admin/settings/analysis-backfills/${encodeURIComponent(id)}/resume`), {
+        method: "POST"
+      }),
+    cancelAnalysisBackfill: (id: string) =>
+      request<AnalysisBackfillRun>(url(`/api/admin/settings/analysis-backfills/${encodeURIComponent(id)}/cancel`), {
+        method: "POST"
+      }),
+    deleteAnalysisBackfill: (id: string) =>
+      request<{ ok: boolean }>(url(`/api/admin/settings/analysis-backfills/${encodeURIComponent(id)}`), {
+        method: "DELETE"
+      }),
     createAnalysisBackfill: (body: AnalysisBackfillRequest) =>
       request<AnalysisBackfillRun>(url("/api/admin/settings/analysis-backfills"), {
         method: "POST",

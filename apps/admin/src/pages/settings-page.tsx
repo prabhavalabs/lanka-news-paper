@@ -18,11 +18,18 @@ import {
   ExternalLink,
   FileText,
   LoaderCircle,
+  EllipsisVertical,
+  Pause,
+  Play,
   RefreshCw,
   Search,
   ServerCog,
   Sparkles,
+  Square,
   TerminalSquare,
+  Trash2,
+  Wifi,
+  WifiOff,
 } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
@@ -31,6 +38,8 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -39,6 +48,8 @@ import { cn } from '@/lib/utils'
 
 const client = createClient()
 const dateTime = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' })
+type BackfillStreamState = 'connecting' | 'live' | 'reconnecting'
+type DestructiveBackfillAction = { kind: 'cancel' | 'delete'; run: AnalysisBackfillRun }
 
 export function SettingsPage() {
   const queryClient = useQueryClient()
@@ -52,6 +63,8 @@ export function SettingsPage() {
   const [articleSearch, setArticleSearch] = useState('')
   const [submittedSearch, setSubmittedSearch] = useState('')
   const [selectedArticle, setSelectedArticle] = useState<AdminArticleListItem | null>(null)
+  const [streamState, setStreamState] = useState<BackfillStreamState>('connecting')
+  const [destructiveAction, setDestructiveAction] = useState<DestructiveBackfillAction | null>(null)
 
   const openRouter = useQuery({
     queryKey: ['llm-provider'],
@@ -77,6 +90,7 @@ export function SettingsPage() {
     queryKey: ['analysis-backfills'],
     queryFn: () => client.analysisBackfills(),
     refetchOnWindowFocus: false,
+    refetchInterval: (query) => query.state.data?.items.some((run) => run.status === 'queued' || run.status === 'running') ? 3_000 : false,
   })
   const articles = useQuery({
     queryKey: ['backfill-article-search', submittedSearch],
@@ -141,15 +155,48 @@ export function SettingsPage() {
     onError: () => toast.error('Could not create the administrative backfill'),
   })
 
+  const controlBackfill = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: 'pause' | 'resume' | 'cancel' }) => {
+      if (action === 'pause') return client.pauseAnalysisBackfill(id)
+      if (action === 'resume') return client.resumeAnalysisBackfill(id)
+      return client.cancelAnalysisBackfill(id)
+    },
+    onSuccess: async (run, variables) => {
+      queryClient.setQueryData<{ items: AnalysisBackfillRun[] }>(['analysis-backfills'], (current) => ({
+        items: current?.items.map((item) => item.id === run.id ? run : item) ?? [run],
+      }))
+      await queryClient.invalidateQueries({ queryKey: ['analysis-backfills'] })
+      toast.success(variables.action === 'pause' ? 'Backfill paused' : variables.action === 'resume' ? 'Backfill resumed' : 'Backfill stopped')
+      setDestructiveAction(null)
+    },
+    onError: () => toast.error('Could not update the administrative backfill'),
+  })
+
+  const deleteBackfill = useMutation({
+    mutationFn: (id: string) => client.deleteAnalysisBackfill(id),
+    onSuccess: async (_, id) => {
+      queryClient.setQueryData<{ items: AnalysisBackfillRun[] }>(['analysis-backfills'], (current) => ({
+        items: current?.items.filter((item) => item.id !== id) ?? [],
+      }))
+      await queryClient.invalidateQueries({ queryKey: ['analysis-backfills'] })
+      toast.success('Backfill record deleted')
+      setDestructiveAction(null)
+    },
+    onError: () => toast.error('Could not delete the administrative backfill record'),
+  })
+
   useEffect(() => {
-	const events = new EventSource(client.analysisBackfillStreamURL())
+	const events = new EventSource(client.analysisBackfillStreamURL(), { withCredentials: true })
 	const updateRuns = (event: MessageEvent<string>) => {
 	  try {
 		queryClient.setQueryData(['analysis-backfills'], JSON.parse(event.data) as { items: AnalysisBackfillRun[] })
+		setStreamState('live')
 	  } catch {
 		// EventSource reconnects automatically; retain the last valid snapshot.
 	  }
 	}
+	events.onopen = () => setStreamState('live')
+	events.onerror = () => setStreamState('reconnecting')
 	events.addEventListener('analysis-backfills', updateRuns as EventListener)
     return () => events.close()
   }, [queryClient])
@@ -304,7 +351,29 @@ export function SettingsPage() {
         </CardContent>
       </Card>
 
-      <BackfillRuns runs={runs.data?.items ?? []} pending={runs.isPending} />
+      <BackfillRuns
+        runs={runs.data?.items ?? []}
+        pending={runs.isPending}
+        streamState={streamState}
+        busyRunID={controlBackfill.isPending ? controlBackfill.variables?.id : deleteBackfill.isPending ? deleteBackfill.variables : undefined}
+        onPause={(run) => controlBackfill.mutate({ id: run.id, action: 'pause' })}
+        onResume={(run) => controlBackfill.mutate({ id: run.id, action: 'resume' })}
+        onCancel={(run) => setDestructiveAction({ kind: 'cancel', run })}
+        onDelete={(run) => setDestructiveAction({ kind: 'delete', run })}
+      />
+      <BackfillConfirmationDialog
+        action={destructiveAction}
+        pending={controlBackfill.isPending || deleteBackfill.isPending}
+        onOpenChange={(open) => !open && setDestructiveAction(null)}
+        onConfirm={() => {
+          if (!destructiveAction) return
+          if (destructiveAction.kind === 'cancel') {
+            controlBackfill.mutate({ id: destructiveAction.run.id, action: 'cancel' })
+          } else {
+            deleteBackfill.mutate(destructiveAction.run.id)
+          }
+        }}
+      />
     </section>
   )
 }
@@ -390,31 +459,77 @@ function SelectedArticle({ article }: { article: AdminArticleListItem }) {
   return <div className="mt-3 rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm font-medium">{article.headline}</div>
 }
 
-function BackfillRuns({ runs, pending }: { runs: AnalysisBackfillRun[]; pending: boolean }) {
+function BackfillRuns({ runs, pending, streamState, busyRunID, onPause, onResume, onCancel, onDelete }: {
+  runs: AnalysisBackfillRun[]
+  pending: boolean
+  streamState: BackfillStreamState
+  busyRunID?: string
+  onPause: (run: AnalysisBackfillRun) => void
+  onResume: (run: AnalysisBackfillRun) => void
+  onCancel: (run: AnalysisBackfillRun) => void
+  onDelete: (run: AnalysisBackfillRun) => void
+}) {
   return (
     <Card className="gap-0 overflow-hidden py-0 shadow-sm">
       <CardHeader className="border-b py-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div><CardTitle>Recent administrative backfills</CardTitle><CardDescription>Progress is refreshed by the existing queue event stream.</CardDescription></div>
-          <Button variant="outline" render={<Link to="/jobs?kind=admin.article.analysis&window=7d" />}><ExternalLink /> Open queue monitor</Button>
+          <div>
+            <CardTitle>Recent administrative backfills</CardTitle>
+            <CardDescription>Live progress with controls for pausing, resuming, and stopping bulk work.</CardDescription>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <BackfillConnectionStatus state={streamState} />
+            <Button variant="outline" nativeButton={false} render={<Link to="/jobs?kind=admin.article.analysis&window=7d" />}><ExternalLink /> Open queue monitor</Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="p-0">
         {pending ? <div className="grid gap-3 p-6"><Skeleton className="h-24" /><Skeleton className="h-24" /></div> : null}
         {!pending && runs.length === 0 ? <div className="p-8 text-center text-sm text-muted-foreground">No administrative analysis backfills have been created.</div> : null}
-        {runs.map((run) => <BackfillRunRow key={run.id} run={run} />)}
+        {runs.map((run) => (
+          <BackfillRunRow
+            key={run.id}
+            run={run}
+            busy={busyRunID === run.id}
+            onPause={onPause}
+            onResume={onResume}
+            onCancel={onCancel}
+            onDelete={onDelete}
+          />
+        ))}
       </CardContent>
     </Card>
   )
 }
 
-function BackfillRunRow({ run }: { run: AnalysisBackfillRun }) {
-  const terminal = run.succeeded_articles + run.failed_articles
+function BackfillConnectionStatus({ state }: { state: BackfillStreamState }) {
+  const live = state === 'live'
+  const Icon = live ? Wifi : WifiOff
+  return (
+    <Badge variant="outline" className={cn(live ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground')}>
+      <Icon /> {live ? 'Live' : state === 'connecting' ? 'Connecting' : 'Reconnecting'}
+    </Badge>
+  )
+}
+
+function BackfillRunRow({ run, busy, onPause, onResume, onCancel, onDelete }: {
+  run: AnalysisBackfillRun
+  busy: boolean
+  onPause: (run: AnalysisBackfillRun) => void
+  onResume: (run: AnalysisBackfillRun) => void
+  onCancel: (run: AnalysisBackfillRun) => void
+  onDelete: (run: AnalysisBackfillRun) => void
+}) {
+  const terminal = run.succeeded_articles + run.failed_articles + run.cancelled_articles
   const percent = run.total_articles > 0 ? Math.min(100, Math.round((terminal / run.total_articles) * 100)) : 0
+  const remaining = run.pending_articles + run.queued_articles + run.running_articles
   return (
     <div className="grid gap-4 border-b p-5 last:border-b-0 sm:p-6 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)] xl:items-center">
       <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2"><BackfillStatus status={run.status} /><Badge variant="secondary">{workflowLabel(run.workflow)}</Badge><Badge variant="outline">{scopeLabel(run.scope)}</Badge></div>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2"><BackfillStatus status={run.status} /><Badge variant="secondary">{workflowLabel(run.workflow)}</Badge><Badge variant="outline">{scopeLabel(run.scope)}</Badge></div>
+          <BackfillRunActions run={run} busy={busy} onPause={onPause} onResume={onResume} onCancel={onCancel} onDelete={onDelete} />
+        </div>
         <p className="mt-3 truncate font-medium" title={run.model}>{`${providerLabel(run.provider)} · ${run.model}`}</p>
         <p className="mt-1 text-xs text-muted-foreground">Created by {run.created_by} · {dateTime.format(new Date(run.created_at))}</p>
         {run.error_detail ? <p className="mt-2 text-xs text-destructive">{run.error_detail}</p> : null}
@@ -422,9 +537,81 @@ function BackfillRunRow({ run }: { run: AnalysisBackfillRun }) {
       <div className="min-w-0">
         <div className="flex items-center justify-between gap-3 text-xs"><span className="text-muted-foreground">{terminal.toLocaleString()} of {run.total_articles.toLocaleString()} finished</span><span className="font-medium tabular-nums">{percent}%</span></div>
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}><div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${percent}%` }} /></div>
-        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"><span>{run.succeeded_articles.toLocaleString()} succeeded</span><span>{run.failed_articles.toLocaleString()} failed</span><span>{(run.pending_articles + run.queued_articles + run.running_articles).toLocaleString()} remaining</span></div>
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span>{run.succeeded_articles.toLocaleString()} succeeded</span>
+          <span>{run.failed_articles.toLocaleString()} failed</span>
+          {run.cancelled_articles > 0 ? <span>{run.cancelled_articles.toLocaleString()} cancelled</span> : null}
+          <span>{remaining.toLocaleString()} remaining</span>
+          {(run.status === 'queued' || run.status === 'running') && (run.queued_articles > 0 || run.running_articles > 0) ? <span>{run.running_articles.toLocaleString()} active · {run.queued_articles.toLocaleString()} queued</span> : null}
+        </div>
       </div>
     </div>
+  )
+}
+
+function BackfillRunActions({ run, busy, onPause, onResume, onCancel, onDelete }: {
+  run: AnalysisBackfillRun
+  busy: boolean
+  onPause: (run: AnalysisBackfillRun) => void
+  onResume: (run: AnalysisBackfillRun) => void
+  onCancel: (run: AnalysisBackfillRun) => void
+  onDelete: (run: AnalysisBackfillRun) => void
+}) {
+  const active = run.status === 'queued' || run.status === 'running'
+  const stoppable = active || run.status === 'paused'
+  const deletable = ['completed', 'partially_completed', 'failed', 'cancelled'].includes(run.status)
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      {active ? <Button variant="outline" size="sm" disabled={busy} onClick={() => onPause(run)}><Pause /> Pause</Button> : null}
+      {run.status === 'paused' ? <Button size="sm" disabled={busy} onClick={() => onResume(run)}><Play /> Resume</Button> : null}
+      {(stoppable || deletable) ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={`Actions for backfill ${run.id}`} disabled={busy} />}>
+            {busy ? <LoaderCircle className="animate-spin" /> : <EllipsisVertical />}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            {stoppable ? <DropdownMenuItem variant="destructive" onClick={() => onCancel(run)}><Square /> Stop backfill</DropdownMenuItem> : null}
+            {deletable ? <DropdownMenuItem variant="destructive" onClick={() => onDelete(run)}><Trash2 /> Delete record</DropdownMenuItem> : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
+    </div>
+  )
+}
+
+function BackfillConfirmationDialog({ action, pending, onOpenChange, onConfirm }: {
+  action: DestructiveBackfillAction | null
+  pending: boolean
+  onOpenChange: (open: boolean) => void
+  onConfirm: () => void
+}) {
+  const deleting = action?.kind === 'delete'
+  return (
+    <Dialog open={Boolean(action)} onOpenChange={onOpenChange}>
+      <DialogContent showCloseButton={!pending}>
+        <DialogHeader>
+          <DialogTitle>{deleting ? 'Delete backfill record?' : 'Stop this backfill?'}</DialogTitle>
+          <DialogDescription>
+            {deleting
+              ? 'This removes the administrative history record. Article content and analysis already produced by the backfill will be preserved.'
+              : 'All unfinished articles will be cancelled and this run cannot be resumed. Analysis that already completed will be preserved.'}
+          </DialogDescription>
+        </DialogHeader>
+        {action ? (
+          <div className="rounded-2xl border bg-muted/20 p-4">
+            <p className="truncate font-medium" title={action.run.model}>{providerLabel(action.run.provider)} · {action.run.model}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{action.run.total_articles.toLocaleString()} articles · created {dateTime.format(new Date(action.run.created_at))}</p>
+          </div>
+        ) : null}
+        <DialogFooter>
+          <Button variant="outline" disabled={pending} onClick={() => onOpenChange(false)}>Keep record</Button>
+          <Button variant="destructive" disabled={pending} onClick={onConfirm}>
+            {pending ? <LoaderCircle className="animate-spin" /> : deleting ? <Trash2 /> : <Square />}
+            {pending ? 'Working…' : deleting ? 'Delete record' : 'Stop backfill'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -432,9 +619,11 @@ function BackfillStatus({ status }: { status: AnalysisBackfillRun['status'] }) {
   const data = {
     queued: { label: 'Queued', icon: Clock3, className: 'border-slate-400/30 text-slate-600 dark:text-slate-300' },
     running: { label: 'Running', icon: LoaderCircle, className: 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-400' },
+    paused: { label: 'Paused', icon: Pause, className: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400' },
     completed: { label: 'Completed', icon: CheckCircle2, className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' },
     partially_completed: { label: 'Partial', icon: AlertTriangle, className: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400' },
     failed: { label: 'Failed', icon: CircleAlert, className: 'border-destructive/30 bg-destructive/10 text-destructive' },
+    cancelled: { label: 'Stopped', icon: Square, className: 'border-slate-400/30 bg-slate-500/10 text-slate-600 dark:text-slate-300' },
   }[status]
   const Icon = data.icon
   return <Badge variant="outline" className={data.className}><Icon className={cn(status === 'running' && 'animate-spin')} />{data.label}</Badge>

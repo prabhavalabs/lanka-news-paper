@@ -174,6 +174,9 @@ const adminAnalysisDispatchBatchSize = 100
 
 func (worker *AdminAnalysisBackfillDispatchWorker) Work(ctx context.Context, job *river.Job[AdminAnalysisBackfillDispatchArgs]) error {
 	if err := worker.Analysis.Store().MarkRunStarted(ctx, job.Args.RunID); err != nil {
+		if errors.Is(err, adminanalysis.ErrRunInactive) {
+			return river.JobCancel(err)
+		}
 		return err
 	}
 	articleIDs, err := worker.Analysis.Store().PendingArticles(ctx, job.Args.RunID, adminAnalysisDispatchBatchSize)
@@ -186,6 +189,10 @@ func (worker *AdminAnalysisBackfillDispatchWorker) Work(ctx context.Context, job
 			return err
 		}
 		if err := worker.Analysis.Store().MarkQueued(ctx, job.Args.RunID, articleID, result.Job.ID); err != nil {
+			if errors.Is(err, adminanalysis.ErrRunInactive) {
+				_, _ = worker.Client.JobCancel(ctx, result.Job.ID)
+				return river.JobCancel(err)
+			}
 			return err
 		}
 	}
@@ -197,6 +204,9 @@ func (worker *AdminAnalysisBackfillDispatchWorker) Work(ctx context.Context, job
 
 func (worker *AdminArticleAnalysisWorker) Work(ctx context.Context, job *river.Job[AdminArticleAnalysisArgs]) error {
 	if err := worker.Analysis.Store().MarkRunning(ctx, job.Args.RunID, job.Args.ArticleID, job.Attempt); err != nil {
+		if errors.Is(err, adminanalysis.ErrRunInactive) {
+			return river.JobCancel(err)
+		}
 		return err
 	}
 	run, err := worker.Analysis.Store().Get(ctx, job.Args.RunID)
@@ -220,8 +230,14 @@ func (worker *AdminArticleAnalysisWorker) Work(ctx context.Context, job *river.J
 		err = worker.Analysis.Analyze(ctx, job.Args.RunID, job.Args.ArticleID, run.Provider, run.Model)
 	}
 	if err != nil {
+		if errors.Is(err, adminanalysis.ErrRunInactive) {
+			return river.JobCancel(err)
+		}
 		terminal := job.Attempt >= job.MaxAttempts
 		if recordErr := worker.Analysis.Store().MarkAttemptFailed(ctx, job.Args.RunID, job.Args.ArticleID, err.Error(), terminal); recordErr != nil {
+			if errors.Is(recordErr, adminanalysis.ErrRunInactive) {
+				return river.JobCancel(err)
+			}
 			return errors.Join(err, recordErr)
 		}
 	}
@@ -585,4 +601,47 @@ func EnqueueContentBackfill(ctx context.Context, client *river.Client[pgx.Tx]) e
 func EnqueueAdminAnalysisBackfill(ctx context.Context, client *river.Client[pgx.Tx], runID string) error {
 	_, err := client.Insert(ctx, AdminAnalysisBackfillDispatchArgs{RunID: runID}, nil)
 	return err
+}
+
+func PauseAdminAnalysisBackfill(ctx context.Context, client *river.Client[pgx.Tx], store *adminanalysis.Store, runID string) (adminanalysis.Run, error) {
+	result, err := store.Pause(ctx, runID)
+	if err != nil {
+		return adminanalysis.Run{}, err
+	}
+	if err := cancelAdminAnalysisJobs(ctx, client, result.JobIDs); err != nil {
+		return result.Run, err
+	}
+	return result.Run, nil
+}
+
+func ResumeAdminAnalysisBackfill(ctx context.Context, client *river.Client[pgx.Tx], store *adminanalysis.Store, runID string) (adminanalysis.Run, error) {
+	run, err := store.Resume(ctx, runID)
+	if err != nil {
+		return adminanalysis.Run{}, err
+	}
+	if err := EnqueueAdminAnalysisBackfill(ctx, client, runID); err != nil {
+		_, _ = store.Pause(ctx, runID)
+		return adminanalysis.Run{}, fmt.Errorf("enqueue resumed administrative backfill: %w", err)
+	}
+	return run, nil
+}
+
+func CancelAdminAnalysisBackfill(ctx context.Context, client *river.Client[pgx.Tx], store *adminanalysis.Store, runID string) (adminanalysis.Run, error) {
+	result, err := store.Cancel(ctx, runID)
+	if err != nil {
+		return adminanalysis.Run{}, err
+	}
+	if err := cancelAdminAnalysisJobs(ctx, client, result.JobIDs); err != nil {
+		return result.Run, err
+	}
+	return result.Run, nil
+}
+
+func cancelAdminAnalysisJobs(ctx context.Context, client *river.Client[pgx.Tx], jobIDs []int64) error {
+	for _, jobID := range jobIDs {
+		if _, err := client.JobCancel(ctx, jobID); err != nil && !errors.Is(err, river.ErrNotFound) {
+			return fmt.Errorf("cancel administrative backfill job %d: %w", jobID, err)
+		}
+	}
+	return nil
 }

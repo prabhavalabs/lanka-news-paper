@@ -3,6 +3,7 @@ package adminanalysis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -36,6 +37,7 @@ type Run struct {
 	RunningArticles     int        `json:"running_articles"`
 	SucceededArticles   int        `json:"succeeded_articles"`
 	FailedArticles      int        `json:"failed_articles"`
+	CancelledArticles   int        `json:"cancelled_articles"`
 	CreatedBy           string     `json:"created_by"`
 	ErrorDetail         *string    `json:"error_detail"`
 	CreatedAt           time.Time  `json:"created_at"`
@@ -144,6 +146,7 @@ const runSelect = `
 	       count(item.article_id) FILTER (WHERE item.state = 'running')::integer,
 	       count(item.article_id) FILTER (WHERE item.state = 'succeeded')::integer,
 	       count(item.article_id) FILTER (WHERE item.state = 'failed')::integer,
+	       count(item.article_id) FILTER (WHERE item.state = 'cancelled')::integer,
 	       run.created_by, run.error_detail, run.created_at, run.started_at, run.finished_at,
 	       max(item.updated_at)
 	FROM admin_analysis_backfills run
@@ -161,7 +164,7 @@ func scanRun(row pgx.Row) (Run, error) {
 	err := row.Scan(
 		&run.ID, &run.Scope, &run.Workflow, &run.Provider, &run.Model, &run.From, &run.To, &run.ArticleID,
 		&run.Status, &run.TotalArticles, &run.PendingArticles, &run.QueuedArticles,
-		&run.RunningArticles, &run.SucceededArticles, &run.FailedArticles, &run.CreatedBy,
+		&run.RunningArticles, &run.SucceededArticles, &run.FailedArticles, &run.CancelledArticles, &run.CreatedBy,
 		&run.ErrorDetail, &run.CreatedAt, &run.StartedAt, &run.FinishedAt, &run.LatestItemUpdatedAt,
 	)
 	return run, err
@@ -197,10 +200,11 @@ func (store *Store) List(ctx context.Context, limit int) ([]Run, error) {
 
 func (store *Store) PendingArticles(ctx context.Context, runID string, limit int) ([]string, error) {
 	rows, err := store.pool.Query(ctx, `
-		SELECT article_id::text
-		FROM admin_analysis_backfill_items
-		WHERE run_id = $1 AND state = 'pending'
-		ORDER BY article_id
+		SELECT item.article_id::text
+		FROM admin_analysis_backfill_items item
+		JOIN admin_analysis_backfills run ON run.id = item.run_id
+		WHERE item.run_id = $1 AND item.state = 'pending' AND run.status = 'running'
+		ORDER BY item.article_id
 		LIMIT $2
 	`, runID, limit)
 	if err != nil {
@@ -219,11 +223,16 @@ func (store *Store) PendingArticles(ctx context.Context, runID string, limit int
 }
 
 func (store *Store) MarkRunStarted(ctx context.Context, runID string) error {
-	_, err := store.pool.Exec(ctx, `
+	var id string
+	err := store.pool.QueryRow(ctx, `
 		UPDATE admin_analysis_backfills
 		SET status = 'running', started_at = COALESCE(started_at, clock_timestamp()), updated_at = clock_timestamp()
-		WHERE id = $1 AND status = 'queued'
-	`, runID)
+		WHERE id = $1 AND status IN ('queued', 'running')
+		RETURNING id::text
+	`, runID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrRunInactive
+	}
 	return err
 }
 
@@ -231,28 +240,42 @@ func (store *Store) MarkRunFailed(ctx context.Context, runID, detail string) err
 	_, err := store.pool.Exec(ctx, `
 		UPDATE admin_analysis_backfills
 		SET status = 'failed', error_detail = $2, finished_at = clock_timestamp(), updated_at = clock_timestamp()
-		WHERE id = $1
+		WHERE id = $1 AND status NOT IN ('paused', 'cancelled')
 	`, runID, truncateRunes(detail, 2000))
 	return err
 }
 
 func (store *Store) MarkQueued(ctx context.Context, runID, articleID string, jobID int64) error {
-	_, err := store.pool.Exec(ctx, `
-		UPDATE admin_analysis_backfill_items
+	tag, err := store.pool.Exec(ctx, `
+		UPDATE admin_analysis_backfill_items item
 		SET state = 'queued', river_job_id = $3, queued_at = COALESCE(queued_at, clock_timestamp()),
 		    updated_at = clock_timestamp()
-		WHERE run_id = $1 AND article_id = $2 AND state = 'pending'
+		WHERE item.run_id = $1 AND item.article_id = $2 AND item.state = 'pending'
+		  AND EXISTS (
+		    SELECT 1 FROM admin_analysis_backfills run
+		    WHERE run.id = item.run_id AND run.status = 'running'
+		  )
 	`, runID, articleID, jobID)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrRunInactive
+	}
 	return err
 }
 
 func (store *Store) MarkRunning(ctx context.Context, runID, articleID string, attempt int) error {
-	_, err := store.pool.Exec(ctx, `
-		UPDATE admin_analysis_backfill_items
+	tag, err := store.pool.Exec(ctx, `
+		UPDATE admin_analysis_backfill_items item
 		SET state = 'running', attempt = $3, started_at = COALESCE(started_at, clock_timestamp()),
 		    error_detail = NULL, updated_at = clock_timestamp()
-		WHERE run_id = $1 AND article_id = $2
+		WHERE item.run_id = $1 AND item.article_id = $2 AND item.state IN ('queued', 'running')
+		  AND EXISTS (
+		    SELECT 1 FROM admin_analysis_backfills run
+		    WHERE run.id = item.run_id AND run.status = 'running'
+		  )
 	`, runID, articleID, attempt)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrRunInactive
+	}
 	return err
 }
 
@@ -261,13 +284,20 @@ func (store *Store) MarkAttemptFailed(ctx context.Context, runID, articleID, det
 	if terminal {
 		state = "failed"
 	}
-	_, err := store.pool.Exec(ctx, `
-		UPDATE admin_analysis_backfill_items
+	tag, err := store.pool.Exec(ctx, `
+		UPDATE admin_analysis_backfill_items item
 		SET state = $3, error_detail = $4,
 		    finished_at = CASE WHEN $3 = 'failed' THEN clock_timestamp() ELSE NULL END,
 		    updated_at = clock_timestamp()
-		WHERE run_id = $1 AND article_id = $2
+		WHERE item.run_id = $1 AND item.article_id = $2
+		  AND EXISTS (
+		    SELECT 1 FROM admin_analysis_backfills run
+		    WHERE run.id = item.run_id AND run.status = 'running'
+		  )
 	`, runID, articleID, state, truncateRunes(detail, 2000))
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrRunInactive
+	}
 	if err == nil && terminal {
 		err = store.RefreshRunStatus(ctx, runID)
 	}
@@ -284,6 +314,21 @@ func (store *Store) SaveInsight(ctx context.Context, runID, articleID, provider,
 		return err
 	}
 	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
+		UPDATE admin_analysis_backfill_items item
+		SET state = 'succeeded', error_detail = NULL, finished_at = clock_timestamp(), updated_at = clock_timestamp()
+		WHERE item.run_id = $1 AND item.article_id = $2 AND item.state IN ('queued', 'running')
+		  AND EXISTS (
+		    SELECT 1 FROM admin_analysis_backfills run
+		    WHERE run.id = item.run_id AND run.status = 'running'
+		  )
+	`, runID, articleID)
+	if err != nil {
+		return fmt.Errorf("complete analysis backfill item: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrRunInactive
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO article_ai_insights (
 		  article_id, backfill_run_id, summary, tone, political_relevance,
@@ -299,13 +344,6 @@ func (store *Store) SaveInsight(ctx context.Context, runID, articleID, provider,
 	`, articleID, runID, insight.Summary, insight.Tone, insight.PoliticalRelevant,
 		insight.PoliticalNarrative, insight.SpectrumScore, insight.Confidence, evidence, provider, model); err != nil {
 		return fmt.Errorf("save article insight: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE admin_analysis_backfill_items
-		SET state = 'succeeded', error_detail = NULL, finished_at = clock_timestamp(), updated_at = clock_timestamp()
-		WHERE run_id = $1 AND article_id = $2
-	`, runID, articleID); err != nil {
-		return fmt.Errorf("complete analysis backfill item: %w", err)
 	}
 	if _, err := tx.Exec(ctx, refreshRunStatusSQL, runID); err != nil {
 		return fmt.Errorf("refresh analysis backfill progress: %w", err)
@@ -324,13 +362,21 @@ func (store *Store) MarkSucceeded(ctx context.Context, runID, articleID string) 
 		return fmt.Errorf("begin backfill completion: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `
-		UPDATE admin_analysis_backfill_items
+	tag, err := tx.Exec(ctx, `
+		UPDATE admin_analysis_backfill_items item
 		SET state = 'succeeded', error_detail = NULL, finished_at = clock_timestamp(),
 		    updated_at = clock_timestamp()
-		WHERE run_id = $1 AND article_id = $2
-	`, runID, articleID); err != nil {
+		WHERE item.run_id = $1 AND item.article_id = $2 AND item.state IN ('queued', 'running')
+		  AND EXISTS (
+		    SELECT 1 FROM admin_analysis_backfills run
+		    WHERE run.id = item.run_id AND run.status = 'running'
+		  )
+	`, runID, articleID)
+	if err != nil {
 		return fmt.Errorf("complete analysis backfill item: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrRunInactive
 	}
 	if _, err := tx.Exec(ctx, refreshRunStatusSQL, runID); err != nil {
 		return fmt.Errorf("refresh analysis backfill progress: %w", err)
@@ -362,7 +408,8 @@ const refreshRunStatusSQL = `
 	    END,
 	    finished_at = CASE WHEN progress.succeeded + progress.failed = progress.total THEN clock_timestamp() ELSE NULL END,
 	    updated_at = clock_timestamp()
-	FROM progress WHERE run.id = $1
+	FROM progress
+	WHERE run.id = $1 AND run.status NOT IN ('paused', 'cancelled')
 `
 
 func (store *Store) Article(ctx context.Context, articleID string) (ArticleInput, error) {

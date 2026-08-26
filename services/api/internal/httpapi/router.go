@@ -16,22 +16,25 @@ import (
 )
 
 type Dependencies struct {
-	AdminAnalysis            *adminanalysis.Service
-	AllowedOrigins           []string
-	CookieSecure             bool
-	Database                 DatabaseChecker
-	Desk                     *desk.Store
-	IAM                      *iam.Store
-	LLM                      *llm.Gateway
-	Media                    *media.Store
-	Monitor                  *desk.MonitorBroker
-	News                     *publish.Store
-	Poller                   *ingest.Poller
-	Registry                 *registry.Store
-	RunPipeline              func(context.Context, string, string) error
-	RunContentBackfill       func(context.Context) error
-	RunAdminAnalysisBackfill func(context.Context, string) error
-	SessionTTL               time.Duration
+	AdminAnalysis               *adminanalysis.Service
+	AllowedOrigins              []string
+	CookieSecure                bool
+	Database                    DatabaseChecker
+	Desk                        *desk.Store
+	IAM                         *iam.Store
+	LLM                         *llm.Gateway
+	Media                       *media.Store
+	Monitor                     *desk.MonitorBroker
+	News                        *publish.Store
+	Poller                      *ingest.Poller
+	Registry                    *registry.Store
+	RunPipeline                 func(context.Context, string, string) error
+	RunContentBackfill          func(context.Context) error
+	RunAdminAnalysisBackfill    func(context.Context, string) error
+	PauseAdminAnalysisBackfill  func(context.Context, string) (adminanalysis.Run, error)
+	ResumeAdminAnalysisBackfill func(context.Context, string) (adminanalysis.Run, error)
+	CancelAdminAnalysisBackfill func(context.Context, string) (adminanalysis.Run, error)
+	SessionTTL                  time.Duration
 }
 
 func NewRouter(dependencies Dependencies) http.Handler {
@@ -39,7 +42,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	health := healthHandler{database: dependencies.Database}
 	news := newsHandler{reader: dependencies.News}
 	auth := newAuthHandler(dependencies.IAM, dependencies.SessionTTL, dependencies.CookieSecure)
-	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk, monitor: newMonitorService(dependencies.Desk, dependencies.Monitor), media: dependencies.Media, adminAnalysis: dependencies.AdminAnalysis, runPipeline: dependencies.RunPipeline, runContentBackfill: dependencies.RunContentBackfill, runAdminAnalysisBackfill: dependencies.RunAdminAnalysisBackfill}
+	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk, monitor: newMonitorService(dependencies.Desk, dependencies.Monitor), media: dependencies.Media, adminAnalysis: dependencies.AdminAnalysis, runPipeline: dependencies.RunPipeline, runContentBackfill: dependencies.RunContentBackfill, runAdminAnalysisBackfill: dependencies.RunAdminAnalysisBackfill, pauseAdminAnalysisBackfill: dependencies.PauseAdminAnalysisBackfill, resumeAdminAnalysisBackfill: dependencies.ResumeAdminAnalysisBackfill, cancelAdminAnalysisBackfill: dependencies.CancelAdminAnalysisBackfill}
 
 	mux.HandleFunc("GET /api/v1/health/live", health.liveness)
 	mux.HandleFunc("GET /api/v1/health/ready", health.readiness)
@@ -112,6 +115,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("GET /api/admin/settings/analysis-backfills", admin.analysisBackfills)
 	protected.HandleFunc("POST /api/admin/settings/analysis-backfills", admin.analysisBackfills)
 	protected.HandleFunc("GET /api/admin/settings/analysis-backfills/{id}", admin.analysisBackfill)
+	protected.HandleFunc("DELETE /api/admin/settings/analysis-backfills/{id}", admin.deleteAnalysisBackfill)
+	protected.HandleFunc("POST /api/admin/settings/analysis-backfills/{id}/{action}", admin.controlAnalysisBackfill)
 	protected.HandleFunc("GET /api/admin/media/{key...}", admin.mediaFile)
 	mux.Handle("/api/admin/", withCSRF(auth.requireAuth(protected)))
 

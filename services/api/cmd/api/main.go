@@ -126,6 +126,15 @@ func run(logger *slog.Logger) error {
 			RunAdminAnalysisBackfill: func(ctx context.Context, runID string) error {
 				return jobs.EnqueueAdminAnalysisBackfill(ctx, producer, runID)
 			},
+			PauseAdminAnalysisBackfill: func(ctx context.Context, runID string) (adminanalysis.Run, error) {
+				return jobs.PauseAdminAnalysisBackfill(ctx, producer, adminAnalysis.Store(), runID)
+			},
+			ResumeAdminAnalysisBackfill: func(ctx context.Context, runID string) (adminanalysis.Run, error) {
+				return jobs.ResumeAdminAnalysisBackfill(ctx, producer, adminAnalysis.Store(), runID)
+			},
+			CancelAdminAnalysisBackfill: func(ctx context.Context, runID string) (adminanalysis.Run, error) {
+				return jobs.CancelAdminAnalysisBackfill(ctx, producer, adminAnalysis.Store(), runID)
+			},
 			RunPipeline: func(ctx context.Context, articleID, step string) error {
 				runID, err := pipelineStore.Run(ctx, articleID, step)
 				if err != nil {

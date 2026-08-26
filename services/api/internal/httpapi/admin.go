@@ -28,16 +28,19 @@ import (
 const maxSourceLogoBytes = 768 << 10
 
 type adminHandler struct {
-	registry                 *registry.Store
-	poller                   *ingest.Poller
-	llm                      *llm.Gateway
-	desk                     *desk.Store
-	monitor                  monitorService
-	media                    *media.Store
-	adminAnalysis            *adminanalysis.Service
-	runPipeline              func(context.Context, string, string) error
-	runContentBackfill       func(context.Context) error
-	runAdminAnalysisBackfill func(context.Context, string) error
+	registry                    *registry.Store
+	poller                      *ingest.Poller
+	llm                         *llm.Gateway
+	desk                        *desk.Store
+	monitor                     monitorService
+	media                       *media.Store
+	adminAnalysis               *adminanalysis.Service
+	runPipeline                 func(context.Context, string, string) error
+	runContentBackfill          func(context.Context) error
+	runAdminAnalysisBackfill    func(context.Context, string) error
+	pauseAdminAnalysisBackfill  func(context.Context, string) (adminanalysis.Run, error)
+	resumeAdminAnalysisBackfill func(context.Context, string) (adminanalysis.Run, error)
+	cancelAdminAnalysisBackfill func(context.Context, string) (adminanalysis.Run, error)
 }
 
 func (handler adminHandler) sourceLogo(w http.ResponseWriter, request *http.Request) {
@@ -995,6 +998,66 @@ func (handler adminHandler) analysisBackfill(w http.ResponseWriter, request *htt
 		return
 	}
 	writeJSON(w, http.StatusOK, run)
+}
+
+func (handler adminHandler) controlAnalysisBackfill(w http.ResponseWriter, request *http.Request) {
+	if !requireAdministrator(w, request) {
+		return
+	}
+	if handler.adminAnalysis == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Service unavailable", "Administrative analysis is not configured.")
+		return
+	}
+
+	var control func(context.Context, string) (adminanalysis.Run, error)
+	switch request.PathValue("action") {
+	case "pause":
+		control = handler.pauseAdminAnalysisBackfill
+	case "resume":
+		control = handler.resumeAdminAnalysisBackfill
+	case "cancel":
+		control = handler.cancelAdminAnalysisBackfill
+	default:
+		writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", "Administrative backfill action was not found.")
+		return
+	}
+	if control == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Queue unavailable", "Administrative backfill controls are unavailable.")
+		return
+	}
+	run, err := control(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeAnalysisBackfillControlError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, run)
+}
+
+func (handler adminHandler) deleteAnalysisBackfill(w http.ResponseWriter, request *http.Request) {
+	if !requireAdministrator(w, request) {
+		return
+	}
+	if handler.adminAnalysis == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Service unavailable", "Administrative analysis is not configured.")
+		return
+	}
+	if err := handler.adminAnalysis.Store().Delete(request.Context(), request.PathValue("id")); err != nil {
+		writeAnalysisBackfillControlError(w, err)
+		return
+	}
+	slog.InfoContext(request.Context(), "administrative backfill record deleted", "run_id", request.PathValue("id"), "actor", currentUser(request).Email)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func writeAnalysisBackfillControlError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", "Administrative backfill was not found.")
+	case errors.Is(err, adminanalysis.ErrInvalidRunTransition):
+		writeProblem(w, http.StatusConflict, "https://snap.local/problems/conflict", "Action unavailable", err.Error())
+	default:
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Could not update backfill", err.Error())
+	}
 }
 
 func (handler adminHandler) analysisBackfillStream(w http.ResponseWriter, request *http.Request) {
