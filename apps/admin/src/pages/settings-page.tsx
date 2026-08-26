@@ -514,18 +514,19 @@ function BackfillRunRow({ run, busy, onCancel, onDelete }: {
   const terminal = run.succeeded_articles + run.failed_articles + run.cancelled_articles
   const percent = run.total_articles > 0 ? Math.min(100, Math.round((terminal / run.total_articles) * 100)) : 0
   const remaining = run.pending_articles + run.queued_articles + run.running_articles
+  const deletable = ['completed', 'partially_completed', 'failed', 'cancelled'].includes(run.status)
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-4 border-b p-5 last:border-b-0 sm:p-6 xl:grid-cols-[minmax(0,1fr)_6.5rem_minmax(18rem,0.7fr)_2.25rem] xl:items-center">
-      <div className="col-span-2 min-w-0 xl:col-span-1">
+    <div className="grid grid-cols-1 gap-x-4 gap-y-4 border-b p-5 last:border-b-0 sm:p-6 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)_2.25rem] xl:items-center">
+      <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2"><BackfillStatus status={run.status} /><Badge variant="secondary">{workflowLabel(run.workflow)}</Badge><Badge variant="outline">{scopeLabel(run.scope)}</Badge></div>
-        <p className="mt-3 truncate font-medium" title={run.model}>{`${providerLabel(run.provider)} · ${run.model}`}</p>
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <p className="min-w-0 truncate font-medium" title={run.model}>{`${providerLabel(run.provider)} · ${run.model}`}</p>
+          <BackfillRunControl run={run} busy={busy} onCancel={onCancel} />
+        </div>
         <p className="mt-1 text-xs text-muted-foreground">Created by {run.created_by} · {dateTime.format(new Date(run.created_at))}</p>
         {run.error_detail ? <p className="mt-2 text-xs text-destructive">{run.error_detail}</p> : null}
       </div>
-      <div className="flex min-h-8 items-center xl:justify-end">
-        <BackfillRunControl run={run} busy={busy} onCancel={onCancel} />
-      </div>
-      <div className="col-span-2 row-start-3 min-w-0 xl:col-span-1 xl:col-start-3 xl:row-start-1">
+      <div className="min-w-0 xl:col-start-2 xl:row-start-1">
         <div className="flex items-center justify-between gap-3 text-xs"><span className="text-muted-foreground">{terminal.toLocaleString()} of {run.total_articles.toLocaleString()} finished</span><span className="font-medium tabular-nums">{percent}%</span></div>
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}><div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${percent}%` }} /></div>
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -536,9 +537,11 @@ function BackfillRunRow({ run, busy, onCancel, onDelete }: {
           {(run.status === 'queued' || run.status === 'running') && (run.queued_articles > 0 || run.running_articles > 0) ? <span>{run.running_articles.toLocaleString()} active · {run.queued_articles.toLocaleString()} queued</span> : null}
         </div>
       </div>
-      <div className="col-start-2 row-start-2 flex min-h-8 items-center justify-end xl:col-start-4 xl:row-start-1">
-        <BackfillRunActions run={run} busy={busy} onDelete={onDelete} />
-      </div>
+      {deletable ? (
+        <div className="flex min-h-8 items-center justify-end xl:col-start-3 xl:row-start-1">
+          <BackfillRunActions run={run} busy={busy} onDelete={onDelete} />
+        </div>
+      ) : null}
     </div>
   )
 }
