@@ -55,7 +55,7 @@ export function DashboardPage() {
 
       <SectionCards data={overview.data} isLoading={overview.isPending} />
       <ChartAreaInteractive />
-      <DataTable />
+      <DataTable editable />
     </section>
   )
 }
