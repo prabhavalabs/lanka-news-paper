@@ -22,6 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useTableQuery } from '@/hooks/use-table-query'
+import { compactArticleSnippet } from '@/lib/article-snippet'
 import { formatDateTime } from '@/lib/date-time'
 
 const client = createClient()
@@ -47,17 +48,6 @@ function safeExternalURL(value?: string | null) {
   } catch {
     return undefined
   }
-}
-
-function compactSnippet(value: string) {
-  return value
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/^\s{0,3}(?:#{1,6}|>|[-*+] |\d+[.)] )\s*/gm, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/[`*_~]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
 }
 
 export function SourceFeedPage() {
@@ -202,7 +192,7 @@ export function SourceFeedPage() {
                 ) : null}
                 {articles.data?.items.map((article) => {
                   const originalURL = safeExternalURL(article.original_url)
-                  const snippet = compactSnippet(article.snippet)
+                  const snippet = compactArticleSnippet(article.snippet)
                   return (
                     <TableRow key={article.id}>
                       <TableCell className="max-w-2xl whitespace-normal">
