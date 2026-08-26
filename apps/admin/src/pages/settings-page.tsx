@@ -524,17 +524,17 @@ function BackfillRunRow({ run, busy, onPause, onResume, onCancel, onDelete }: {
   const percent = run.total_articles > 0 ? Math.min(100, Math.round((terminal / run.total_articles) * 100)) : 0
   const remaining = run.pending_articles + run.queued_articles + run.running_articles
   return (
-    <div className="grid gap-4 border-b p-5 last:border-b-0 sm:p-6 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)] xl:items-center">
-      <div className="min-w-0">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2"><BackfillStatus status={run.status} /><Badge variant="secondary">{workflowLabel(run.workflow)}</Badge><Badge variant="outline">{scopeLabel(run.scope)}</Badge></div>
-          <BackfillRunActions run={run} busy={busy} onPause={onPause} onResume={onResume} onCancel={onCancel} onDelete={onDelete} />
-        </div>
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 border-b p-5 last:border-b-0 sm:p-6 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)_auto] xl:items-center">
+      <div className="min-w-0 xl:order-1">
+        <div className="flex flex-wrap items-center gap-2"><BackfillStatus status={run.status} /><Badge variant="secondary">{workflowLabel(run.workflow)}</Badge><Badge variant="outline">{scopeLabel(run.scope)}</Badge></div>
         <p className="mt-3 truncate font-medium" title={run.model}>{`${providerLabel(run.provider)} · ${run.model}`}</p>
         <p className="mt-1 text-xs text-muted-foreground">Created by {run.created_by} · {dateTime.format(new Date(run.created_at))}</p>
         {run.error_detail ? <p className="mt-2 text-xs text-destructive">{run.error_detail}</p> : null}
       </div>
-      <div className="min-w-0">
+      <div className="flex justify-end xl:order-3 xl:self-center">
+        <BackfillRunActions run={run} busy={busy} onPause={onPause} onResume={onResume} onCancel={onCancel} onDelete={onDelete} />
+      </div>
+      <div className="col-span-2 min-w-0 xl:order-2 xl:col-span-1">
         <div className="flex items-center justify-between gap-3 text-xs"><span className="text-muted-foreground">{terminal.toLocaleString()} of {run.total_articles.toLocaleString()} finished</span><span className="font-medium tabular-nums">{percent}%</span></div>
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}><div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${percent}%` }} /></div>
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
