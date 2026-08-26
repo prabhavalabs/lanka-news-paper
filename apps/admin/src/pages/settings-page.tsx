@@ -20,7 +20,6 @@ import {
   LoaderCircle,
   EllipsisVertical,
   Pause,
-  Play,
   RefreshCw,
   Search,
   ServerCog,
@@ -356,8 +355,6 @@ export function SettingsPage() {
         pending={runs.isPending}
         streamState={streamState}
         busyRunID={controlBackfill.isPending ? controlBackfill.variables?.id : deleteBackfill.isPending ? deleteBackfill.variables : undefined}
-        onPause={(run) => controlBackfill.mutate({ id: run.id, action: 'pause' })}
-        onResume={(run) => controlBackfill.mutate({ id: run.id, action: 'resume' })}
         onCancel={(run) => setDestructiveAction({ kind: 'cancel', run })}
         onDelete={(run) => setDestructiveAction({ kind: 'delete', run })}
       />
@@ -459,13 +456,11 @@ function SelectedArticle({ article }: { article: AdminArticleListItem }) {
   return <div className="mt-3 rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm font-medium">{article.headline}</div>
 }
 
-function BackfillRuns({ runs, pending, streamState, busyRunID, onPause, onResume, onCancel, onDelete }: {
+function BackfillRuns({ runs, pending, streamState, busyRunID, onCancel, onDelete }: {
   runs: AnalysisBackfillRun[]
   pending: boolean
   streamState: BackfillStreamState
   busyRunID?: string
-  onPause: (run: AnalysisBackfillRun) => void
-  onResume: (run: AnalysisBackfillRun) => void
   onCancel: (run: AnalysisBackfillRun) => void
   onDelete: (run: AnalysisBackfillRun) => void
 }) {
@@ -475,7 +470,7 @@ function BackfillRuns({ runs, pending, streamState, busyRunID, onPause, onResume
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle>Recent administrative backfills</CardTitle>
-            <CardDescription>Live progress with controls for pausing, resuming, and stopping bulk work.</CardDescription>
+            <CardDescription>Live progress with controls for stopping bulk work that can be run again later.</CardDescription>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <BackfillConnectionStatus state={streamState} />
@@ -491,8 +486,6 @@ function BackfillRuns({ runs, pending, streamState, busyRunID, onPause, onResume
             key={run.id}
             run={run}
             busy={busyRunID === run.id}
-            onPause={onPause}
-            onResume={onResume}
             onCancel={onCancel}
             onDelete={onDelete}
           />
@@ -512,11 +505,9 @@ function BackfillConnectionStatus({ state }: { state: BackfillStreamState }) {
   )
 }
 
-function BackfillRunRow({ run, busy, onPause, onResume, onCancel, onDelete }: {
+function BackfillRunRow({ run, busy, onCancel, onDelete }: {
   run: AnalysisBackfillRun
   busy: boolean
-  onPause: (run: AnalysisBackfillRun) => void
-  onResume: (run: AnalysisBackfillRun) => void
   onCancel: (run: AnalysisBackfillRun) => void
   onDelete: (run: AnalysisBackfillRun) => void
 }) {
@@ -524,17 +515,17 @@ function BackfillRunRow({ run, busy, onPause, onResume, onCancel, onDelete }: {
   const percent = run.total_articles > 0 ? Math.min(100, Math.round((terminal / run.total_articles) * 100)) : 0
   const remaining = run.pending_articles + run.queued_articles + run.running_articles
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 border-b p-5 last:border-b-0 sm:p-6 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)_auto] xl:items-center">
-      <div className="min-w-0 xl:order-1">
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-4 border-b p-5 last:border-b-0 sm:p-6 xl:grid-cols-[minmax(0,1fr)_6.5rem_minmax(18rem,0.7fr)_2.25rem] xl:items-center">
+      <div className="col-span-2 min-w-0 xl:col-span-1">
         <div className="flex flex-wrap items-center gap-2"><BackfillStatus status={run.status} /><Badge variant="secondary">{workflowLabel(run.workflow)}</Badge><Badge variant="outline">{scopeLabel(run.scope)}</Badge></div>
         <p className="mt-3 truncate font-medium" title={run.model}>{`${providerLabel(run.provider)} · ${run.model}`}</p>
         <p className="mt-1 text-xs text-muted-foreground">Created by {run.created_by} · {dateTime.format(new Date(run.created_at))}</p>
         {run.error_detail ? <p className="mt-2 text-xs text-destructive">{run.error_detail}</p> : null}
       </div>
-      <div className="flex justify-end xl:order-3 xl:self-center">
-        <BackfillRunActions run={run} busy={busy} onPause={onPause} onResume={onResume} onCancel={onCancel} onDelete={onDelete} />
+      <div className="flex min-h-8 items-center xl:justify-end">
+        <BackfillRunControl run={run} busy={busy} onCancel={onCancel} />
       </div>
-      <div className="col-span-2 min-w-0 xl:order-2 xl:col-span-1">
+      <div className="col-span-2 row-start-3 min-w-0 xl:col-span-1 xl:col-start-3 xl:row-start-1">
         <div className="flex items-center justify-between gap-3 text-xs"><span className="text-muted-foreground">{terminal.toLocaleString()} of {run.total_articles.toLocaleString()} finished</span><span className="font-medium tabular-nums">{percent}%</span></div>
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}><div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${percent}%` }} /></div>
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -545,37 +536,43 @@ function BackfillRunRow({ run, busy, onPause, onResume, onCancel, onDelete }: {
           {(run.status === 'queued' || run.status === 'running') && (run.queued_articles > 0 || run.running_articles > 0) ? <span>{run.running_articles.toLocaleString()} active · {run.queued_articles.toLocaleString()} queued</span> : null}
         </div>
       </div>
+      <div className="col-start-2 row-start-2 flex min-h-8 items-center justify-end xl:col-start-4 xl:row-start-1">
+        <BackfillRunActions run={run} busy={busy} onDelete={onDelete} />
+      </div>
     </div>
   )
 }
 
-function BackfillRunActions({ run, busy, onPause, onResume, onCancel, onDelete }: {
+function BackfillRunControl({ run, busy, onCancel }: {
   run: AnalysisBackfillRun
   busy: boolean
-  onPause: (run: AnalysisBackfillRun) => void
-  onResume: (run: AnalysisBackfillRun) => void
   onCancel: (run: AnalysisBackfillRun) => void
+}) {
+  const stoppable = run.status === 'queued' || run.status === 'running' || run.status === 'paused'
+  if (!stoppable) return null
+  return (
+    <Button variant="outline" size="sm" disabled={busy} onClick={() => onCancel(run)}>
+      {busy ? <LoaderCircle className="animate-spin" /> : <Square />} Stop
+    </Button>
+  )
+}
+
+function BackfillRunActions({ run, busy, onDelete }: {
+  run: AnalysisBackfillRun
+  busy: boolean
   onDelete: (run: AnalysisBackfillRun) => void
 }) {
-  const active = run.status === 'queued' || run.status === 'running'
-  const stoppable = active || run.status === 'paused'
   const deletable = ['completed', 'partially_completed', 'failed', 'cancelled'].includes(run.status)
+  if (!deletable) return null
   return (
-    <div className="flex shrink-0 items-center gap-1">
-      {active ? <Button variant="outline" size="sm" disabled={busy} onClick={() => onPause(run)}><Pause /> Pause</Button> : null}
-      {run.status === 'paused' ? <Button size="sm" disabled={busy} onClick={() => onResume(run)}><Play /> Resume</Button> : null}
-      {(stoppable || deletable) ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={`Actions for backfill ${run.id}`} disabled={busy} />}>
-            {busy ? <LoaderCircle className="animate-spin" /> : <EllipsisVertical />}
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
-            {stoppable ? <DropdownMenuItem variant="destructive" onClick={() => onCancel(run)}><Square /> Stop backfill</DropdownMenuItem> : null}
-            {deletable ? <DropdownMenuItem variant="destructive" onClick={() => onDelete(run)}><Trash2 /> Delete record</DropdownMenuItem> : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : null}
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={`Actions for backfill ${run.id}`} disabled={busy} />}>
+        {busy ? <LoaderCircle className="animate-spin" /> : <EllipsisVertical />}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuItem variant="destructive" onClick={() => onDelete(run)}><Trash2 /> Delete record</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 

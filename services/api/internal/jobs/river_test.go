@@ -1,11 +1,14 @@
 package jobs
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/riverqueue/river/rivertype"
 	"github.com/stretchr/testify/require"
+
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/adminanalysis"
 )
 
 func TestQueueHistoryCutoff(t *testing.T) {
@@ -58,6 +61,14 @@ func TestAdminAnalysisJobsUseIsolatedLowConcurrencyQueue(t *testing.T) {
 	require.Equal(t, 4, article.Priority)
 	require.True(t, dispatch.UniqueOpts.ByArgs)
 	require.True(t, article.UniqueOpts.ByArgs)
+}
+
+func TestMissingCodexFailsAdministrativeAnalysisWithoutRetryBackoff(t *testing.T) {
+	err := errors.Join(errors.New("clean article"), adminanalysis.ErrCodexUnavailable)
+
+	require.True(t, adminAnalysisFailureIsTerminal(err, 1, 5))
+	require.False(t, adminAnalysisFailureIsTerminal(errors.New("temporary provider error"), 1, 5))
+	require.True(t, adminAnalysisFailureIsTerminal(errors.New("last attempt"), 5, 5))
 }
 
 func TestArticleContentBackfillIsUnique(t *testing.T) {

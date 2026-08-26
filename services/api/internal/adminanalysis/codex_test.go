@@ -97,4 +97,13 @@ func TestCodexCompletionAllowsTasksWithoutStructuredSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "politics", output)
 	require.False(t, slices.Contains(runner.arguments, "--output-schema"))
+	require.Contains(t, runner.arguments, `model_reasoning_effort="low"`)
+}
+
+func TestCodexCompletionReportsMissingBinaryAsUnavailable(t *testing.T) {
+	client := NewCodexClient(fakeProcessRunner{})
+
+	_, err := client.Complete(context.Background(), "gpt-test", "Classify this article", nil)
+
+	require.ErrorIs(t, err, ErrCodexUnavailable)
 }

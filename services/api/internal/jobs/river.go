@@ -233,15 +233,22 @@ func (worker *AdminArticleAnalysisWorker) Work(ctx context.Context, job *river.J
 		if errors.Is(err, adminanalysis.ErrRunInactive) {
 			return river.JobCancel(err)
 		}
-		terminal := job.Attempt >= job.MaxAttempts
+		terminal := adminAnalysisFailureIsTerminal(err, job.Attempt, job.MaxAttempts)
 		if recordErr := worker.Analysis.Store().MarkAttemptFailed(ctx, job.Args.RunID, job.Args.ArticleID, err.Error(), terminal); recordErr != nil {
 			if errors.Is(recordErr, adminanalysis.ErrRunInactive) {
 				return river.JobCancel(err)
 			}
 			return errors.Join(err, recordErr)
 		}
+		if terminal && job.Attempt < job.MaxAttempts {
+			return river.JobCancel(err)
+		}
 	}
 	return err
+}
+
+func adminAnalysisFailureIsTerminal(err error, attempt, maxAttempts int) bool {
+	return attempt >= maxAttempts || errors.Is(err, adminanalysis.ErrCodexUnavailable)
 }
 
 func (worker *AdminArticleAnalysisWorker) Timeout(*river.Job[AdminArticleAnalysisArgs]) time.Duration {

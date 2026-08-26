@@ -19,7 +19,9 @@ services:
       retries: 20
 
   worker:
-    image: golang:1.25.13-alpine
+    build:
+      context: ../..
+      dockerfile: infra/local/worker.Dockerfile
     restart: unless-stopped
     dns:
       - 1.1.1.1
@@ -29,10 +31,14 @@ services:
     environment:
       SNAP_DATABASE_URL: postgres://snap:snap@postgres:5432/snap?sslmode=disable
       SNAP_ENV: local
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      CODEX_HOME: /data/codex
+      CODEX_BACKFILL_MODELS: ${CODEX_BACKFILL_MODELS:-gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol}
     volumes:
       - ../..:/workspace
       - snap-go-mod:/go/pkg/mod
       - snap-go-build:/root/.cache/go-build
+      - ${HOME}/.codex:/data/codex
     depends_on:
       postgres:
         condition: service_healthy

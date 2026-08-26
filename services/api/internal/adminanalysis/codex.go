@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"time"
 )
+
+var ErrCodexUnavailable = errors.New("Codex CLI is unavailable")
 
 type ProcessRunner interface {
 	LookPath(string) (string, error)
@@ -115,7 +118,7 @@ func (client *CodexClient) Probe(ctx context.Context) CodexStatus {
 func (client *CodexClient) Complete(ctx context.Context, model, prompt string, schema map[string]any) (string, error) {
 	path, err := client.runner.LookPath("codex")
 	if err != nil {
-		return "", fmt.Errorf("locate Codex CLI: %w", err)
+		return "", fmt.Errorf("%w: locate executable: %v", ErrCodexUnavailable, err)
 	}
 	directory, err := os.MkdirTemp("", "snap-codex-analysis-")
 	if err != nil {
@@ -125,6 +128,7 @@ func (client *CodexClient) Complete(ctx context.Context, model, prompt string, s
 	arguments := []string{
 		"exec", "--ephemeral", "--ignore-user-config", "--ignore-rules",
 		"--skip-git-repo-check", "--sandbox", "read-only", "--color", "never",
+		"--config", `model_reasoning_effort="low"`,
 		"--disable", "shell_tool", "--disable", "unified_exec", "--disable", "browser_use",
 		"--disable", "computer_use", "--disable", "apps", "--disable", "multi_agent",
 		"--model", model,
