@@ -11,10 +11,14 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api \
 
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates tzdata \
+ARG CODEX_CLI_VERSION=0.147.0
+
+RUN apk add --no-cache ca-certificates nodejs npm su-exec tzdata \
+    && npm install --global "@openai/codex@${CODEX_CLI_VERSION}" \
+    && npm cache clean --force \
     && addgroup -S app \
     && adduser -S -G app -h /app app \
-    && install -d -o app -g app /data/media
+    && install -d -o app -g app /data/media /data/codex
 WORKDIR /app
 COPY --from=build /out/ ./
 COPY services/api/migrations ./migrations

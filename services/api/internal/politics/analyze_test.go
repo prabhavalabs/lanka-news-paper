@@ -57,3 +57,42 @@ func TestEconomicPolicySignalGate(t *testing.T) {
 		require.Falsef(t, hasEconomicPolicySignal(value), "unexpected policy signal in %q", value)
 	}
 }
+
+func TestParseAnalysisPreservesLeftCenterRightDistribution(t *testing.T) {
+	result, err := parseAnalysis(`{
+	  "political_relevance": 1,
+	  "left_probability": 0.62,
+	  "center_probability": 0.30,
+	  "right_probability": 0.08,
+	  "confidence": 0.84,
+	  "rationale": "The narration repeatedly endorses redistribution.",
+	  "evidence": ["redistribution is essential"]
+	}`)
+
+	require.NoError(t, err)
+	require.True(t, result.Relevant)
+	require.InDelta(t, 0.62, result.LeftProbability, 0.0001)
+	require.InDelta(t, 0.30, result.CenterProbability, 0.0001)
+	require.InDelta(t, 0.08, result.RightProbability, 0.0001)
+	require.InDelta(t, -0.54, result.Score, 0.0001)
+	require.Equal(t, "left", result.Label)
+}
+
+func TestParseAnalysisMakesIrrelevantArticleCenterUnrated(t *testing.T) {
+	result, err := parseAnalysis(`{
+	  "political_relevance": 0,
+	  "left_probability": 0.2,
+	  "center_probability": 0.5,
+	  "right_probability": 0.3,
+	  "confidence": 0.91,
+	  "rationale": "The report is about a sports result.",
+	  "evidence": []
+	}`)
+
+	require.NoError(t, err)
+	require.False(t, result.Relevant)
+	require.Equal(t, 0.0, result.LeftProbability)
+	require.Equal(t, 1.0, result.CenterProbability)
+	require.Equal(t, 0.0, result.RightProbability)
+	require.Equal(t, "unclear", result.Label)
+}

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/adminanalysis"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/desk"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/iam"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
@@ -15,20 +16,22 @@ import (
 )
 
 type Dependencies struct {
-	AllowedOrigins     []string
-	CookieSecure       bool
-	Database           DatabaseChecker
-	Desk               *desk.Store
-	IAM                *iam.Store
-	LLM                *llm.Gateway
-	Media              *media.Store
-	Monitor            *desk.MonitorBroker
-	News               *publish.Store
-	Poller             *ingest.Poller
-	Registry           *registry.Store
-	RunPipeline        func(context.Context, string, string) error
-	RunContentBackfill func(context.Context) error
-	SessionTTL         time.Duration
+	AdminAnalysis            *adminanalysis.Service
+	AllowedOrigins           []string
+	CookieSecure             bool
+	Database                 DatabaseChecker
+	Desk                     *desk.Store
+	IAM                      *iam.Store
+	LLM                      *llm.Gateway
+	Media                    *media.Store
+	Monitor                  *desk.MonitorBroker
+	News                     *publish.Store
+	Poller                   *ingest.Poller
+	Registry                 *registry.Store
+	RunPipeline              func(context.Context, string, string) error
+	RunContentBackfill       func(context.Context) error
+	RunAdminAnalysisBackfill func(context.Context, string) error
+	SessionTTL               time.Duration
 }
 
 func NewRouter(dependencies Dependencies) http.Handler {
@@ -36,7 +39,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	health := healthHandler{database: dependencies.Database}
 	news := newsHandler{reader: dependencies.News}
 	auth := newAuthHandler(dependencies.IAM, dependencies.SessionTTL, dependencies.CookieSecure)
-	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk, monitor: newMonitorService(dependencies.Desk, dependencies.Monitor), media: dependencies.Media, runPipeline: dependencies.RunPipeline, runContentBackfill: dependencies.RunContentBackfill}
+	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk, monitor: newMonitorService(dependencies.Desk, dependencies.Monitor), media: dependencies.Media, adminAnalysis: dependencies.AdminAnalysis, runPipeline: dependencies.RunPipeline, runContentBackfill: dependencies.RunContentBackfill, runAdminAnalysisBackfill: dependencies.RunAdminAnalysisBackfill}
 
 	mux.HandleFunc("GET /api/v1/health/live", health.liveness)
 	mux.HandleFunc("GET /api/v1/health/ready", health.readiness)
@@ -85,9 +88,11 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("GET /api/admin/cron-jobs", admin.cronJobs)
 	protected.HandleFunc("GET /api/admin/articles", admin.articles)
 	protected.HandleFunc("GET /api/admin/articles/{id}", admin.article)
+	protected.HandleFunc("DELETE /api/admin/articles/{id}", admin.deleteArticle)
 	protected.HandleFunc("POST /api/admin/articles/{id}/pipeline/run", admin.runArticlePipeline)
 	protected.HandleFunc("GET /api/admin/quarantine", admin.quarantine)
 	protected.HandleFunc("POST /api/admin/articles/{id}/status", admin.articleStatus)
+	protected.HandleFunc("POST /api/admin/articles/{id}/review", admin.articleReview)
 	protected.HandleFunc("POST /api/admin/articles/{id}/category", admin.articleCategory)
 	protected.HandleFunc("POST /api/admin/articles/{id}/note", admin.articleNote)
 	protected.HandleFunc("GET /api/admin/complaints", admin.complaints)
@@ -101,6 +106,12 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("GET /api/admin/llm/models", admin.models)
 	protected.HandleFunc("GET /api/admin/llm/profiles", admin.profiles)
 	protected.HandleFunc("POST /api/admin/llm/profiles", admin.profiles)
+	protected.HandleFunc("GET /api/admin/settings/codex", admin.codexStatus)
+	protected.HandleFunc("GET /api/admin/settings/analysis-backfills/preview", admin.analysisBackfillPreview)
+	protected.HandleFunc("GET /api/admin/settings/analysis-backfills/stream", admin.analysisBackfillStream)
+	protected.HandleFunc("GET /api/admin/settings/analysis-backfills", admin.analysisBackfills)
+	protected.HandleFunc("POST /api/admin/settings/analysis-backfills", admin.analysisBackfills)
+	protected.HandleFunc("GET /api/admin/settings/analysis-backfills/{id}", admin.analysisBackfill)
 	protected.HandleFunc("GET /api/admin/media/{key...}", admin.mediaFile)
 	mux.Handle("/api/admin/", withCSRF(auth.requireAuth(protected)))
 

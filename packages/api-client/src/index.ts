@@ -31,6 +31,41 @@ export type PublicArticle = {
   media: string | null;
   event_id: string | null;
   editorial_note: string | null;
+  analysis?: ArticleNarrativeAnalysis;
+};
+
+export type ArticleNarrativeAnalysis = {
+  summary: string;
+  relevant: boolean;
+  label: string;
+  left_probability: number;
+  center_probability: number;
+  right_probability: number;
+  confidence: number;
+};
+
+export type EventSourceSpectrum = {
+  article_id: string;
+  source_id: string;
+  source: string;
+  source_icon: string;
+  label: "left" | "center" | "right" | "unrated";
+  left_probability: number;
+  center_probability: number;
+  right_probability: number;
+  confidence: number;
+};
+
+export type EventNarrativeAnalysis = {
+  summary: string;
+  article_count: number;
+  source_count: number;
+  rated_source_count: number;
+  left_percentage: number;
+  center_percentage: number;
+  right_percentage: number;
+  source_spectrum: EventSourceSpectrum[];
+  analyzed_at: string;
 };
 
 export type CursorPage<T> = {
@@ -43,6 +78,7 @@ export type PublicEvent = {
   title: string;
   is_breaking: boolean;
   articles: PublicArticle[];
+  analysis?: EventNarrativeAnalysis;
 };
 
 export type PublicKnowledgeArticle = {
@@ -54,6 +90,10 @@ export type PublicKnowledgeArticle = {
   narrative?: {
     label: string;
     economic_frame: number;
+    left_probability: number;
+    center_probability: number;
+    right_probability: number;
+    axis_version: string;
     confidence: number;
   };
 };
@@ -66,6 +106,7 @@ export type PublicKnowledgeEvent = {
   is_breaking: boolean;
   last_update_at: string;
   articles: PublicKnowledgeArticle[];
+  analysis?: EventNarrativeAnalysis;
 };
 
 export type PublicKnowledgeGraph = {
@@ -238,6 +279,57 @@ export type LlmProfile = {
   enabled: boolean;
 };
 
+export type CodexStatus = {
+  installed: boolean;
+  authenticated: boolean;
+  ready: boolean;
+  path: string;
+  version: string;
+  auth_method: string;
+  detail: string;
+  checked_at: string;
+  models: string[];
+};
+
+export type AnalysisBackfillScope = "date_range" | "catalog" | "article";
+export type AnalysisBackfillWorkflow = "single_pass" | "full_pipeline";
+export type AnalysisBackfillProvider = "openrouter" | "codex_cli" | "pipeline";
+
+export type AnalysisBackfillRequest = {
+  scope: AnalysisBackfillScope;
+  workflow: AnalysisBackfillWorkflow;
+  provider: AnalysisBackfillProvider;
+  model: string;
+  from?: string;
+  to?: string;
+  article_id?: string;
+  confirmation?: string;
+};
+
+export type AnalysisBackfillRun = {
+  id: string;
+  scope: AnalysisBackfillScope;
+  workflow: AnalysisBackfillWorkflow;
+  provider: AnalysisBackfillProvider;
+  model: string;
+  from: string | null;
+  to: string | null;
+  article_id: string | null;
+  status: "queued" | "running" | "completed" | "partially_completed" | "failed";
+  total_articles: number;
+  pending_articles: number;
+  queued_articles: number;
+  running_articles: number;
+  succeeded_articles: number;
+  failed_articles: number;
+  created_by: string;
+  error_detail: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  latest_item_updated_at: string | null;
+};
+
 export type Overview = {
   published: number;
   held: number;
@@ -265,6 +357,10 @@ export type KnowledgeArticle = {
   political?: {
     model: string;
     economic_frame: number;
+    left_probability: number;
+    center_probability: number;
+    right_probability: number;
+    axis_version: string;
     confidence: number;
     relevant: boolean;
     label: 'left' | 'center_left' | 'neutral' | 'center_right' | 'right' | 'unclear';
@@ -579,6 +675,18 @@ export type AdminArticleDetail = {
     retention_until: string | null;
     characters: number;
   } | null;
+  analysis_document: {
+    original_text: string;
+    cleaned_text: string;
+    summary_text: string;
+    summary_points: string[];
+    cleaner_version: string;
+    summary_provider: string;
+    summary_model: string;
+    cleaned_at: string;
+    summarized_at: string | null;
+  } | null;
+  event_analysis: EventNarrativeAnalysis | null;
 };
 
 export type AdminComplaint = {
@@ -609,7 +717,7 @@ export type AdminTableQuery = {
   [filter: string]: string | number | undefined;
 };
 
-function withQuery(path: string, params: AdminTableQuery = {}) {
+function withQuery(path: string, params: object = {}) {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== "") search.set(key, String(value));
@@ -743,6 +851,19 @@ export function createClient(baseUrl = "") {
       request<{ ok: boolean }>(url(`/api/admin/articles/${id}/status`), {
         method: "POST",
         body: JSON.stringify({ status, reason })
+      }),
+    reviewArticle: (
+      id: string,
+      review: { status?: string; category?: string; reason?: string }
+    ) =>
+      request<{ ok: boolean }>(url(`/api/admin/articles/${id}/review`), {
+        method: "POST",
+        body: JSON.stringify(review)
+      }),
+    deleteArticle: (id: string, reason = "Deleted from article management") =>
+      request<{ ok: boolean }>(url(`/api/admin/articles/${id}`), {
+        method: "DELETE",
+        body: JSON.stringify({ reason })
       }),
     setArticleCategory: (id: string, slug: string) =>
       request<{ ok: boolean }>(url(`/api/admin/articles/${id}/category`), {
@@ -882,6 +1003,21 @@ export function createClient(baseUrl = "") {
       request<{ items: LlmProfile[] }>(url("/api/admin/llm/profiles")),
     updateLlmProfile: (body: { task: string; model: string }) =>
       request<{ ok: boolean }>(url("/api/admin/llm/profiles"), {
+        method: "POST",
+        body: JSON.stringify(body)
+      }),
+    codexStatus: () =>
+      request<CodexStatus>(url("/api/admin/settings/codex")),
+    analysisBackfillPreview: (body: AnalysisBackfillRequest) =>
+      request<{ articles: number }>(url(withQuery("/api/admin/settings/analysis-backfills/preview", body))),
+    analysisBackfills: () =>
+      request<{ items: AnalysisBackfillRun[] }>(url("/api/admin/settings/analysis-backfills")),
+    analysisBackfillStreamURL: () =>
+      url("/api/admin/settings/analysis-backfills/stream"),
+    analysisBackfill: (id: string) =>
+      request<AnalysisBackfillRun>(url(`/api/admin/settings/analysis-backfills/${encodeURIComponent(id)}`)),
+    createAnalysisBackfill: (body: AnalysisBackfillRequest) =>
+      request<AnalysisBackfillRun>(url("/api/admin/settings/analysis-backfills"), {
         method: "POST",
         body: JSON.stringify(body)
       })

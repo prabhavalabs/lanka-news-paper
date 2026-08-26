@@ -7,6 +7,7 @@ import {
   NetworkIcon,
   NewspaperIcon,
   RadioTowerIcon,
+  SettingsIcon,
   SparklesIcon,
 } from 'lucide-react'
 import { Link } from 'react-router'
@@ -34,6 +35,10 @@ const navigation: NavItem[] = [
   { title: 'AI & routing', url: '/routing', icon: SparklesIcon },
 ]
 
+const administratorNavigation: NavItem[] = [
+  { title: 'Settings', url: '/settings', icon: SettingsIcon },
+]
+
 type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
   user: { email: string; name: string; role: string }
   onLogout: () => void | Promise<void>
@@ -57,7 +62,7 @@ export function AppSidebar({ user, onLogout, ...props }: AppSidebarProps) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={navigation} />
+        <NavMain items={user.role === 'administrator' ? [...navigation, ...administratorNavigation] : navigation} />
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={user} onLogout={onLogout} />

@@ -74,7 +74,36 @@ func (gateway *Gateway) Complete(ctx context.Context, request Request) (Response
 	if err == pgx.ErrNoRows {
 		return gateway.fallback(request), nil
 	}
+	return gateway.completeWithProfile(ctx, request, profile, true)
+}
 
+// CompleteWithModel performs one strict, explicitly configured OpenRouter call.
+// Administrative backfills use this path so a failed provider request remains
+// visible and retryable instead of silently falling back to keyword rules.
+func (gateway *Gateway) CompleteWithModel(ctx context.Context, request Request, providerID, model string) (Response, error) {
+	providerID = strings.TrimSpace(providerID)
+	model = strings.TrimSpace(model)
+	if providerID != "openrouter" {
+		return Response{}, fmt.Errorf("unsupported explicit provider %q", providerID)
+	}
+	if model == "" {
+		return Response{}, fmt.Errorf("model is required")
+	}
+	var profile providerProfile
+	err := gateway.pool.QueryRow(ctx, `
+		SELECT id, kind, COALESCE(base_url, ''), COALESCE(api_key_ref, ''), $2::text, 600
+		FROM llm_providers
+		WHERE id = $1 AND enabled
+	`, providerID, model).Scan(
+		&profile.id, &profile.kind, &profile.baseURL, &profile.keyRef, &profile.model, &profile.timeout,
+	)
+	if err != nil {
+		return Response{}, fmt.Errorf("load explicit provider %s: %w", providerID, err)
+	}
+	return gateway.completeWithProfile(ctx, request, profile, false)
+}
+
+func (gateway *Gateway) completeWithProfile(ctx context.Context, request Request, profile providerProfile, allowFallback bool) (Response, error) {
 	started := time.Now()
 	callID := gateway.startCall(ctx, request, profile)
 	gateway.logPipeline(ctx, request, "info", "provider_request_started", "Provider request started", map[string]any{
@@ -94,12 +123,19 @@ func (gateway *Gateway) Complete(ctx context.Context, request Request) (Response
 	recordContext, cancelRecord := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancelRecord()
 	if callErr != nil {
-		gateway.finishCall(recordContext, callID, "fallback", latencyMS, result, callErr)
+		outcome := "failed"
+		if allowFallback {
+			outcome = "fallback"
+		}
+		gateway.finishCall(recordContext, callID, outcome, latencyMS, result, callErr)
 		gateway.logPipeline(recordContext, request, "error", "provider_request_failed", "Provider request failed", map[string]any{
 			"call_id": callID, "provider": profile.id, "model": profile.model,
 			"latency_ms": latencyMS, "error": callErr.Error(),
 		}, time.Now())
-		return gateway.fallback(request), nil
+		if allowFallback {
+			return gateway.fallback(request), nil
+		}
+		return Response{}, callErr
 	}
 	gateway.finishCall(recordContext, callID, "ok", latencyMS, result, nil)
 	gateway.logPipeline(recordContext, request, "info", "provider_response_completed", "Structured response completed", map[string]any{

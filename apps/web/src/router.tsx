@@ -7,6 +7,7 @@ import { FeedPage } from './pages/feed-page'
 import { FrontPage } from './pages/front-page'
 import { KnowledgeAnalysisPage } from './pages/knowledge-analysis-page'
 import { RootLayout } from './pages/root-layout'
+import { NotFoundPage, RouteErrorPage } from './pages/route-error-page'
 import { SourcesPage } from './pages/sources-page'
 import { StaticPage } from './pages/static-page'
 
@@ -14,6 +15,7 @@ export const router = createBrowserRouter([
   {
     path: '/',
     element: <RootLayout />,
+    errorElement: <RouteErrorPage />,
     children: [
       { index: true, element: <FrontPage /> },
       { path: 'c/:slug', element: <FeedPage mode="category" /> },
@@ -60,6 +62,7 @@ export const router = createBrowserRouter([
           />
         ),
       },
+      { path: '*', element: <NotFoundPage /> },
     ],
   },
 ])

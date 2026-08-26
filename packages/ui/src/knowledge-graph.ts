@@ -43,15 +43,31 @@ export function eventNodeColor(articleCount: number) {
 }
 
 const eventNodeColors = ['#a3a3a3', '#bfdbfe', '#93c5fd', '#60a5fa', '#2563eb'] as const
+const graphLabelSpacing = 48
+const graphVerticalPadding = 46
 
 export function layoutKnowledgeGraph(data: KnowledgeGraphLayoutInput, width = 1200, height = 560) {
   const nodes: GraphNode[] = []
   const edges: GraphEdge[] = []
-  if (!data.categories.length || !data.events.length) return { nodes, edges }
+
+  const sourceNames = new Map<string, string>()
+  data.events.forEach((event) => {
+    event.articles.forEach((article) => sourceNames.set(article.source_id, article.source))
+  })
+  const sources = [...sourceNames].sort((left, right) => left[1].localeCompare(right[1]))
+  const labelRows = Math.max(data.categories.length, sources.length)
+  const layoutHeight = Math.max(
+    height,
+    graphVerticalPadding * 2 + Math.max(0, labelRows - 1) * graphLabelSpacing,
+  )
+
+  if (!data.categories.length || !data.events.length) {
+    return { nodes, edges, width, height: layoutHeight }
+  }
 
   const categoryY = new Map<string, number>()
   data.categories.forEach((category, index) => {
-    const y = distributedY(index, data.categories.length, height)
+    const y = distributedY(index, data.categories.length, layoutHeight)
     categoryY.set(category.slug, y)
     nodes.push({
       id: `category:${category.slug}`,
@@ -63,18 +79,13 @@ export function layoutKnowledgeGraph(data: KnowledgeGraphLayoutInput, width = 12
     })
   })
 
-  const sourceNames = new Map<string, string>()
-  data.events.forEach((event) => {
-    event.articles.forEach((article) => sourceNames.set(article.source_id, article.source))
-  })
-  const sources = [...sourceNames].sort((left, right) => left[1].localeCompare(right[1]))
   sources.forEach(([id, label], index) => {
     nodes.push({
       id: `source:${id}`,
       kind: 'source',
       label,
       x: width - 105,
-      y: distributedY(index, sources.length, height),
+      y: distributedY(index, sources.length, layoutHeight),
       radius: 5,
     })
   })
@@ -85,8 +96,8 @@ export function layoutKnowledgeGraph(data: KnowledgeGraphLayoutInput, width = 12
   data.events.forEach((event) => {
     const timestamp = Date.parse(event.last_update_at)
     const ratio = maximum === minimum ? hash(event.id) / 100 : (timestamp - minimum) / (maximum - minimum)
-    const baseY = categoryY.get(event.category) ?? height / 2
-    const y = clamp(baseY + ((hash(event.id) % 7) - 3) * 8, 36, height - 36)
+    const baseY = categoryY.get(event.category) ?? layoutHeight / 2
+    const y = clamp(baseY + ((hash(event.id) % 7) - 3) * 8, 36, layoutHeight - 36)
     nodes.push({
       id: `event:${event.id}`,
       kind: 'event',
@@ -101,8 +112,8 @@ export function layoutKnowledgeGraph(data: KnowledgeGraphLayoutInput, width = 12
       edges.push({ source: `event:${event.id}`, target: `source:${sourceID}`, kind: 'source' })
     })
   })
-  separateEventNodes(nodes, width, height)
-  return { nodes, edges }
+  separateEventNodes(nodes, width, layoutHeight)
+  return { nodes, edges, width, height: layoutHeight }
 }
 
 function separateEventNodes(nodes: GraphNode[], width: number, height: number) {

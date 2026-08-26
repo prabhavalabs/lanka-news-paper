@@ -50,9 +50,22 @@ type apiResponse struct {
 	} `json:"stickyPost"`
 }
 
+type hiruAPIPost struct {
+	ArticleID apiID  `json:"sinhala_art_id"`
+	Title     string `json:"sinhala_title"`
+	Story     string `json:"sinhala_story"`
+	AddedDate string `json:"sinhala_added_date"`
+	PostURL   string `json:"seourltitle"`
+}
+
 func ParseEndpoint(endpointType, website string, body []byte) (*gofeed.Feed, error) {
 	if endpointType != "rest_api" {
 		return gofeed.NewParser().ParseString(string(body))
+	}
+
+	var hiruPosts []hiruAPIPost
+	if err := json.Unmarshal(body, &hiruPosts); err == nil && containsHiruPost(hiruPosts) {
+		return parseHiruPosts(website, hiruPosts)
 	}
 
 	var posts []apiPost
@@ -108,6 +121,59 @@ func ParseEndpoint(endpointType, website string, body []byte) (*gofeed.Feed, err
 		return nil, fmt.Errorf("REST feed contains no identifiable posts")
 	}
 	return feed, nil
+}
+
+func containsHiruPost(posts []hiruAPIPost) bool {
+	for _, post := range posts {
+		if post.ArticleID != "" || strings.TrimSpace(post.Title) != "" || strings.TrimSpace(post.Story) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func parseHiruPosts(website string, posts []hiruAPIPost) (*gofeed.Feed, error) {
+	base, err := url.Parse(strings.TrimRight(website, "/") + "/")
+	if err != nil {
+		return nil, fmt.Errorf("parse Hiru website URL: %w", err)
+	}
+
+	feed := &gofeed.Feed{}
+	seen := make(map[apiID]bool, len(posts))
+	for _, post := range posts {
+		if post.ArticleID == "" || seen[post.ArticleID] {
+			continue
+		}
+		seen[post.ArticleID] = true
+		reference, err := url.Parse(strings.TrimSpace(post.PostURL))
+		if err != nil || reference.String() == "" {
+			continue
+		}
+		feed.Items = append(feed.Items, &gofeed.Item{
+			GUID:            string(post.ArticleID),
+			Title:           html.UnescapeString(strings.TrimSpace(post.Title)),
+			Link:            base.ResolveReference(reference).String(),
+			Description:     post.Story,
+			Content:         post.Story,
+			PublishedParsed: parseHiruTime(post.AddedDate),
+		})
+	}
+	if len(feed.Items) == 0 {
+		return nil, fmt.Errorf("Hiru REST feed contains no identifiable posts")
+	}
+	return feed, nil
+}
+
+func parseHiruTime(value string) *time.Time {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	colombo := time.FixedZone("Asia/Colombo", 5*60*60+30*60)
+	parsed, err := time.ParseInLocation("2006-01-02 15:04:05", value, colombo)
+	if err != nil {
+		return nil
+	}
+	return &parsed
 }
 
 func parseAPITime(values ...string) *time.Time {

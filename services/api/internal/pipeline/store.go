@@ -16,7 +16,14 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
 )
 
-var steps = []string{"categorization", "event_clustering", "narration_analysis"}
+var steps = []string{
+	"content_cleaning",
+	"summarization",
+	"categorization",
+	"event_clustering",
+	"stance_evaluation",
+	"event_synthesis",
+}
 
 const classificationPrompt = `Classify this Sri Lankan news article into exactly one slug:
 latest, politics, economy, world, crime, health, environment, sport, education, entertainment, technology.
@@ -38,6 +45,9 @@ func (store *Store) Start(ctx context.Context, articleID, trigger string) (strin
 }
 
 func (store *Store) Run(ctx context.Context, articleID, stepName string) (string, error) {
+	if stepName == "narration_analysis" {
+		stepName = "stance_evaluation"
+	}
 	if !validStep(stepName) {
 		return "", fmt.Errorf("unknown pipeline step %q", stepName)
 	}
@@ -447,13 +457,19 @@ func (store *Store) skipUnapprovedRun(ctx context.Context, runID string) error {
 
 func (store *Store) execute(ctx context.Context, articleID, runID string, item step) (stepResult, error) {
 	switch item.name {
+	case "content_cleaning":
+		return store.cleanContent(ctx, articleID)
+	case "summarization":
+		return store.summarize(ctx, articleID, runID, item.id)
 	case "categorization":
 		return store.categorize(ctx, articleID, runID, item.id)
 	case "event_clustering":
 		return store.cluster(ctx, articleID)
-	case "narration_analysis":
+	case "stance_evaluation", "narration_analysis":
 		result, err := store.politics.AnalyzeArticle(ctx, articleID, runID, item.id)
 		return stepResult{output: result}, err
+	case "event_synthesis":
+		return store.synthesizeEvent(ctx, articleID, runID, item.id)
 	default:
 		return stepResult{}, fmt.Errorf("unknown pipeline step %q", item.name)
 	}
@@ -462,8 +478,11 @@ func (store *Store) execute(ctx context.Context, articleID, runID string, item s
 func (store *Store) categorize(ctx context.Context, articleID, runID, stepID string) (stepResult, error) {
 	var publisherCategory, headline, description string
 	if err := store.pool.QueryRow(ctx, `
-		SELECT COALESCE(publisher_category, ''), headline, COALESCE(description, '')
-		FROM articles WHERE id = $1
+		SELECT COALESCE(article.publisher_category, ''), article.headline,
+		       COALESCE(NULLIF(document.summary_text, ''), NULLIF(document.cleaned_text, ''), article.description, '')
+		FROM articles article
+		LEFT JOIN article_analysis_documents document ON document.article_id = article.id
+		WHERE article.id = $1
 	`, articleID).Scan(&publisherCategory, &headline, &description); err != nil {
 		return stepResult{}, err
 	}

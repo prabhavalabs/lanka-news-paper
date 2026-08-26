@@ -28,6 +28,27 @@ Application and database secrets are deliberately not copied through GitHub Acti
 `OPENROUTER_API_KEY` must be present in that file. Both API and worker containers
 receive it; the database stores only the environment-variable reference.
 
+## Codex CLI administrative backfills
+
+The API image contains a pinned Codex CLI, but Codex is not used by regular
+workflows. Its authentication is stored in a dedicated Docker volume shared by
+the API readiness check and the isolated administrative-analysis worker.
+
+After the first deployment (and whenever authentication expires), authenticate
+the volume interactively on the VPS:
+
+```sh
+cd /opt/lanka-news-paper
+docker compose --profile tools run --rm codex-login
+```
+
+Follow the device-login URL shown by the command, then confirm the Settings page
+reports Codex CLI as ready. The application runs Codex in an empty temporary
+workspace, disables interactive tools, strips database and provider secrets from
+the child environment, enforces structured output, and processes only one
+administrative article at a time. `CODEX_BACKFILL_MODELS` in `.env` can restrict
+the model choices exposed to administrators.
+
 ## DNS and TLS
 
 Create proxied or DNS-only `A` records pointing to `178.104.111.17` for:

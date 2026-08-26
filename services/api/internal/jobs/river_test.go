@@ -38,13 +38,26 @@ func TestPeriodicJobCatalog(t *testing.T) {
 func TestQueueCatalog(t *testing.T) {
 	catalog := QueueCatalog()
 
-	require.Len(t, catalog, 3)
+	require.Len(t, catalog, 4)
 	require.Equal(t, "default", catalog[0].Name)
 	require.Equal(t, 2, catalog[0].MaxWorkers)
 	require.Equal(t, "analysis", catalog[1].Name)
 	require.Equal(t, 5, catalog[1].MaxWorkers)
 	require.Equal(t, "crawl", catalog[2].Name)
 	require.Equal(t, 1, catalog[2].MaxWorkers)
+	require.Equal(t, "admin-analysis", catalog[3].Name)
+	require.Equal(t, 1, catalog[3].MaxWorkers)
+}
+
+func TestAdminAnalysisJobsUseIsolatedLowConcurrencyQueue(t *testing.T) {
+	dispatch := (AdminAnalysisBackfillDispatchArgs{RunID: "run"}).InsertOpts()
+	article := (AdminArticleAnalysisArgs{RunID: "run", ArticleID: "article"}).InsertOpts()
+
+	require.Equal(t, "admin-analysis", dispatch.Queue)
+	require.Equal(t, "admin-analysis", article.Queue)
+	require.Equal(t, 4, article.Priority)
+	require.True(t, dispatch.UniqueOpts.ByArgs)
+	require.True(t, article.UniqueOpts.ByArgs)
 }
 
 func TestArticleContentBackfillIsUnique(t *testing.T) {

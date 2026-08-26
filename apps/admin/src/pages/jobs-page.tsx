@@ -96,6 +96,8 @@ const kindLabels: Record<string, string> = {
 	'article.content.backfill': 'Full article backfill',
 	'article.content.cleanup': 'Article content retention',
   'article.pipeline.dispatch': 'Pipeline dispatch',
+  'admin.analysis.backfill.dispatch': 'Administrative AI backfill',
+  'admin.article.analysis': 'Administrative article analysis',
   'ingest.poll': 'Source polling',
   'brief.daily': 'Daily brief',
   'intelligence.narration': 'Narration sweep',
@@ -192,7 +194,7 @@ export function JobsPage() {
         <CardContent className="px-0">
           <DataTableToolbar search={table.search} searchPlaceholder="Search jobs…" onSearch={table.setSearch}>
             <QueueSelect label="status" value={status} options={Object.entries(statuses).map(([value, item]) => [value, item.label])} onChange={(value) => table.setFilter('status', value)} />
-            <QueueSelect label="queue" value={queue} options={[["analysis", "Analysis queue"], ["crawl", "Crawl queue"], ["default", "Default queue"]]} onChange={(value) => table.setFilter('queue', value)} />
+            <QueueSelect label="queue" value={queue} options={[["admin-analysis", "Admin analysis queue"], ["analysis", "Analysis queue"], ["crawl", "Crawl queue"], ["default", "Default queue"]]} onChange={(value) => table.setFilter('queue', value)} />
             <QueueSelect label="job type" value={kind} options={Object.entries(kindLabels)} onChange={(value) => table.setFilter('kind', value || 'all')} />
             <QueueSelect label="time" value={window} options={[["24h", "Last 24 hours"], ["7d", "Last 7 days"]]} includeAll={false} onChange={(value) => table.setFilter('window', value)} />
           </DataTableToolbar>

@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -42,4 +43,21 @@ func TestParseRESTEndpoints(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseHiruRESTEndpoint(t *testing.T) {
+	body := `[{"sinhala_title":"හිරු පුවත &#8211; අද","sinhala_story":"සම්පූර්ණ සිංහල පුවත් අන්තර්ගතය","sinhala_added_date":"2026-08-24 00:05:40","sinhala_art_id":"484729","seourltitle":"484729/example-story"}]`
+
+	feed, err := ParseEndpoint("rest_api", "https://hirunews.lk", []byte(body))
+	require.NoError(t, err)
+	require.Len(t, feed.Items, 1)
+
+	item := feed.Items[0]
+	require.Equal(t, "484729", item.GUID)
+	require.Equal(t, "හිරු පුවත – අද", item.Title)
+	require.Equal(t, "https://hirunews.lk/484729/example-story", item.Link)
+	require.Equal(t, "සම්පූර්ණ සිංහල පුවත් අන්තර්ගතය", item.Description)
+	require.Equal(t, "සම්පූර්ණ සිංහල පුවත් අන්තර්ගතය", item.Content)
+	require.NotNil(t, item.PublishedParsed)
+	require.Equal(t, time.Date(2026, time.August, 23, 18, 35, 40, 0, time.UTC), item.PublishedParsed.UTC())
 }

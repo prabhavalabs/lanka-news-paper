@@ -5,6 +5,14 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
 
+import {
+  ArticleActionsMenu,
+  ArticleDeleteDialog,
+  ArticleReviewDialog,
+  articleCategoryLabel,
+  type ArticleActionItem,
+  type ArticleReviewChange,
+} from '@/components/article-actions'
 import { DataTablePagination, DataTableToolbar } from '@/components/data-table-controls'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -49,6 +57,10 @@ type DataTableProps = {
   editable?: boolean
 }
 
+function statusLabel(status: string) {
+  return status === 'published' ? 'Public' : status.replaceAll('_', ' ')
+}
+
 export function DataTable({ prefix = 'queue', editable = false }: DataTableProps) {
   const queryClient = useQueryClient()
   const table = useTableQuery(prefix)
@@ -64,11 +76,38 @@ export function DataTable({ prefix = 'queue', editable = false }: DataTableProps
       }),
     placeholderData: keepPreviousData,
   })
-  const updateStatus = useMutation({
-    mutationFn: ({ id, nextStatus }: { id: string; nextStatus: string }) =>
-      client.setArticleStatus(id, nextStatus, 'desk review'),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['queue'] }),
-    onError: () => toast.error('Could not update article'),
+  const categories = useQuery({
+    queryKey: ['categories'],
+    queryFn: () => client.categories(),
+  })
+  const [editingItem, setEditingItem] = useState<ArticleActionItem | null>(null)
+  const [deletingItem, setDeletingItem] = useState<ArticleActionItem | null>(null)
+  const review = useMutation({
+    mutationFn: ({ id, status: nextStatus, category, reason }: ArticleReviewChange) =>
+      client.reviewArticle(id, { status: nextStatus, category, reason }),
+    onSuccess: (_data, change) => {
+      toast.success(change.quick ? 'Article is now public' : 'Editorial decision saved')
+      setEditingItem(null)
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['queue'] }),
+        queryClient.invalidateQueries({ queryKey: ['articles'] }),
+        queryClient.invalidateQueries({ queryKey: ['article', change.id] }),
+      ])
+    },
+    onError: (error) => toast.error(error.message || 'Could not save editorial decision'),
+  })
+  const remove = useMutation({
+    mutationFn: (item: ArticleActionItem) => client.deleteArticle(item.id, 'Deleted from the editorial queue'),
+    onSuccess: (_data, item) => {
+      toast.success('Article deleted')
+      setDeletingItem(null)
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['queue'] }),
+        queryClient.invalidateQueries({ queryKey: ['articles'] }),
+        queryClient.invalidateQueries({ queryKey: ['article', item.id] }),
+      ])
+    },
+    onError: (error) => toast.error(error.message || 'Could not delete article'),
   })
   const [visible, setVisible] = useState<VisibleColumns>({
     source: true,
@@ -78,13 +117,17 @@ export function DataTable({ prefix = 'queue', editable = false }: DataTableProps
   })
   const rows = queue.data?.items ?? []
   const pagination = queue.data?.pagination
+  const categoryOptions = (categories.data?.items ?? []).map((category) => ({
+    value: category.slug,
+    label: articleCategoryLabel(category.slug),
+  }))
   const visibleColumnCount = Object.values(visible).filter(Boolean).length + 3
 
   return (
     <Card className="gap-0 py-0 shadow-sm">
       <CardHeader className="border-b py-6">
         <CardTitle>Editorial queue</CardTitle>
-        <CardDescription>Review held, quarantined, and low-confidence articles.</CardDescription>
+        <CardDescription>Review held and low-confidence articles that need an editorial decision.</CardDescription>
         <CardAction>
           <Badge variant="secondary">{pagination?.total ?? 0} items</Badge>
         </CardAction>
@@ -109,7 +152,6 @@ export function DataTable({ prefix = 'queue', editable = false }: DataTableProps
             <SelectContent align="end">
               <SelectItem value="all">All items</SelectItem>
               <SelectItem value="held">Held</SelectItem>
-              <SelectItem value="quarantined">Quarantined</SelectItem>
               <SelectItem value="low_confidence">Low confidence</SelectItem>
             </SelectContent>
           </Select>
@@ -194,8 +236,8 @@ export function DataTable({ prefix = 'queue', editable = false }: DataTableProps
                       </TableCell>
                     ) : null}
                     <TableCell>
-                      <Badge variant={item.public_status === 'quarantined' ? 'destructive' : 'outline'}>
-                        {item.public_status}
+                      <Badge variant={item.public_status === 'published' ? 'default' : 'outline'} className="capitalize">
+                        {statusLabel(item.public_status)}
                       </Badge>
                     </TableCell>
                     {visible.confidence ? (
@@ -215,23 +257,19 @@ export function DataTable({ prefix = 'queue', editable = false }: DataTableProps
                     ) : null}
                     <TableCell className="text-right">
                       {editable ? (
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            size="sm"
-                            disabled={updateStatus.isPending}
-                            onClick={() => updateStatus.mutate({ id: item.id, nextStatus: 'published' })}
-                          >
-                            Publish
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={updateStatus.isPending}
-                            onClick={() => updateStatus.mutate({ id: item.id, nextStatus: 'unpublished' })}
-                          >
-                            Unpublish
-                          </Button>
-                        </div>
+                        <ArticleActionsMenu
+                          article={item}
+                          busy={review.isPending || remove.isPending}
+                          quickPublish
+                          onQuickPublish={(article) => review.mutate({
+                            id: article.id,
+                            status: 'published',
+                            reason: 'Made public from the editorial queue',
+                            quick: true,
+                          })}
+                          onEdit={setEditingItem}
+                          onDelete={setDeletingItem}
+                        />
                       ) : (
                         <Button variant="ghost" size="sm" nativeButton={false} render={<Link to={`/articles/${item.id}`} />}>
                           Inspect
@@ -251,6 +289,33 @@ export function DataTable({ prefix = 'queue', editable = false }: DataTableProps
           />
         ) : null}
       </CardContent>
+      {editingItem ? (
+        <ArticleReviewDialog
+          key={editingItem.id}
+          article={editingItem}
+          categories={categoryOptions}
+          categoriesLoading={categories.isPending}
+          open
+          saving={review.isPending}
+          defaultReason="Updated from the editorial queue"
+          onOpenChange={(open) => {
+            if (!open && !review.isPending) setEditingItem(null)
+          }}
+          onSave={(change) => review.mutate(change)}
+        />
+      ) : null}
+      {deletingItem ? (
+        <ArticleDeleteDialog
+          key={deletingItem.id}
+          article={deletingItem}
+          open
+          deleting={remove.isPending}
+          onOpenChange={(open) => {
+            if (!open && !remove.isPending) setDeletingItem(null)
+          }}
+          onConfirm={(article) => remove.mutate(article)}
+        />
+      ) : null}
     </Card>
   )
 }

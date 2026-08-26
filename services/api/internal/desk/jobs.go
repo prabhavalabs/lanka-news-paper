@@ -111,20 +111,22 @@ WITH pipeline_entries AS (
     'river:' || job.id::text AS id,
     job.id AS job_id,
     NULL::text AS run_id,
-    NULL::text AS article_id,
+    NULLIF(job.args->>'article_id', '') AS article_id,
     CASE job.kind
       WHEN 'ingest.poll' THEN 'Poll all source endpoints'
       WHEN 'article.pipeline.dispatch' THEN 'Dispatch queued article pipelines'
       WHEN 'article.content' THEN 'Retrieve approved full article content'
 	  WHEN 'article.content.backfill' THEN 'Dispatch historical full article retrieval'
 	  WHEN 'article.content.cleanup' THEN 'Delete expired full article content'
+	  WHEN 'admin.analysis.backfill.dispatch' THEN 'Dispatch administrative AI backfill'
+	  WHEN 'admin.article.analysis' THEN COALESCE(generic_article.headline, 'Analyze article')
       WHEN 'brief.daily' THEN 'Generate daily news brief'
       WHEN 'intelligence.narration' THEN 'Run narration intelligence sweep'
       WHEN 'queue.history.cleanup' THEN 'Delete expired queue history'
       ELSE job.kind
     END AS title,
-    NULL::text AS source,
-    ''::text AS source_icon,
+    generic_source.name AS source,
+    COALESCE(generic_source.icon_url, '') AS source_icon,
     job.kind,
     job.queue,
     CASE job.state::text
@@ -149,6 +151,9 @@ WITH pipeline_entries AS (
     CASE WHEN cardinality(job.errors) > 0 THEN job.errors[cardinality(job.errors)]->>'trace' END AS error_trace,
     ''::text AS run_status
   FROM river_job job
+	LEFT JOIN articles generic_article
+	  ON generic_article.id = NULLIF(job.args->>'article_id', '')::uuid
+	LEFT JOIN sources generic_source ON generic_source.id = generic_article.source_id
   WHERE job.kind <> 'article.pipeline'
 ), entries AS (
   SELECT * FROM pipeline_entries

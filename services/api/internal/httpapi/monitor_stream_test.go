@@ -120,3 +120,13 @@ func TestMonitorStreamRejectsInvalidFilter(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.Equal(t, 0, service.calls)
 }
+
+func TestQueueMonitorAcceptsAdministrativeAnalysisFilters(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/jobs?queue=admin-analysis&kind=admin.article.analysis", nil)
+
+	query, err := parseQueueMonitorQuery(request)
+
+	require.NoError(t, err)
+	require.Equal(t, "admin-analysis", query.Queue)
+	require.Equal(t, "admin.article.analysis", query.Kind)
+}

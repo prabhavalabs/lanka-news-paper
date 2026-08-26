@@ -8,16 +8,19 @@ import { LoginPage } from './pages/login-page'
 import { KnowledgeGraphPage } from './pages/knowledge-graph-page'
 import { JobsPage } from './pages/jobs-page'
 import { QueuePage } from './pages/queue-page'
+import { NotFoundPage, RouteErrorPage } from './pages/route-error-page'
 import { RoutingPage } from './pages/routing-page'
+import { SettingsPage } from './pages/settings-page'
 import { ShellLayout } from './pages/shell-layout'
 import { SourceDetailPage } from './pages/source-detail-page'
 import { SourcesPage } from './pages/sources-page'
 
 export const router = createBrowserRouter([
-  { path: '/login', element: <LoginPage /> },
+  { path: '/login', element: <LoginPage />, errorElement: <RouteErrorPage /> },
   {
     path: '/',
     element: <ShellLayout />,
+    errorElement: <RouteErrorPage />,
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'sources', element: <SourcesPage /> },
@@ -29,6 +32,8 @@ export const router = createBrowserRouter([
       { path: 'queue', element: <QueuePage /> },
       { path: 'complaints', element: <ComplaintsPage /> },
       { path: 'routing', element: <RoutingPage /> },
+      { path: 'settings', element: <SettingsPage /> },
     ],
   },
+  { path: '*', element: <NotFoundPage />, errorElement: <RouteErrorPage /> },
 ])

@@ -68,6 +68,29 @@ test('lays out category, event, and source relationships', () => {
   assert.equal(graph.edges.length, 3)
 })
 
+test('expands the graph so source labels retain equal spacing as sources grow', () => {
+  const articles = Array.from({ length: 20 }, (_, index) => ({
+    source_id: `source-${index}`,
+    source: `Source ${String(index).padStart(2, '0')}`,
+  }))
+  const graph = layoutKnowledgeGraph({
+    categories: [{ slug: 'local', name_en: 'Local', articles: 20 }],
+    events: [{
+      id: 'event-1',
+      title: 'Event reported by many publishers',
+      category: 'local',
+      last_update_at: '2026-08-24T12:00:00Z',
+      articles,
+    }],
+  })
+  const sources = graph.nodes.filter((node) => node.kind === 'source')
+  const gaps = sources.slice(1).map((node, index) => node.y - sources[index]!.y)
+
+  assert.ok(graph.height > 560)
+  assert.ok(gaps.every((gap) => gap === gaps[0]))
+  assert.ok(gaps.every((gap) => gap >= 48))
+})
+
 test('keeps only a selected node and its direct relationships active', () => {
   assert.deepEqual(
     [...connectedGraphNodeIDs([

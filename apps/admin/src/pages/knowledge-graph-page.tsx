@@ -11,7 +11,7 @@ import {
   ShieldCheckIcon,
   Share2Icon,
 } from 'lucide-react'
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { Label, Pie, PieChart } from 'recharts'
 import { toast } from 'sonner'
@@ -63,6 +63,8 @@ const dateFormatter = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeS
 const rangeDateFormatter = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' })
 export function KnowledgeGraphPage() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const graphViewportRef = useRef<HTMLDivElement>(null)
+  const eventRailRef = useRef<HTMLDivElement>(null)
   const requestedDays = Number(searchParams.get('days') || 1)
   const days = dayOptions.includes(requestedDays as 1 | 7 | 30) ? (requestedDays as 1 | 7 | 30) : 1
   const from = searchParams.get('from') || ''
@@ -82,6 +84,11 @@ export function KnowledgeGraphPage() {
   const selected = selectedNodeID.startsWith('event:')
     ? graph.data?.events.find((event) => `event:${event.id}` === selectedNodeID)
     : undefined
+  const graphViewportHeight = useAvailableViewportHeight(
+    graphViewportRef,
+    eventRailRef,
+    selectedNodeID,
+  )
 
   function selectNode(nodeID: string) {
     const next = new URLSearchParams(searchParams)
@@ -192,25 +199,37 @@ export function KnowledgeGraphPage() {
           </CardAction>
         </CardHeader>
         <CardContent className="px-0">
-          <div className="min-h-[560px] overflow-hidden bg-[radial-gradient(circle_at_center,var(--color-border)_1px,transparent_1px)] bg-[size:22px_22px]">
-            {graph.isPending ? <Skeleton className="m-6 h-[512px]" /> : null}
+          <div
+            ref={graphViewportRef}
+            className="overflow-hidden bg-[radial-gradient(circle_at_center,var(--color-border)_1px,transparent_1px)] bg-[size:22px_22px]"
+            style={{ height: graphViewportHeight }}
+          >
+            {graph.isPending ? <Skeleton className="m-6 h-[calc(100%-3rem)]" /> : null}
             {graph.isError ? (
-              <div className="flex h-[560px] items-center justify-center text-sm text-muted-foreground">
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 The knowledge graph is temporarily unavailable.
               </div>
             ) : null}
             {graph.data && graph.data.events.length === 0 ? (
-              <div className="flex h-[560px] items-center justify-center text-sm text-muted-foreground">
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 No published events were found in this window.
               </div>
             ) : null}
             {graph.data?.events.length ? (
-              <Suspense fallback={<Skeleton className="m-6 h-[512px]" />}>
-                <KnowledgeGraphView data={graph.data} selectedID={selectedNodeID} onSelect={selectNode} onReset={resetGraph} />
+              <Suspense fallback={<Skeleton className="m-6 h-[calc(100%-3rem)]" />}>
+                <KnowledgeGraphView
+                  data={graph.data}
+                  selectedID={selectedNodeID}
+                  onSelect={selectNode}
+                  onReset={resetGraph}
+                  height={graphViewportHeight}
+                />
               </Suspense>
             ) : null}
           </div>
-          <EventArticleRail event={selected} />
+          <div ref={eventRailRef}>
+            <EventArticleRail event={selected} />
+          </div>
         </CardContent>
       </Card>
 
@@ -218,6 +237,50 @@ export function KnowledgeGraphPage() {
       <CategoryBreakdown data={graph.data} />
     </section>
   )
+}
+
+const minimumGraphViewportHeight = 480
+const graphViewportBottomGutter = 24
+
+function useAvailableViewportHeight(
+  viewportRef: RefObject<HTMLElement | null>,
+  reservedContentRef: RefObject<HTMLElement | null>,
+  refreshKey: string,
+) {
+  const [height, setHeight] = useState(minimumGraphViewportHeight)
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+
+    const visualViewport = window.visualViewport
+    const updateHeight = () => {
+      const viewportTop = viewport.getBoundingClientRect().top + window.scrollY
+      const reservedHeight = reservedContentRef.current?.getBoundingClientRect().height ?? 0
+      const browserHeight = visualViewport?.height ?? window.innerHeight
+      const availableHeight = Math.floor(
+        browserHeight - viewportTop - reservedHeight - graphViewportBottomGutter,
+      )
+      const nextHeight = Math.max(minimumGraphViewportHeight, availableHeight)
+      setHeight((currentHeight) => currentHeight === nextHeight ? currentHeight : nextHeight)
+    }
+
+    updateHeight()
+    const resizeObserver = new ResizeObserver(updateHeight)
+    const pageSection = viewport.closest('section')
+    if (pageSection) resizeObserver.observe(pageSection)
+    if (reservedContentRef.current) resizeObserver.observe(reservedContentRef.current)
+    window.addEventListener('resize', updateHeight)
+    visualViewport?.addEventListener('resize', updateHeight)
+
+    return () => {
+      resizeObserver.disconnect()
+      window.removeEventListener('resize', updateHeight)
+      visualViewport?.removeEventListener('resize', updateHeight)
+    }
+  }, [refreshKey, reservedContentRef, viewportRef])
+
+  return height
 }
 
 function ShareGraphButton({ searchParams, selectedNodeID }: { searchParams: URLSearchParams; selectedNodeID: string }) {

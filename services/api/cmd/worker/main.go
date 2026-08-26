@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/adminanalysis"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/cluster"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/config"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/content"
@@ -55,12 +56,13 @@ func run(logger *slog.Logger) error {
 	}
 	news := publish.NewStore(pool)
 	model := llm.NewGateway(pool)
+	adminAnalysis := adminanalysis.NewService(adminanalysis.NewStore(pool), model, adminanalysis.NewCodexClient(nil))
 	clusters := cluster.NewStore(pool)
 	politicsStore := politics.NewStore(pool, model)
 	pipelineStore := pipeline.NewStore(pool, model, clusters, politicsStore)
 	contentStore := content.NewStore(pool)
 	poller := ingest.NewPoller(pool, logger, clusters)
-	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news)
+	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news, adminAnalysis)
 	if err != nil {
 		return err
 	}

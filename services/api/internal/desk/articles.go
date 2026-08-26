@@ -25,7 +25,16 @@ type ArticleListItem struct {
 	PipelineEnded  *time.Time `json:"pipeline_finished_at"`
 }
 
-func (store *Store) Articles(ctx context.Context, params pagination.Params, status, pipelineStatus string) ([]ArticleListItem, int, error) {
+// ArticleFilters narrows the admin article registry results.
+type ArticleFilters struct {
+	Status         string
+	PipelineStatus string
+	Category       string
+	SourceID       string
+	Since          *time.Time
+}
+
+func (store *Store) Articles(ctx context.Context, params pagination.Params, filters ArticleFilters) ([]ArticleListItem, int, error) {
 	where := `
 		FROM articles a
 		JOIN sources s ON s.id = a.source_id
@@ -35,11 +44,22 @@ func (store *Store) Articles(ctx context.Context, params pagination.Params, stat
 		  FROM article_pipeline_runs WHERE article_id = a.id
 		  ORDER BY created_at DESC LIMIT 1
 		) run ON true
-		WHERE ($1 = '' OR a.headline ILIKE '%' || $1 || '%' OR s.name ILIKE '%' || $1 || '%')
-		  AND ($2 = '' OR a.public_status = $2)
-		  AND ($3 = '' OR COALESCE(run.status, 'not_started') = $3)`
+		WHERE ($1 = '' OR a.id::text = $1 OR a.headline ILIKE '%' || $1 || '%' OR s.name ILIKE '%' || $1 || '%')
+		  AND (($2 = '' AND a.public_status <> 'removed') OR a.public_status = $2)
+		  AND ($3 = '' OR COALESCE(run.status, 'not_started') = $3)
+		  AND ($4 = '' OR c.slug = $4)
+		  AND ($5 = '' OR a.source_id = NULLIF($5, '')::uuid)
+		  AND ($6::timestamptz IS NULL OR a.received_at >= $6)`
+	args := []any{
+		params.Search,
+		filters.Status,
+		filters.PipelineStatus,
+		filters.Category,
+		filters.SourceID,
+		filters.Since,
+	}
 	var total int
-	if err := store.pool.QueryRow(ctx, `SELECT count(*) `+where, params.Search, status, pipelineStatus).Scan(&total); err != nil {
+	if err := store.pool.QueryRow(ctx, `SELECT count(*) `+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count articles: %w", err)
 	}
 	rows, err := store.pool.Query(ctx, `
@@ -47,8 +67,8 @@ func (store *Store) Articles(ctx context.Context, params pagination.Params, stat
 		       c.slug, a.received_at, a.published_at, run.status, run.current_step, run.finished_at
 	`+where+`
 		ORDER BY a.received_at DESC, a.id
-		LIMIT $4 OFFSET $5
-	`, params.Search, status, pipelineStatus, params.Limit(), params.Offset())
+		LIMIT $7 OFFSET $8
+	`, append(args, params.Limit(), params.Offset())...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list articles: %w", err)
 	}
@@ -141,6 +161,44 @@ type ArticleContent struct {
 	Characters        int        `json:"characters"`
 }
 
+type ArticleAnalysisDocument struct {
+	OriginalText    string     `json:"original_text"`
+	CleanedText     string     `json:"cleaned_text"`
+	SummaryText     string     `json:"summary_text"`
+	SummaryPoints   []string   `json:"summary_points"`
+	CleanerVersion  string     `json:"cleaner_version"`
+	SummaryProvider string     `json:"summary_provider"`
+	SummaryModel    string     `json:"summary_model"`
+	CleanedAt       time.Time  `json:"cleaned_at"`
+	SummarizedAt    *time.Time `json:"summarized_at"`
+}
+
+type EventSourceSpectrum struct {
+	ArticleID         string  `json:"article_id"`
+	SourceID          string  `json:"source_id"`
+	Source            string  `json:"source"`
+	SourceIcon        string  `json:"source_icon"`
+	Label             string  `json:"label"`
+	LeftProbability   float64 `json:"left_probability"`
+	CenterProbability float64 `json:"center_probability"`
+	RightProbability  float64 `json:"right_probability"`
+	Confidence        float64 `json:"confidence"`
+}
+
+type EventNarrativeAnalysis struct {
+	Summary          string                `json:"summary"`
+	ArticleCount     int                   `json:"article_count"`
+	SourceCount      int                   `json:"source_count"`
+	RatedSourceCount int                   `json:"rated_source_count"`
+	LeftPercentage   float64               `json:"left_percentage"`
+	CenterPercentage float64               `json:"center_percentage"`
+	RightPercentage  float64               `json:"right_percentage"`
+	SourceSpectrum   []EventSourceSpectrum `json:"source_spectrum"`
+	ProviderID       string                `json:"provider_id"`
+	ProviderModel    string                `json:"provider_model"`
+	AnalyzedAt       time.Time             `json:"analyzed_at"`
+}
+
 type ArticleDetail struct {
 	ID                  string                    `json:"id"`
 	Headline            string                    `json:"headline"`
@@ -167,6 +225,8 @@ type ArticleDetail struct {
 	PipelineRuns        []PipelineRun             `json:"pipeline_runs"`
 	LLMCalls            []LLMCall                 `json:"llm_calls"`
 	Content             *ArticleContent           `json:"content"`
+	AnalysisDocument    *ArticleAnalysisDocument  `json:"analysis_document"`
+	EventAnalysis       *EventNarrativeAnalysis   `json:"event_analysis"`
 }
 
 func (store *Store) Article(ctx context.Context, id string) (ArticleDetail, error) {
@@ -209,6 +269,16 @@ func (store *Store) Article(ctx context.Context, id string) (ArticleDetail, erro
 	if err != nil {
 		return ArticleDetail{}, err
 	}
+	item.AnalysisDocument, err = store.articleAnalysisDocument(ctx, id)
+	if err != nil {
+		return ArticleDetail{}, err
+	}
+	if eventID != nil {
+		item.EventAnalysis, err = store.eventNarrativeAnalysis(ctx, *eventID)
+		if err != nil {
+			return ArticleDetail{}, err
+		}
+	}
 	item.PipelineRuns, err = store.pipelineRuns(ctx, id)
 	if err != nil {
 		return ArticleDetail{}, err
@@ -238,16 +308,73 @@ func (store *Store) articleContent(ctx context.Context, articleID string) (*Arti
 	return &item, nil
 }
 
+func (store *Store) articleAnalysisDocument(ctx context.Context, articleID string) (*ArticleAnalysisDocument, error) {
+	var item ArticleAnalysisDocument
+	var points []byte
+	err := store.pool.QueryRow(ctx, `
+		SELECT original_text, cleaned_text, summary_text, summary_points,
+		       cleaner_version, summary_provider, summary_model, cleaned_at, summarized_at
+		FROM article_analysis_documents WHERE article_id = $1
+	`, articleID).Scan(
+		&item.OriginalText, &item.CleanedText, &item.SummaryText, &points,
+		&item.CleanerVersion, &item.SummaryProvider, &item.SummaryModel,
+		&item.CleanedAt, &item.SummarizedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(points, &item.SummaryPoints); err != nil {
+		return nil, err
+	}
+	if item.SummaryPoints == nil {
+		item.SummaryPoints = []string{}
+	}
+	return &item, nil
+}
+
+func (store *Store) eventNarrativeAnalysis(ctx context.Context, eventID string) (*EventNarrativeAnalysis, error) {
+	var item EventNarrativeAnalysis
+	var spectrum []byte
+	err := store.pool.QueryRow(ctx, `
+		SELECT summary, article_count, source_count, rated_source_count,
+		       left_percentage, center_percentage, right_percentage,
+		       source_spectrum, provider_id, provider_model, analyzed_at
+		FROM event_narrative_analyses WHERE event_id = $1
+	`, eventID).Scan(
+		&item.Summary, &item.ArticleCount, &item.SourceCount, &item.RatedSourceCount,
+		&item.LeftPercentage, &item.CenterPercentage, &item.RightPercentage,
+		&spectrum, &item.ProviderID, &item.ProviderModel, &item.AnalyzedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(spectrum, &item.SourceSpectrum); err != nil {
+		return nil, err
+	}
+	if item.SourceSpectrum == nil {
+		item.SourceSpectrum = []EventSourceSpectrum{}
+	}
+	return &item, nil
+}
+
 func (store *Store) articlePolitical(ctx context.Context, articleID string) (*ArticlePoliticalAnalysis, error) {
 	var item ArticlePoliticalAnalysis
 	var mentions, evidence []byte
 	err := store.pool.QueryRow(ctx, `
 		SELECT model, economic_frame, confidence, mentions, relevant, label, rationale,
-		       evidence, provider_id, provider_model
+		       evidence, provider_id, provider_model, left_probability,
+		       center_probability, right_probability, axis_version
 		FROM article_political_analysis WHERE article_id = $1
 	`, articleID).Scan(
 		&item.Model, &item.EconomicFrame, &item.Confidence, &mentions, &item.Relevant,
 		&item.Label, &item.Rationale, &evidence, &item.ProviderID, &item.ProviderModel,
+		&item.LeftProbability, &item.CenterProbability, &item.RightProbability, &item.AxisVersion,
 	)
 	if err == pgx.ErrNoRows {
 		return nil, nil

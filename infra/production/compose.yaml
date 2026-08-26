@@ -4,6 +4,8 @@ x-app-environment: &app-environment
   SNAP_DATABASE_URL: ${SNAP_DATABASE_URL:?set SNAP_DATABASE_URL}
   SNAP_ENV: production
   OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY}
+  CODEX_HOME: /data/codex
+  CODEX_BACKFILL_MODELS: ${CODEX_BACKFILL_MODELS:-gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol}
   SNAP_MEDIA_LOCAL_DIR: /data/media
   SNAP_MIGRATIONS_PATH: /app/migrations
   SNAP_R2_ACCESS_KEY_ID: ${SNAP_R2_ACCESS_KEY_ID:-}
@@ -55,6 +57,7 @@ services:
       SNAP_SESSION_COOKIE_SECURE: "true"
     volumes:
       - media-data:/data/media
+      - codex-data:/data/codex
     ports:
       - "127.0.0.1:18090:8090"
     depends_on:
@@ -74,11 +77,26 @@ services:
     entrypoint: ["/app/worker"]
     restart: unless-stopped
     environment: *app-environment
+    volumes:
+      - codex-data:/data/codex
     depends_on:
       postgres:
         condition: service_healthy
     mem_limit: 768m
     cpus: 1
+
+  codex-login:
+    image: ghcr.io/prabhavalabs/lanka-news-paper-api:${IMAGE_TAG:?set IMAGE_TAG}
+    user: root
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R app:app /data/codex && exec su-exec app codex login --device-auth"]
+    environment:
+      CODEX_HOME: /data/codex
+    volumes:
+      - codex-data:/data/codex
+    profiles: [tools]
+    stdin_open: true
+    tty: true
 
   web:
     image: ghcr.io/prabhavalabs/lanka-news-paper-web:${IMAGE_TAG:?set IMAGE_TAG}
@@ -113,5 +131,6 @@ services:
     cpus: 0.15
 
 volumes:
+  codex-data:
   media-data:
   postgres-data:

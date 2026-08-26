@@ -14,6 +14,7 @@ import (
 	"github.com/riverqueue/river/rivermigrate"
 	"github.com/riverqueue/river/rivertype"
 
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/adminanalysis"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/content"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
@@ -119,6 +120,114 @@ func (args ArticleContentArgs) InsertOpts() river.InsertOpts {
 type ArticleContentWorker struct {
 	river.WorkerDefaults[ArticleContentArgs]
 	Content *content.Store
+}
+
+type AdminAnalysisBackfillDispatchArgs struct {
+	RunID string `json:"run_id"`
+}
+
+func (AdminAnalysisBackfillDispatchArgs) Kind() string { return "admin.analysis.backfill.dispatch" }
+
+func (args AdminAnalysisBackfillDispatchArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{
+		Queue:       "admin-analysis",
+		MaxAttempts: 5,
+		UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: []rivertype.JobState{
+			rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning,
+			rivertype.JobStateScheduled, rivertype.JobStateRetryable,
+		}},
+	}
+}
+
+type AdminArticleAnalysisArgs struct {
+	RunID     string `json:"run_id"`
+	ArticleID string `json:"article_id"`
+}
+
+func (AdminArticleAnalysisArgs) Kind() string { return "admin.article.analysis" }
+
+func (args AdminArticleAnalysisArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{
+		Queue:       "admin-analysis",
+		Priority:    4,
+		MaxAttempts: 5,
+		UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: []rivertype.JobState{
+			rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning,
+			rivertype.JobStateScheduled, rivertype.JobStateRetryable,
+		}},
+	}
+}
+
+type AdminAnalysisBackfillDispatchWorker struct {
+	river.WorkerDefaults[AdminAnalysisBackfillDispatchArgs]
+	Analysis *adminanalysis.Service
+	Client   *river.Client[pgx.Tx]
+}
+
+type AdminArticleAnalysisWorker struct {
+	river.WorkerDefaults[AdminArticleAnalysisArgs]
+	Analysis *adminanalysis.Service
+	Pipeline *pipeline.Store
+}
+
+const adminAnalysisDispatchBatchSize = 100
+
+func (worker *AdminAnalysisBackfillDispatchWorker) Work(ctx context.Context, job *river.Job[AdminAnalysisBackfillDispatchArgs]) error {
+	if err := worker.Analysis.Store().MarkRunStarted(ctx, job.Args.RunID); err != nil {
+		return err
+	}
+	articleIDs, err := worker.Analysis.Store().PendingArticles(ctx, job.Args.RunID, adminAnalysisDispatchBatchSize)
+	if err != nil {
+		return err
+	}
+	for _, articleID := range articleIDs {
+		result, err := worker.Client.Insert(ctx, AdminArticleAnalysisArgs{RunID: job.Args.RunID, ArticleID: articleID}, nil)
+		if err != nil {
+			return err
+		}
+		if err := worker.Analysis.Store().MarkQueued(ctx, job.Args.RunID, articleID, result.Job.ID); err != nil {
+			return err
+		}
+	}
+	if len(articleIDs) == adminAnalysisDispatchBatchSize {
+		return river.JobSnooze(time.Second)
+	}
+	return nil
+}
+
+func (worker *AdminArticleAnalysisWorker) Work(ctx context.Context, job *river.Job[AdminArticleAnalysisArgs]) error {
+	if err := worker.Analysis.Store().MarkRunning(ctx, job.Args.RunID, job.Args.ArticleID, job.Attempt); err != nil {
+		return err
+	}
+	run, err := worker.Analysis.Store().Get(ctx, job.Args.RunID)
+	if err == nil && run.Workflow == "full_pipeline" {
+		if worker.Pipeline == nil {
+			err = errors.New("editorial pipeline is unavailable")
+		}
+		var pipelineRunID string
+		if err == nil {
+			pipelineRunID, err = worker.Pipeline.Start(ctx, job.Args.ArticleID, "admin_backfill")
+		}
+		if err == nil {
+			err = worker.Pipeline.Process(ctx, pipelineRunID)
+		}
+		if err == nil {
+			err = worker.Analysis.Store().MarkSucceeded(ctx, job.Args.RunID, job.Args.ArticleID)
+		}
+	} else if err == nil {
+		err = worker.Analysis.Analyze(ctx, job.Args.RunID, job.Args.ArticleID, run.Provider, run.Model)
+	}
+	if err != nil {
+		terminal := job.Attempt >= job.MaxAttempts
+		if recordErr := worker.Analysis.Store().MarkAttemptFailed(ctx, job.Args.RunID, job.Args.ArticleID, err.Error(), terminal); recordErr != nil {
+			return errors.Join(err, recordErr)
+		}
+	}
+	return err
+}
+
+func (worker *AdminArticleAnalysisWorker) Timeout(*river.Job[AdminArticleAnalysisArgs]) time.Duration {
+	return 30 * time.Minute
 }
 
 type ArticleContentBackfillArgs struct{}
@@ -380,6 +489,7 @@ func QueueCatalog() []QueueMetadata {
 		{Name: river.QueueDefault, MaxWorkers: 2},
 		{Name: "analysis", MaxWorkers: 5},
 		{Name: "crawl", MaxWorkers: 1},
+		{Name: "admin-analysis", MaxWorkers: 1},
 	}
 }
 
@@ -402,10 +512,11 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
-func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, pipelineStore *pipeline.Store, contentStore *content.Store, news *publish.Store) (*river.Client[pgx.Tx], error) {
+func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, pipelineStore *pipeline.Store, contentStore *content.Store, news *publish.Store, adminAnalysis *adminanalysis.Service) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
 	dispatcher := &PipelineDispatchWorker{Pipeline: pipelineStore}
 	contentBackfill := &ArticleContentBackfillWorker{Content: contentStore}
+	adminDispatcher := &AdminAnalysisBackfillDispatchWorker{Analysis: adminAnalysis}
 	river.AddWorker(workers, &PollWorker{Poller: poller, News: news})
 	river.AddWorker(workers, &NarrationWorker{})
 	river.AddWorker(workers, &ArticlePipelineWorker{Pipeline: pipelineStore})
@@ -415,6 +526,10 @@ func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, p
 	river.AddWorker(workers, &BriefWorker{News: news})
 	river.AddWorker(workers, &QueueHistoryCleanupWorker{Pipeline: pipelineStore})
 	river.AddWorker(workers, &ArticleContentCleanupWorker{Content: contentStore})
+	if adminAnalysis != nil {
+		river.AddWorker(workers, adminDispatcher)
+		river.AddWorker(workers, &AdminArticleAnalysisWorker{Analysis: adminAnalysis, Pipeline: pipelineStore})
+	}
 
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Logger:       logger,
@@ -427,6 +542,7 @@ func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, p
 	}
 	dispatcher.Client = client
 	contentBackfill.Client = client
+	adminDispatcher.Client = client
 	return client, nil
 }
 
@@ -461,5 +577,10 @@ func articleContentBackfillInsertOpts() *river.InsertOpts {
 
 func EnqueueContentBackfill(ctx context.Context, client *river.Client[pgx.Tx]) error {
 	_, err := client.Insert(ctx, ArticleContentBackfillArgs{}, nil)
+	return err
+}
+
+func EnqueueAdminAnalysisBackfill(ctx context.Context, client *river.Client[pgx.Tx], runID string) error {
+	_, err := client.Insert(ctx, AdminAnalysisBackfillDispatchArgs{RunID: runID}, nil)
 	return err
 }

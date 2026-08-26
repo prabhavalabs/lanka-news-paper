@@ -163,6 +163,18 @@ func (store *Store) riverJobArtifacts(ctx context.Context, jobID int64, result Q
 		artifact.Title = "Full-article backfill dispatch"
 		artifact.Description = "Article retrieval jobs created during this backfill execution."
 		result.Outputs = append(result.Outputs, artifact)
+	case "admin.analysis.backfill.dispatch":
+		if artifact, found, err := store.adminAnalysisBackfillArtifact(ctx, jsonString(job.Args, "run_id")); err != nil {
+			return QueueJobArtifacts{}, err
+		} else if found {
+			result.Outputs = append(result.Outputs, artifact)
+		}
+	case "admin.article.analysis":
+		if artifact, found, err := store.articleInsightArtifact(ctx, jsonString(job.Args, "run_id"), articleID); err != nil {
+			return QueueJobArtifacts{}, err
+		} else if found {
+			result.Outputs = append(result.Outputs, artifact)
+		}
 	case "brief.daily":
 		if artifact, found, err := store.dailyBriefArtifact(ctx, job); err != nil {
 			return QueueJobArtifacts{}, err
@@ -172,6 +184,91 @@ func (store *Store) riverJobArtifacts(ctx context.Context, jobID int64, result Q
 	}
 
 	return result, nil
+}
+
+func (store *Store) adminAnalysisBackfillArtifact(ctx context.Context, runID string) (QueueJobArtifact, bool, error) {
+	if runID == "" {
+		return QueueJobArtifact{}, false, nil
+	}
+	var data struct {
+		RunID       string     `json:"run_id"`
+		Scope       string     `json:"scope"`
+		Provider    string     `json:"provider"`
+		Model       string     `json:"model"`
+		Status      string     `json:"status"`
+		Total       int        `json:"total_articles"`
+		Pending     int        `json:"pending_articles"`
+		Queued      int        `json:"queued_articles"`
+		Running     int        `json:"running_articles"`
+		Succeeded   int        `json:"succeeded_articles"`
+		Failed      int        `json:"failed_articles"`
+		CreatedAt   time.Time  `json:"created_at"`
+		StartedAt   *time.Time `json:"started_at"`
+		FinishedAt  *time.Time `json:"finished_at"`
+		ErrorDetail *string    `json:"error_detail"`
+	}
+	err := store.pool.QueryRow(ctx, `
+		SELECT run.id::text, run.scope, run.provider, run.model, run.status, run.total_articles,
+		       count(item.article_id) FILTER (WHERE item.state = 'pending')::integer,
+		       count(item.article_id) FILTER (WHERE item.state = 'queued')::integer,
+		       count(item.article_id) FILTER (WHERE item.state = 'running')::integer,
+		       count(item.article_id) FILTER (WHERE item.state = 'succeeded')::integer,
+		       count(item.article_id) FILTER (WHERE item.state = 'failed')::integer,
+		       run.created_at, run.started_at, run.finished_at, run.error_detail
+		FROM admin_analysis_backfills run
+		LEFT JOIN admin_analysis_backfill_items item ON item.run_id = run.id
+		WHERE run.id = $1
+		GROUP BY run.id
+	`, runID).Scan(
+		&data.RunID, &data.Scope, &data.Provider, &data.Model, &data.Status, &data.Total,
+		&data.Pending, &data.Queued, &data.Running, &data.Succeeded, &data.Failed,
+		&data.CreatedAt, &data.StartedAt, &data.FinishedAt, &data.ErrorDetail,
+	)
+	if err == pgx.ErrNoRows {
+		return QueueJobArtifact{}, false, nil
+	}
+	if err != nil {
+		return QueueJobArtifact{}, false, err
+	}
+	artifact, err := newQueueJobArtifact("output", "analysis_backfill", "Administrative AI backfill", "Current run scope, provider, model, and per-article progress.", data)
+	return artifact, true, err
+}
+
+func (store *Store) articleInsightArtifact(ctx context.Context, runID, articleID string) (QueueJobArtifact, bool, error) {
+	if runID == "" || articleID == "" {
+		return QueueJobArtifact{}, false, nil
+	}
+	var data struct {
+		Summary            string    `json:"summary"`
+		Tone               string    `json:"tone"`
+		PoliticalRelevant  bool      `json:"political_relevance"`
+		PoliticalNarrative string    `json:"political_narrative"`
+		SpectrumScore      float64   `json:"spectrum_score"`
+		Confidence         float64   `json:"confidence"`
+		Evidence           []string  `json:"evidence"`
+		Provider           string    `json:"provider"`
+		Model              string    `json:"model"`
+		AnalyzedAt         time.Time `json:"analyzed_at"`
+	}
+	err := store.pool.QueryRow(ctx, `
+		SELECT summary, tone, political_relevance, political_narrative,
+		       spectrum_score::double precision, confidence::double precision,
+		       ARRAY(SELECT jsonb_array_elements_text(evidence)),
+		       provider, provider_model, analyzed_at
+		FROM article_ai_insights
+		WHERE article_id = $1 AND backfill_run_id = $2
+	`, articleID, runID).Scan(
+		&data.Summary, &data.Tone, &data.PoliticalRelevant, &data.PoliticalNarrative,
+		&data.SpectrumScore, &data.Confidence, &data.Evidence, &data.Provider, &data.Model, &data.AnalyzedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return QueueJobArtifact{}, false, nil
+	}
+	if err != nil {
+		return QueueJobArtifact{}, false, err
+	}
+	artifact, err := newQueueJobArtifact("output", "article_insight", "AI article insight", "Persisted summary, tone, and political-narrative analysis from this job.", data)
+	return artifact, true, err
 }
 
 func (store *Store) pipelineJobArtifacts(ctx context.Context, runID uuid.UUID, result QueueJobArtifacts) (QueueJobArtifacts, error) {

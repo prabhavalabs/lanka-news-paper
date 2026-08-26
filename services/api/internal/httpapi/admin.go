@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/adminanalysis"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/desk"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
@@ -26,14 +28,16 @@ import (
 const maxSourceLogoBytes = 768 << 10
 
 type adminHandler struct {
-	registry           *registry.Store
-	poller             *ingest.Poller
-	llm                *llm.Gateway
-	desk               *desk.Store
-	monitor            monitorService
-	media              *media.Store
-	runPipeline        func(context.Context, string, string) error
-	runContentBackfill func(context.Context) error
+	registry                 *registry.Store
+	poller                   *ingest.Poller
+	llm                      *llm.Gateway
+	desk                     *desk.Store
+	monitor                  monitorService
+	media                    *media.Store
+	adminAnalysis            *adminanalysis.Service
+	runPipeline              func(context.Context, string, string) error
+	runContentBackfill       func(context.Context) error
+	runAdminAnalysisBackfill func(context.Context, string) error
 }
 
 func (handler adminHandler) sourceLogo(w http.ResponseWriter, request *http.Request) {
@@ -525,7 +529,7 @@ func (handler adminHandler) queue(w http.ResponseWriter, request *http.Request) 
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
 		return
 	}
-	status, err := parseFilter(request, "status", "held", "quarantined", "low_confidence")
+	status, err := parseFilter(request, "status", "held", "low_confidence")
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
 		return
@@ -581,22 +585,55 @@ func (handler adminHandler) articles(w http.ResponseWriter, request *http.Reques
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
 		return
 	}
-	status, err := parseFilter(request, "status", "held", "published", "unpublished", "removed", "quarantined")
+	filters, err := parseArticleFilters(request, time.Now())
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
 		return
 	}
-	pipelineStatus, err := parseFilter(request, "pipeline", "not_started", "queued", "running", "succeeded", "failed")
-	if err != nil {
-		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
-		return
-	}
-	items, total, err := handler.desk.Articles(request.Context(), params, status, pipelineStatus)
+	items, total, err := handler.desk.Articles(request.Context(), params, filters)
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
 		return
 	}
 	writePage(w, items, total, params)
+}
+
+func parseArticleFilters(request *http.Request, now time.Time) (desk.ArticleFilters, error) {
+	status, err := parseFilter(request, "status", "held", "published", "unpublished", "removed", "quarantined")
+	if err != nil {
+		return desk.ArticleFilters{}, err
+	}
+	pipelineStatus, err := parseFilter(request, "pipeline", "not_started", "queued", "running", "succeeded", "failed")
+	if err != nil {
+		return desk.ArticleFilters{}, err
+	}
+	query := request.URL.Query()
+	category := query.Get("category")
+	if len(category) > 50 {
+		return desk.ArticleFilters{}, errors.New("category is too long")
+	}
+	sourceID := query.Get("source")
+	if sourceID != "" {
+		if _, err := uuid.Parse(sourceID); err != nil {
+			return desk.ArticleFilters{}, errors.New("source must be a UUID")
+		}
+	}
+	var since *time.Time
+	if value := query.Get("days"); value != "" {
+		days, err := strconv.Atoi(value)
+		if err != nil || (days != 1 && days != 7 && days != 30 && days != 90) {
+			return desk.ArticleFilters{}, errors.New("days must be 1, 7, 30, or 90")
+		}
+		start := now.UTC().Add(-time.Duration(days) * 24 * time.Hour)
+		since = &start
+	}
+	return desk.ArticleFilters{
+		Status:         status,
+		PipelineStatus: pipelineStatus,
+		Category:       category,
+		SourceID:       sourceID,
+		Since:          since,
+	}, nil
 }
 
 func (handler adminHandler) article(w http.ResponseWriter, request *http.Request) {
@@ -649,8 +686,46 @@ func (handler adminHandler) articleStatus(w http.ResponseWriter, request *http.R
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "Status is required.")
 		return
 	}
-	if err := handler.desk.SetStatus(request.Context(), request.PathValue("id"), body.Status, currentUser(request).Email, body.Reason); err != nil {
+	if err := handler.desk.ReviewArticle(request.Context(), request.PathValue("id"), currentUser(request).ID, desk.ArticleReview{
+		Status: body.Status,
+		Reason: body.Reason,
+	}); err != nil {
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (handler adminHandler) articleReview(w http.ResponseWriter, request *http.Request) {
+	var body desk.ArticleReview
+	if err := decodeJSON(request, &body); err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
+		return
+	}
+	if err := handler.desk.ReviewArticle(request.Context(), request.PathValue("id"), currentUser(request).ID, body); err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (handler adminHandler) deleteArticle(w http.ResponseWriter, request *http.Request) {
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
+		return
+	}
+	if body.Reason == "" {
+		body.Reason = "Deleted from article management"
+	}
+	if err := handler.desk.RemoveArticle(request.Context(), request.PathValue("id"), currentUser(request).ID, body.Reason); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", "Article was not found.")
+			return
+		}
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Could not delete article", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -664,7 +739,10 @@ func (handler adminHandler) articleCategory(w http.ResponseWriter, request *http
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
 		return
 	}
-	if err := handler.desk.SetCategory(request.Context(), request.PathValue("id"), body.Slug); err != nil {
+	if err := handler.desk.ReviewArticle(request.Context(), request.PathValue("id"), currentUser(request).ID, desk.ArticleReview{
+		Category: &body.Slug,
+		Reason:   "Category updated",
+	}); err != nil {
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
 		return
 	}
@@ -812,4 +890,226 @@ func (handler adminHandler) profiles(w http.ResponseWriter, request *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (handler adminHandler) codexStatus(w http.ResponseWriter, request *http.Request) {
+	if !requireAdministrator(w, request) {
+		return
+	}
+	if handler.adminAnalysis == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Service unavailable", "Administrative analysis is not configured.")
+		return
+	}
+	writeJSON(w, http.StatusOK, handler.adminAnalysis.CodexStatus(request.Context()))
+}
+
+func (handler adminHandler) analysisBackfillPreview(w http.ResponseWriter, request *http.Request) {
+	if !requireAdministrator(w, request) {
+		return
+	}
+	if handler.adminAnalysis == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Service unavailable", "Administrative analysis is not configured.")
+		return
+	}
+	backfillRequest, err := parseAnalysisBackfillQuery(request)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	preview, err := handler.adminAnalysis.Store().Preview(request.Context(), backfillRequest)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Could not preview backfill", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func (handler adminHandler) analysisBackfills(w http.ResponseWriter, request *http.Request) {
+	if !requireAdministrator(w, request) {
+		return
+	}
+	if handler.adminAnalysis == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Service unavailable", "Administrative analysis is not configured.")
+		return
+	}
+	if request.Method == http.MethodPost {
+		var body struct {
+			Scope        string `json:"scope"`
+			Workflow     string `json:"workflow"`
+			Provider     string `json:"provider"`
+			Model        string `json:"model"`
+			From         string `json:"from"`
+			To           string `json:"to"`
+			ArticleID    string `json:"article_id"`
+			Confirmation string `json:"confirmation"`
+		}
+		if err := decodeJSON(request, &body); err != nil {
+			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
+			return
+		}
+		backfillRequest, err := newAnalysisBackfillRequest(
+			body.Scope, body.Workflow, body.Provider, body.Model, body.From, body.To,
+			body.ArticleID, body.Confirmation,
+		)
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+			return
+		}
+		run, err := handler.adminAnalysis.Store().Create(request.Context(), backfillRequest, currentUser(request).Email)
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Could not create backfill", err.Error())
+			return
+		}
+		if handler.runAdminAnalysisBackfill == nil {
+			_ = handler.adminAnalysis.Store().MarkRunFailed(request.Context(), run.ID, "The administrative analysis queue producer is unavailable.")
+			writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Queue unavailable", "The administrative analysis queue producer is unavailable.")
+			return
+		}
+		if err := handler.runAdminAnalysisBackfill(request.Context(), run.ID); err != nil {
+			_ = handler.adminAnalysis.Store().MarkRunFailed(request.Context(), run.ID, err.Error())
+			writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Could not enqueue backfill", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusAccepted, run)
+		return
+	}
+	items, err := handler.adminAnalysis.Store().List(request.Context(), 25)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (handler adminHandler) analysisBackfill(w http.ResponseWriter, request *http.Request) {
+	if !requireAdministrator(w, request) {
+		return
+	}
+	if handler.adminAnalysis == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Service unavailable", "Administrative analysis is not configured.")
+		return
+	}
+	run, err := handler.adminAnalysis.Store().Get(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", "Administrative backfill was not found.")
+		return
+	}
+	writeJSON(w, http.StatusOK, run)
+}
+
+func (handler adminHandler) analysisBackfillStream(w http.ResponseWriter, request *http.Request) {
+	if !requireAdministrator(w, request) {
+		return
+	}
+	if handler.adminAnalysis == nil || handler.monitor == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Service unavailable", "Live administrative backfill telemetry is not configured.")
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Streaming is unavailable.")
+		return
+	}
+	changes, unsubscribe := handler.monitor.Subscribe()
+	defer unsubscribe()
+	items, err := handler.adminAnalysis.Store().List(request.Context(), 25)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
+		return
+	}
+	controller := http.NewResponseController(w)
+	if err := controller.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Streaming could not be initialized.")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	if _, err := fmt.Fprint(w, "retry: 3000\n\n"); err != nil {
+		return
+	}
+	last, err := writeAnalysisBackfillEvent(w, items)
+	if err != nil {
+		return
+	}
+	flusher.Flush()
+	for {
+		select {
+		case <-request.Context().Done():
+			return
+		case _, open := <-changes:
+			if !open {
+				return
+			}
+			items, err := handler.adminAnalysis.Store().List(request.Context(), 25)
+			if err != nil {
+				return
+			}
+			payload, err := json.Marshal(map[string]any{"items": items})
+			if err != nil || string(payload) == last {
+				continue
+			}
+			if _, err := fmt.Fprintf(w, "id: %d\nevent: analysis-backfills\ndata: %s\n\n", time.Now().UTC().UnixMilli(), payload); err != nil {
+				return
+			}
+			last = string(payload)
+			flusher.Flush()
+		}
+	}
+}
+
+func writeAnalysisBackfillEvent(w http.ResponseWriter, items []adminanalysis.Run) (string, error) {
+	payload, err := json.Marshal(map[string]any{"items": items})
+	if err != nil {
+		return "", err
+	}
+	if _, err := fmt.Fprintf(w, "id: %d\nevent: analysis-backfills\ndata: %s\n\n", time.Now().UTC().UnixMilli(), payload); err != nil {
+		return "", err
+	}
+	return string(payload), nil
+}
+
+func requireAdministrator(w http.ResponseWriter, request *http.Request) bool {
+	if currentUser(request).Role == "administrator" {
+		return true
+	}
+	writeProblem(w, http.StatusForbidden, "https://snap.local/problems/forbidden", "Forbidden", "Administrator access is required.")
+	return false
+}
+
+func parseAnalysisBackfillQuery(request *http.Request) (adminanalysis.CreateRequest, error) {
+	query := request.URL.Query()
+	return newAnalysisBackfillRequest(
+		query.Get("scope"), query.Get("workflow"), query.Get("provider"), query.Get("model"), query.Get("from"),
+		query.Get("to"), query.Get("article_id"), "",
+	)
+}
+
+func newAnalysisBackfillRequest(scope, workflow, provider, model, fromValue, toValue, articleID, confirmation string) (adminanalysis.CreateRequest, error) {
+	result := adminanalysis.CreateRequest{
+		Scope: scope, Workflow: workflow, Provider: provider, Model: model,
+		ArticleID: articleID, Confirmation: confirmation,
+	}
+	if scope == "date_range" {
+		from, err := time.Parse(time.DateOnly, fromValue)
+		if err != nil {
+			return adminanalysis.CreateRequest{}, errors.New("from must use YYYY-MM-DD")
+		}
+		to, err := time.Parse(time.DateOnly, toValue)
+		if err != nil {
+			return adminanalysis.CreateRequest{}, errors.New("to must use YYYY-MM-DD")
+		}
+		result.From = &from
+		inclusiveEnd := to.AddDate(0, 0, 1)
+		result.To = &inclusiveEnd
+	}
+	previewRequest := result
+	if previewRequest.Scope == "catalog" && previewRequest.Confirmation == "" {
+		previewRequest.Confirmation = "BACKFILL ENTIRE CATALOG"
+	}
+	if err := adminanalysis.ValidateCreateRequest(previewRequest); err != nil {
+		return adminanalysis.CreateRequest{}, err
+	}
+	return result, nil
 }

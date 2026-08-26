@@ -3,9 +3,12 @@ package desk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pagination"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
@@ -87,16 +90,20 @@ type PoliticalMention struct {
 }
 
 type ArticlePoliticalAnalysis struct {
-	Model         string             `json:"model"`
-	EconomicFrame float64            `json:"economic_frame"`
-	Confidence    float64            `json:"confidence"`
-	Mentions      []PoliticalMention `json:"mentions"`
-	Relevant      bool               `json:"relevant"`
-	Label         string             `json:"label"`
-	Rationale     string             `json:"rationale"`
-	Evidence      []string           `json:"evidence"`
-	ProviderID    string             `json:"provider_id"`
-	ProviderModel string             `json:"provider_model"`
+	Model             string             `json:"model"`
+	EconomicFrame     float64            `json:"economic_frame"`
+	LeftProbability   float64            `json:"left_probability"`
+	CenterProbability float64            `json:"center_probability"`
+	RightProbability  float64            `json:"right_probability"`
+	AxisVersion       string             `json:"axis_version"`
+	Confidence        float64            `json:"confidence"`
+	Mentions          []PoliticalMention `json:"mentions"`
+	Relevant          bool               `json:"relevant"`
+	Label             string             `json:"label"`
+	Rationale         string             `json:"rationale"`
+	Evidence          []string           `json:"evidence"`
+	ProviderID        string             `json:"provider_id"`
+	ProviderModel     string             `json:"provider_model"`
 }
 
 type PoliticalParty struct {
@@ -238,7 +245,8 @@ func (store *Store) KnowledgeGraph(ctx context.Context, start, end time.Time, ca
 		       a.original_url, a.published_at,
 		       analysis.model, analysis.economic_frame, analysis.confidence, analysis.mentions,
 		       analysis.relevant, analysis.label, analysis.rationale, analysis.evidence,
-		       analysis.provider_id, analysis.provider_model
+		       analysis.provider_id, analysis.provider_model, analysis.left_probability,
+		       analysis.center_probability, analysis.right_probability, analysis.axis_version
 		FROM scope
 		JOIN event_clusters ec ON ec.id = scope.event_id
 		LEFT JOIN categories c ON c.id = ec.category_id
@@ -260,9 +268,9 @@ func (store *Store) KnowledgeGraph(ctx context.Context, start, end time.Time, ca
 		var event KnowledgeEvent
 		var article KnowledgeArticle
 		var politicalModel *string
-		var economicFrame, politicalConfidence *float64
+		var economicFrame, politicalConfidence, leftProbability, centerProbability, rightProbability *float64
 		var politicalRelevant *bool
-		var politicalLabel, politicalRationale, providerID, providerModel *string
+		var politicalLabel, politicalRationale, providerID, providerModel, axisVersion *string
 		var politicalMentions, politicalEvidence []byte
 		if err := rows.Scan(
 			&event.ID, &event.Title, &event.Category, &event.CategoryNameSI,
@@ -272,7 +280,8 @@ func (store *Store) KnowledgeGraph(ctx context.Context, start, end time.Time, ca
 			&article.SourceIcon, &article.OriginalURL, &article.PublishedAt,
 			&politicalModel, &economicFrame, &politicalConfidence, &politicalMentions,
 			&politicalRelevant, &politicalLabel, &politicalRationale, &politicalEvidence,
-			&providerID, &providerModel,
+			&providerID, &providerModel, &leftProbability, &centerProbability,
+			&rightProbability, &axisVersion,
 		); err != nil {
 			return KnowledgeGraph{}, err
 		}
@@ -294,6 +303,18 @@ func (store *Store) KnowledgeGraph(ctx context.Context, start, end time.Time, ca
 			}
 			if providerModel != nil {
 				analysis.ProviderModel = *providerModel
+			}
+			if leftProbability != nil {
+				analysis.LeftProbability = *leftProbability
+			}
+			if centerProbability != nil {
+				analysis.CenterProbability = *centerProbability
+			}
+			if rightProbability != nil {
+				analysis.RightProbability = *rightProbability
+			}
+			if axisVersion != nil {
+				analysis.AxisVersion = *axisVersion
 			}
 			if err := json.Unmarshal(politicalMentions, &analysis.Mentions); err != nil {
 				return KnowledgeGraph{}, fmt.Errorf("decode political analysis for article %s: %w", article.ID, err)
@@ -472,9 +493,11 @@ func (store *Store) Queue(ctx context.Context, params pagination.Params, status 
 		FROM articles a
 		JOIN sources s ON s.id = a.source_id
 		WHERE ($1 = '' OR a.headline ILIKE '%' || $1 || '%' OR s.name ILIKE '%' || $1 || '%')
-		  AND (($2 = '' AND (a.public_status IN ('held', 'quarantined') OR COALESCE(a.classify_confidence, 1) < 0.45))
-		    OR ($2 IN ('held', 'quarantined') AND a.public_status = $2)
-		    OR ($2 = 'low_confidence' AND COALESCE(a.classify_confidence, 1) < 0.45))
+		  AND (($2 = '' AND a.public_status NOT IN ('quarantined', 'removed')
+		        AND (a.public_status = 'held' OR COALESCE(a.classify_confidence, 1) < 0.45))
+		    OR ($2 = 'held' AND a.public_status = 'held')
+		    OR ($2 = 'low_confidence' AND a.public_status NOT IN ('quarantined', 'removed')
+		        AND COALESCE(a.classify_confidence, 1) < 0.45))
 	`, params.Search, status).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("count editorial queue: %w", err)
@@ -487,9 +510,11 @@ func (store *Store) Queue(ctx context.Context, params pagination.Params, status 
 		JOIN sources s ON s.id = a.source_id
 		LEFT JOIN categories c ON c.id = a.category_id
 		WHERE ($1 = '' OR a.headline ILIKE '%' || $1 || '%' OR s.name ILIKE '%' || $1 || '%')
-		  AND (($2 = '' AND (a.public_status IN ('held', 'quarantined') OR COALESCE(a.classify_confidence, 1) < 0.45))
-		    OR ($2 IN ('held', 'quarantined') AND a.public_status = $2)
-		    OR ($2 = 'low_confidence' AND COALESCE(a.classify_confidence, 1) < 0.45))
+		  AND (($2 = '' AND a.public_status NOT IN ('quarantined', 'removed')
+		        AND (a.public_status = 'held' OR COALESCE(a.classify_confidence, 1) < 0.45))
+		    OR ($2 = 'held' AND a.public_status = 'held')
+		    OR ($2 = 'low_confidence' AND a.public_status NOT IN ('quarantined', 'removed')
+		        AND COALESCE(a.classify_confidence, 1) < 0.45))
 		ORDER BY a.received_at DESC, a.id
 		LIMIT $3 OFFSET $4
 	`, params.Search, status, params.Limit(), params.Offset())
@@ -511,31 +536,136 @@ func (store *Store) Queue(ctx context.Context, params pagination.Params, status 
 	return items, total, nil
 }
 
-func (store *Store) SetStatus(ctx context.Context, id, status, actor, reason string) error {
-	tag, err := store.pool.Exec(ctx, `UPDATE articles SET public_status = $2 WHERE id = $1`, id, status)
+type ArticleReview struct {
+	Status   string  `json:"status"`
+	Category *string `json:"category"`
+	Reason   string  `json:"reason"`
+}
+
+type articleEditorialState struct {
+	Status     string   `json:"status"`
+	Category   *string  `json:"category"`
+	Confidence *float64 `json:"classification_confidence"`
+	Model      *string  `json:"classification_model"`
+}
+
+func validateArticleReview(review ArticleReview) error {
+	if review.Status == "" && review.Category == nil {
+		return errors.New("status or category is required")
+	}
+	if review.Status != "" {
+		supported := map[string]bool{
+			"held": true, "published": true, "unpublished": true,
+			"removed": true, "quarantined": true,
+		}
+		if !supported[review.Status] {
+			return errors.New("status has an unsupported value")
+		}
+	}
+	if review.Category != nil && *review.Category == "" {
+		return errors.New("category is required when provided")
+	}
+	return nil
+}
+
+// ReviewArticle applies an editorial decision atomically and records the
+// signed-in administrator together with the complete before and after state.
+func (store *Store) ReviewArticle(ctx context.Context, id string, actorID uuid.UUID, review ArticleReview) error {
+	return store.applyArticleReview(ctx, id, actorID, review, "review")
+}
+
+// RemoveArticle marks an article as removed and retains a signed audit record.
+// The record remains available to administrators through the Removed filter.
+func (store *Store) RemoveArticle(ctx context.Context, id string, actorID uuid.UUID, reason string) error {
+	return store.applyArticleReview(ctx, id, actorID, ArticleReview{
+		Status: "removed",
+		Reason: reason,
+	}, "delete")
+}
+
+func (store *Store) applyArticleReview(ctx context.Context, id string, actorID uuid.UUID, review ArticleReview, action string) error {
+	if err := validateArticleReview(review); err != nil {
+		return err
+	}
+	tx, err := store.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer tx.Rollback(ctx)
+
+	var before articleEditorialState
+	err = tx.QueryRow(ctx, `
+		SELECT article.public_status, category.slug,
+		       article.classify_confidence::double precision, article.classify_model
+		FROM articles article
+		LEFT JOIN categories category ON category.id = article.category_id
+		WHERE article.id = $1
+		FOR UPDATE OF article
+	`, id).Scan(&before.Status, &before.Category, &before.Confidence, &before.Model)
+	if err != nil {
 		return err
 	}
-	_, err = store.pool.Exec(ctx, `
-		INSERT INTO editorial_actions (entity_type, entity_id, action, reason)
-		VALUES ('article', $1::uuid, $2, $3)
-	`, id, status, reason)
-	_ = actor
-	return err
-}
 
-func (store *Store) SetCategory(ctx context.Context, id, slug string) error {
-	_, err := store.pool.Exec(ctx, `
-		UPDATE articles
-		SET category_id = (SELECT id FROM categories WHERE slug = $2),
-		    classify_confidence = 1,
-		    classify_model = 'manual'
-		WHERE id = $1
-	`, id, slug)
-	return err
+	nextStatus := before.Status
+	if review.Status != "" {
+		nextStatus = review.Status
+	}
+	nextCategory := before.Category
+	nextConfidence := before.Confidence
+	nextModel := before.Model
+	var categoryID *uuid.UUID
+	if review.Category != nil {
+		var value uuid.UUID
+		if err := tx.QueryRow(ctx, `
+			SELECT id FROM categories WHERE slug = $1 AND status = 'active'
+		`, *review.Category).Scan(&value); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return errors.New("category was not found")
+			}
+			return err
+		}
+		categoryID = &value
+		nextCategory = review.Category
+		confidence := 1.0
+		model := "manual"
+		nextConfidence = &confidence
+		nextModel = &model
+	}
+
+	if review.Category != nil {
+		_, err = tx.Exec(ctx, `
+			UPDATE articles
+			SET public_status = $2, category_id = $3,
+			    classify_confidence = 1, classify_model = 'manual'
+			WHERE id = $1
+		`, id, nextStatus, categoryID)
+	} else {
+		_, err = tx.Exec(ctx, `UPDATE articles SET public_status = $2 WHERE id = $1`, id, nextStatus)
+	}
+	if err != nil {
+		return err
+	}
+
+	after := articleEditorialState{
+		Status: nextStatus, Category: nextCategory, Confidence: nextConfidence, Model: nextModel,
+	}
+	beforeValue, err := json.Marshal(before)
+	if err != nil {
+		return err
+	}
+	afterValue, err := json.Marshal(after)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO editorial_actions (
+			actor_id, entity_type, entity_id, action, before_value, after_value, reason
+		)
+		VALUES ($1, 'article', $2::uuid, $3, $4::jsonb, $5::jsonb, NULLIF($6, ''))
+	`, actorID, id, action, beforeValue, afterValue, review.Reason); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (store *Store) SetNote(ctx context.Context, id, note string) error {

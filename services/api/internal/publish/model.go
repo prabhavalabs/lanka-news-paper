@@ -6,17 +6,52 @@ import (
 )
 
 type Article struct {
-	ID            string    `json:"id"`
-	Headline      string    `json:"headline"`
-	Source        Source    `json:"source"`
-	Category      *Category `json:"category"`
-	PublishedAt   time.Time `json:"published_at"`
-	ReceivedAt    time.Time `json:"received_at"`
-	OriginalURL   string    `json:"original_url"`
-	Excerpt       *string   `json:"excerpt"`
-	Media         *string   `json:"media"`
-	EventID       *string   `json:"event_id"`
-	EditorialNote *string   `json:"editorial_note"`
+	ID            string                    `json:"id"`
+	Headline      string                    `json:"headline"`
+	Source        Source                    `json:"source"`
+	Category      *Category                 `json:"category"`
+	PublishedAt   time.Time                 `json:"published_at"`
+	ReceivedAt    time.Time                 `json:"received_at"`
+	OriginalURL   string                    `json:"original_url"`
+	Excerpt       *string                   `json:"excerpt"`
+	Media         *string                   `json:"media"`
+	EventID       *string                   `json:"event_id"`
+	EditorialNote *string                   `json:"editorial_note"`
+	Analysis      *ArticleNarrativeAnalysis `json:"analysis,omitempty"`
+}
+
+type ArticleNarrativeAnalysis struct {
+	Summary           string  `json:"summary"`
+	Relevant          bool    `json:"relevant"`
+	Label             string  `json:"label"`
+	LeftProbability   float64 `json:"left_probability"`
+	CenterProbability float64 `json:"center_probability"`
+	RightProbability  float64 `json:"right_probability"`
+	Confidence        float64 `json:"confidence"`
+}
+
+type EventSourceSpectrum struct {
+	ArticleID         string  `json:"article_id"`
+	SourceID          string  `json:"source_id"`
+	Source            string  `json:"source"`
+	SourceIcon        string  `json:"source_icon"`
+	Label             string  `json:"label"`
+	LeftProbability   float64 `json:"left_probability"`
+	CenterProbability float64 `json:"center_probability"`
+	RightProbability  float64 `json:"right_probability"`
+	Confidence        float64 `json:"confidence"`
+}
+
+type EventNarrativeAnalysis struct {
+	Summary          string                `json:"summary"`
+	ArticleCount     int                   `json:"article_count"`
+	SourceCount      int                   `json:"source_count"`
+	RatedSourceCount int                   `json:"rated_source_count"`
+	LeftPercentage   float64               `json:"left_percentage"`
+	CenterPercentage float64               `json:"center_percentage"`
+	RightPercentage  float64               `json:"right_percentage"`
+	SourceSpectrum   []EventSourceSpectrum `json:"source_spectrum"`
+	AnalyzedAt       time.Time             `json:"analyzed_at"`
 }
 
 type Source struct {
@@ -63,13 +98,14 @@ type KnowledgeCategory struct {
 }
 
 type KnowledgeEvent struct {
-	ID             string             `json:"id"`
-	Title          string             `json:"title"`
-	Category       string             `json:"category"`
-	CategoryNameSI string             `json:"category_name_si"`
-	IsBreaking     bool               `json:"is_breaking"`
-	LastUpdateAt   time.Time          `json:"last_update_at"`
-	Articles       []KnowledgeArticle `json:"articles"`
+	ID             string                  `json:"id"`
+	Title          string                  `json:"title"`
+	Category       string                  `json:"category"`
+	CategoryNameSI string                  `json:"category_name_si"`
+	IsBreaking     bool                    `json:"is_breaking"`
+	LastUpdateAt   time.Time               `json:"last_update_at"`
+	Articles       []KnowledgeArticle      `json:"articles"`
+	Analysis       *EventNarrativeAnalysis `json:"analysis,omitempty"`
 }
 
 type KnowledgeArticle struct {
@@ -82,9 +118,13 @@ type KnowledgeArticle struct {
 }
 
 type KnowledgeNarrative struct {
-	Label         string  `json:"label"`
-	EconomicFrame float64 `json:"economic_frame"`
-	Confidence    float64 `json:"confidence"`
+	Label             string  `json:"label"`
+	EconomicFrame     float64 `json:"economic_frame"`
+	LeftProbability   float64 `json:"left_probability"`
+	CenterProbability float64 `json:"center_probability"`
+	RightProbability  float64 `json:"right_probability"`
+	AxisVersion       string  `json:"axis_version"`
+	Confidence        float64 `json:"confidence"`
 }
 
 type Reader interface {

@@ -94,14 +94,13 @@ export function KnowledgeAnalysisPage() {
               </div>
               <p className="text-xs text-muted-foreground">{rangeLabel(graph.data, customRange)}</p>
             </div>
-            <Suspense fallback={<div className="h-[430px] animate-pulse bg-tint md:h-[540px]" />}>
+            <Suspense fallback={<div className="min-h-[calc(100svh-2rem)] animate-pulse bg-tint" />}>
               <KnowledgeGraphView
                 data={graph.data}
                 selectedID={selectedID}
                 onSelect={selectNode}
                 onReset={reset}
                 variant="public"
-                className="h-[430px] md:h-[540px]"
               />
             </Suspense>
           </section>

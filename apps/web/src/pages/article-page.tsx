@@ -42,6 +42,18 @@ export function ArticlePage() {
   return (
     <section>
       <ArticleCard item={item} lead />
+      {item.analysis ? (
+        <section className="mt-8 border-y border-rule py-6" aria-labelledby="article-summary-title">
+          <p className="text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">Article analysis</p>
+          <h2 id="article-summary-title" className="font-headline mt-1 text-2xl font-bold">Source summary</h2>
+          <p className="mt-3 max-w-4xl text-base leading-8">{item.analysis.summary}</p>
+          {item.analysis.relevant ? <div className="mt-6 max-w-2xl"><div className="flex h-9 overflow-hidden border border-rule text-xs font-bold" aria-label={`Left ${item.analysis.left_probability * 100}%, center ${item.analysis.center_probability * 100}%, right ${item.analysis.right_probability * 100}%`}>
+            {item.analysis.left_probability > 0 ? <span className="grid place-items-center bg-[#b96d70] text-white" style={{ width: `${item.analysis.left_probability * 100}%` }}>L {Math.round(item.analysis.left_probability * 100)}%</span> : null}
+            {item.analysis.center_probability > 0 ? <span className="grid place-items-center bg-white text-black" style={{ width: `${item.analysis.center_probability * 100}%` }}>C {Math.round(item.analysis.center_probability * 100)}%</span> : null}
+            {item.analysis.right_probability > 0 ? <span className="grid place-items-center bg-[#587ead] text-white" style={{ width: `${item.analysis.right_probability * 100}%` }}>R {Math.round(item.analysis.right_probability * 100)}%</span> : null}
+          </div><p className="mt-2 text-xs text-muted-foreground">This score describes this article’s reporting frame, not the publisher as a whole.</p></div> : <p className="mt-5 text-sm text-muted-foreground">No meaningful political framing was detected in this report.</p>}
+        </section>
+      ) : null}
       <div className="mt-6 flex gap-4">
         {item.event_id ? <Link to={`/e/${item.event_id}`}>සිදුවීමේ වෙනත් වාර්තා</Link> : null}
         <Dialog>

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/adminanalysis"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/cluster"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/config"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/content"
@@ -61,6 +62,7 @@ func run(logger *slog.Logger) error {
 
 	clusters := cluster.NewStore(pool)
 	gateway := llm.NewGateway(pool)
+	adminAnalysis := adminanalysis.NewService(adminanalysis.NewStore(pool), gateway, adminanalysis.NewCodexClient(nil))
 	politicsStore := politics.NewStore(pool, gateway)
 	pipelineStore := pipeline.NewStore(pool, gateway, clusters, politicsStore)
 	producer, err := jobs.NewProducer(pool, logger)
@@ -103,6 +105,7 @@ func run(logger *slog.Logger) error {
 	server := &http.Server{
 		Addr: loaded.Address,
 		Handler: httpapi.NewRouter(httpapi.Dependencies{
+			AdminAnalysis:  adminAnalysis,
 			AllowedOrigins: loaded.AllowedOrigins,
 			CookieSecure:   loaded.SessionCookieSecure,
 			Database:       pool,
@@ -116,6 +119,9 @@ func run(logger *slog.Logger) error {
 			Registry:       registry.NewStore(pool),
 			RunContentBackfill: func(ctx context.Context) error {
 				return jobs.EnqueueContentBackfill(ctx, producer)
+			},
+			RunAdminAnalysisBackfill: func(ctx context.Context, runID string) error {
+				return jobs.EnqueueAdminAnalysisBackfill(ctx, producer, runID)
 			},
 			RunPipeline: func(ctx context.Context, articleID, step string) error {
 				runID, err := pipelineStore.Run(ctx, articleID, step)

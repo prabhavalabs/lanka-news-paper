@@ -2,6 +2,7 @@ package publish
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -24,12 +25,16 @@ func NewStore(pool *pgxpool.Pool) *Store {
 const articleSelect = `
 	SELECT a.id::text, a.headline, s.id::text, s.name, s.source_type,
 	       c.slug, c.name_si, a.published_at, a.received_at, a.canonical_url,
-	       a.event_id::text, a.editorial_note
+	       a.event_id::text, a.editorial_note, NULLIF(document.summary_text, ''),
+	       analysis.relevant, analysis.label, analysis.left_probability,
+	       analysis.center_probability, analysis.right_probability, analysis.confidence
 	FROM articles a
 	JOIN sources s ON s.id = a.source_id
 	JOIN source_endpoints e ON e.id = a.endpoint_id
 	JOIN rights_profiles r ON r.id = a.rights_profile_id
 	LEFT JOIN categories c ON c.id = a.category_id
+	LEFT JOIN article_analysis_documents document ON document.article_id = a.id
+	LEFT JOIN article_political_analysis analysis ON analysis.article_id = a.id
 	WHERE a.public_status = 'published'
 	  AND s.active
 	  AND r.mode NOT IN ('disabled', 'internal_verification')
@@ -166,10 +171,11 @@ func (store *Store) Sources(ctx context.Context) ([]Source, error) {
 }
 
 type Event struct {
-	ID         string    `json:"id"`
-	Title      string    `json:"title"`
-	IsBreaking bool      `json:"is_breaking"`
-	Articles   []Article `json:"articles"`
+	ID         string                  `json:"id"`
+	Title      string                  `json:"title"`
+	IsBreaking bool                    `json:"is_breaking"`
+	Articles   []Article               `json:"articles"`
+	Analysis   *EventNarrativeAnalysis `json:"analysis,omitempty"`
 }
 
 func (store *Store) GetEvent(ctx context.Context, id string) (Event, error) {
@@ -190,7 +196,42 @@ func (store *Store) GetEvent(ctx context.Context, id string) (Event, error) {
 		}
 		event.Articles = append(event.Articles, item)
 	}
-	return event, rows.Err()
+	if err := rows.Err(); err != nil {
+		return Event{}, err
+	}
+	event.Analysis, err = store.eventNarrativeAnalysis(ctx, id)
+	if err != nil {
+		return Event{}, err
+	}
+	return event, nil
+}
+
+func (store *Store) eventNarrativeAnalysis(ctx context.Context, eventID string) (*EventNarrativeAnalysis, error) {
+	var item EventNarrativeAnalysis
+	var spectrum []byte
+	err := store.pool.QueryRow(ctx, `
+		SELECT summary, article_count, source_count, rated_source_count,
+		       left_percentage, center_percentage, right_percentage,
+		       source_spectrum, analyzed_at
+		FROM event_narrative_analyses WHERE event_id = $1
+	`, eventID).Scan(
+		&item.Summary, &item.ArticleCount, &item.SourceCount, &item.RatedSourceCount,
+		&item.LeftPercentage, &item.CenterPercentage, &item.RightPercentage,
+		&spectrum, &item.AnalyzedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(spectrum, &item.SourceSpectrum); err != nil {
+		return nil, err
+	}
+	if item.SourceSpectrum == nil {
+		item.SourceSpectrum = []EventSourceSpectrum{}
+	}
+	return &item, nil
 }
 
 func (store *Store) Breaking(ctx context.Context) ([]Event, error) {
@@ -360,11 +401,18 @@ func (store *Store) KnowledgeGraph(ctx context.Context, start, end time.Time, ca
 		SELECT event.id::text, event.display_title,
 		       COALESCE(category.slug, 'latest'), COALESCE(category.name_si, 'නවතම'),
 		       COALESCE(category.name_en, 'Latest'), event.is_breaking, event.last_update_at,
+		       event_analysis.summary, event_analysis.article_count, event_analysis.source_count,
+		       event_analysis.rated_source_count, event_analysis.left_percentage,
+		       event_analysis.center_percentage, event_analysis.right_percentage,
+		       event_analysis.source_spectrum, event_analysis.analyzed_at,
 		       article.id::text, article.headline, source.id::text, source.name, article.published_at,
-		       analysis.label, analysis.economic_frame, analysis.confidence, analysis.relevant
+		       analysis.label, analysis.economic_frame, analysis.confidence, analysis.relevant,
+		       analysis.left_probability, analysis.center_probability,
+		       analysis.right_probability, analysis.axis_version
 		FROM scope
 		JOIN event_clusters event ON event.id = scope.event_id
 		LEFT JOIN categories category ON category.id = event.category_id
+		LEFT JOIN event_narrative_analyses event_analysis ON event_analysis.event_id = event.id
 		JOIN articles article ON article.event_id = event.id
 		JOIN sources source ON source.id = article.source_id
 		JOIN source_endpoints endpoint ON endpoint.id = article.endpoint_id
@@ -394,22 +442,56 @@ func (store *Store) KnowledgeGraph(ctx context.Context, start, end time.Time, ca
 		var article KnowledgeArticle
 		var categoryNameEN string
 		var label *string
-		var frame, confidence *float64
+		var frame, confidence, left, center, right *float64
 		var relevant *bool
+		var axisVersion *string
+		var eventSummary *string
+		var eventArticleCount, eventSourceCount, eventRatedSourceCount *int
+		var eventLeft, eventCenter, eventRight *float64
+		var eventSpectrum []byte
+		var eventAnalyzedAt *time.Time
 		if err := rows.Scan(
 			&event.ID, &event.Title, &event.Category, &event.CategoryNameSI, &categoryNameEN,
-			&event.IsBreaking, &event.LastUpdateAt,
+			&event.IsBreaking, &event.LastUpdateAt, &eventSummary, &eventArticleCount,
+			&eventSourceCount, &eventRatedSourceCount, &eventLeft, &eventCenter, &eventRight,
+			&eventSpectrum, &eventAnalyzedAt,
 			&article.ID, &article.Headline, &article.SourceID, &article.Source, &article.PublishedAt,
-			&label, &frame, &confidence, &relevant,
+			&label, &frame, &confidence, &relevant, &left, &center, &right, &axisVersion,
 		); err != nil {
 			return KnowledgeGraph{}, err
 		}
 		if relevant != nil && *relevant && label != nil && frame != nil && confidence != nil {
 			article.Narrative = &KnowledgeNarrative{Label: *label, EconomicFrame: *frame, Confidence: *confidence}
+			if left != nil {
+				article.Narrative.LeftProbability = *left
+			}
+			if center != nil {
+				article.Narrative.CenterProbability = *center
+			}
+			if right != nil {
+				article.Narrative.RightProbability = *right
+			}
+			if axisVersion != nil {
+				article.Narrative.AxisVersion = *axisVersion
+			}
 		}
 		position, ok := eventIndex[event.ID]
 		if !ok {
 			event.Articles = make([]KnowledgeArticle, 0, 2)
+			if eventSummary != nil && eventArticleCount != nil && eventSourceCount != nil &&
+				eventRatedSourceCount != nil && eventLeft != nil && eventCenter != nil &&
+				eventRight != nil && eventAnalyzedAt != nil {
+				event.Analysis = &EventNarrativeAnalysis{
+					Summary: *eventSummary, ArticleCount: *eventArticleCount,
+					SourceCount: *eventSourceCount, RatedSourceCount: *eventRatedSourceCount,
+					LeftPercentage: *eventLeft, CenterPercentage: *eventCenter,
+					RightPercentage: *eventRight, AnalyzedAt: *eventAnalyzedAt,
+					SourceSpectrum: make([]EventSourceSpectrum, 0),
+				}
+				if err := json.Unmarshal(eventSpectrum, &event.Analysis.SourceSpectrum); err != nil {
+					return KnowledgeGraph{}, fmt.Errorf("decode event source spectrum: %w", err)
+				}
+			}
 			result.Events = append(result.Events, event)
 			position = len(result.Events) - 1
 			eventIndex[event.ID] = position
@@ -452,9 +534,13 @@ func sourceCount(articles []KnowledgeArticle) int {
 func scanArticle(row rowScanner) (Article, error) {
 	var item Article
 	var slug, nameSI, eventID, note *string
+	var summary, label *string
+	var relevant *bool
+	var left, center, right, confidence *float64
 	if err := row.Scan(
 		&item.ID, &item.Headline, &item.Source.ID, &item.Source.Name, &item.Source.Type,
 		&slug, &nameSI, &item.PublishedAt, &item.ReceivedAt, &item.OriginalURL, &eventID, &note,
+		&summary, &relevant, &label, &left, &center, &right, &confidence,
 	); err != nil {
 		return Article{}, err
 	}
@@ -463,6 +549,30 @@ func scanArticle(row rowScanner) (Article, error) {
 	}
 	item.EventID = eventID
 	item.EditorialNote = note
+	if summary != nil || relevant != nil {
+		item.Analysis = &ArticleNarrativeAnalysis{Label: "unrated", CenterProbability: 1}
+		if summary != nil {
+			item.Analysis.Summary = *summary
+		}
+		if relevant != nil {
+			item.Analysis.Relevant = *relevant
+		}
+		if label != nil {
+			item.Analysis.Label = *label
+		}
+		if left != nil {
+			item.Analysis.LeftProbability = *left
+		}
+		if center != nil {
+			item.Analysis.CenterProbability = *center
+		}
+		if right != nil {
+			item.Analysis.RightProbability = *right
+		}
+		if confidence != nil {
+			item.Analysis.Confidence = *confidence
+		}
+	}
 	return item, nil
 }
 

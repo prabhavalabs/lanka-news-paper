@@ -15,7 +15,7 @@ import {
   type Node,
   type NodeProps,
 } from '@xyflow/react'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, type CSSProperties } from 'react'
 
 import '@xyflow/react/dist/style.css'
 
@@ -46,7 +46,8 @@ export function KnowledgeGraphView({
   onSelect,
   onReset,
   variant = 'admin',
-  className = 'h-[560px]',
+  className = '',
+  height,
 }: {
   data: KnowledgeGraphLayoutInput
   selectedID: string
@@ -54,6 +55,7 @@ export function KnowledgeGraphView({
   onReset: () => void
   variant?: GraphVariant
   className?: string
+  height?: CSSProperties['height']
 }) {
   const graph = useMemo(() => layoutKnowledgeGraph(data), [data])
   const graphKey = useMemo(() => graph.nodes.map((node) => node.id).join('|'), [graph.nodes])
@@ -61,6 +63,7 @@ export function KnowledgeGraphView({
   return (
     <div
       className={`relative overflow-hidden ${variant === 'admin' ? 'bg-background' : 'bg-tint'} ${className}`}
+      style={{ height: height ?? `max(${graph.height}px, calc(100svh - 2rem))` }}
       role="application"
       aria-label="Interactive knowledge graph. Drag nodes or the canvas, scroll to zoom, and use Tab then Enter to select a node."
     >
@@ -73,6 +76,7 @@ export function KnowledgeGraphView({
           onSelect={onSelect}
           onReset={onReset}
           variant={variant}
+          fitViewKey={height}
         />
       </ReactFlowProvider>
     </div>
@@ -86,6 +90,7 @@ function KnowledgeGraphCanvas({
   onSelect,
   onReset,
   variant,
+  fitViewKey,
 }: {
   data: KnowledgeGraphLayoutInput
   graph: ReturnType<typeof layoutKnowledgeGraph>
@@ -93,6 +98,7 @@ function KnowledgeGraphCanvas({
   onSelect: (id: string) => void
   onReset: () => void
   variant: GraphVariant
+  fitViewKey?: CSSProperties['height']
 }) {
   const eventCounts = useMemo(
     () => new Map(data.events.map((event) => [`event:${event.id}`, event.articles.length])),
@@ -156,7 +162,7 @@ function KnowledgeGraphCanvas({
       proOptions={{ hideAttribution: true }}
       colorMode={variant === 'admin' ? 'system' : 'light'}
     >
-      <ViewportFocus selectedID={selectedID} active={active} />
+      <ViewportFocus selectedID={selectedID} active={active} fitViewKey={fitViewKey} />
       <Background
         variant={BackgroundVariant.Dots}
         gap={22}
@@ -205,7 +211,15 @@ function KnowledgeGraphCanvas({
   )
 }
 
-function ViewportFocus({ selectedID, active }: { selectedID: string; active: Set<string> }) {
+function ViewportFocus({
+  selectedID,
+  active,
+  fitViewKey,
+}: {
+  selectedID: string
+  active: Set<string>
+  fitViewKey?: CSSProperties['height']
+}) {
   const { fitView } = useReactFlow<KnowledgeNode>()
   useEffect(() => {
     const compact = window.matchMedia('(max-width: 767px)').matches
@@ -217,7 +231,7 @@ function ViewportFocus({ selectedID, active }: { selectedID: string; active: Set
       maxZoom: selectedID ? 1.4 : 1.1,
       duration: 450,
     })
-  }, [active, fitView, selectedID])
+  }, [active, fitView, fitViewKey, selectedID])
   return null
 }
 

@@ -53,6 +53,28 @@ func TestExtractStaticHTMLUsesJSONLDArticleBody(t *testing.T) {
 	require.Greater(t, result.Characters, 100)
 }
 
+func TestExtractGovernmentNewsArticleWithShortBody(t *testing.T) {
+	document := `<html><body>
+		<h1 itemprop="headline">රජයේ නිවේදනය</h1>
+		<time itemprop="dateCreated" datetime="2026-08-23T14:55:14+05:30"></time>
+		<div itemprop="articleBody"><p>` + strings.Repeat("කෙටි නිල පුවත් නිවේදනයකි. ", 4) + `</p></div>
+		<section class="latest-news">මෙය ලිපියේ කොටසක් නොවේ.</section>
+	</body></html>`
+	config := registry.CollectionConfig{
+		TitleSelector:        `h1[itemprop="headline"]`,
+		PublishedSelector:    `time[itemprop="dateCreated"]`,
+		ContentSelector:      `[itemprop="articleBody"]`,
+		MinContentCharacters: 60,
+	}
+
+	result, err := extractStaticHTML([]byte(document), config)
+	require.NoError(t, err)
+	require.Equal(t, "රජයේ නිවේදනය", result.Title)
+	require.NotNil(t, result.PublishedAt)
+	require.NotContains(t, result.BodyText, "ලිපියේ කොටසක් නොවේ")
+	require.NoError(t, validateExtraction(result, config))
+}
+
 func TestExtractStructuredTextRemovesActiveMarkup(t *testing.T) {
 	body, err := extractStructuredText(`<div><p>ආරක්ෂිත අන්තර්ගතය</p><script>alert(1)</script><style>body{}</style></div>`)
 
