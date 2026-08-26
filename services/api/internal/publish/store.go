@@ -231,6 +231,36 @@ func (store *Store) eventNarrativeAnalysis(ctx context.Context, eventID string) 
 	if item.SourceSpectrum == nil {
 		item.SourceSpectrum = []EventSourceSpectrum{}
 	}
+	rows, err := store.pool.Query(ctx, `
+		SELECT id::text, headline, original_url
+		FROM articles
+		WHERE event_id = $1
+	`, eventID)
+	if err != nil {
+		return nil, err
+	}
+	type articleLink struct{ headline, originalURL string }
+	links := make(map[string]articleLink, len(item.SourceSpectrum))
+	for rows.Next() {
+		var id string
+		var link articleLink
+		if err := rows.Scan(&id, &link.headline, &link.originalURL); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		links[id] = link
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	for index := range item.SourceSpectrum {
+		if link, ok := links[item.SourceSpectrum[index].ArticleID]; ok {
+			item.SourceSpectrum[index].Headline = link.headline
+			item.SourceSpectrum[index].OriginalURL = link.originalURL
+		}
+	}
 	return &item, nil
 }
 

@@ -652,6 +652,37 @@ func (handler adminHandler) article(w http.ResponseWriter, request *http.Request
 	writeJSON(w, http.StatusOK, item)
 }
 
+func (handler adminHandler) articleLLMCalls(w http.ResponseWriter, request *http.Request) {
+	params, err := parsePagination(request)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	items, total, err := handler.desk.ArticleLLMCalls(request.Context(), request.PathValue("id"), params)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
+		return
+	}
+	writePage(w, items, total, params)
+}
+
+func (handler adminHandler) deleteArticleLLMCall(w http.ResponseWriter, request *http.Request) {
+	callID, err := strconv.ParseInt(request.PathValue("callId"), 10, 64)
+	if err != nil || callID < 1 {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "Call ID must be a positive integer.")
+		return
+	}
+	if err := handler.desk.DeleteArticleLLMCall(request.Context(), request.PathValue("id"), callID, currentUser(request).ID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", "LLM call was not found for this article.")
+			return
+		}
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (handler adminHandler) runArticlePipeline(w http.ResponseWriter, request *http.Request) {
 	var body struct {
 		Step string `json:"step"`

@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerE
 import { Link, useParams } from 'react-router'
 import { toast } from 'sonner'
 
+import { LLMTelemetryCard } from '@/components/llm-telemetry'
 import { SourceAvatar } from '@/components/source-avatar'
 import { RichArticleContent } from '@/components/rich-article-content'
 import { Badge } from '@/components/ui/badge'
@@ -20,7 +21,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   PIPELINE_NODE_HEIGHT, PIPELINE_NODE_WIDTH, buildPipelineEdges, layoutPipelineGraph,
   type PipelineGraphEdge, type PipelineGraphPoint,
@@ -66,6 +67,26 @@ function safeExternalURL(value: string) {
   }
 }
 
+function plainArticleText(value: string) {
+  return value
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&#x([\da-f]+);/gi, (_match, code: string) => decodeCodePoint(Number.parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_match, code: string) => decodeCodePoint(Number(code)))
+    .replace(/&(nbsp|amp|quot|apos|lt|gt);/gi, (entity) => ({
+      '&nbsp;': ' ', '&amp;': '&', '&quot;': '"', '&apos;': "'", '&lt;': '<', '&gt;': '>',
+    })[entity.toLowerCase()] ?? entity)
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function decodeCodePoint(code: number) {
+  try {
+    return Number.isInteger(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : ''
+  } catch {
+    return ''
+  }
+}
+
 export function ArticleDetailPage() {
   const { id = '' } = useParams()
   const queryClient = useQueryClient()
@@ -89,7 +110,9 @@ export function ArticleDetailPage() {
   const item = article.data
   const run = item.pipeline_runs[0]
   const political = item.political
-  const description = item.description.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+  const summary = plainArticleText(item.analysis_document?.summary_text ?? '')
+  const capturedText = summary || plainArticleText(item.description)
+  const originalURL = safeExternalURL(item.original_url) ?? safeExternalURL(item.canonical_url)
 
   return (
     <section className="flex flex-col gap-6">
@@ -107,7 +130,7 @@ export function ArticleDetailPage() {
             <span><strong className="font-medium text-foreground">{item.source}</strong><br />Published {date.format(new Date(item.published_at))}</span>
           </div>
         </div>
-        {safeExternalURL(item.original_url) ? <Button variant="outline" nativeButton={false} render={<a href={safeExternalURL(item.original_url)} target="_blank" rel="noreferrer" />}><ExternalLink /> Open original</Button> : null}
+        {originalURL ? <Button variant="outline" nativeButton={false} render={<a href={originalURL} target="_blank" rel="noreferrer" />}><ExternalLink /> Open original source</Button> : null}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -127,9 +150,9 @@ export function ArticleDetailPage() {
 
       <div className="grid gap-6 xl:grid-cols-[1.35fr_1fr]">
         <Card>
-          <CardHeader><CardTitle>Captured article</CardTitle><CardDescription>Content stored from the source endpoint.</CardDescription></CardHeader>
+          <CardHeader className="gap-3 sm:flex sm:flex-row sm:items-start sm:justify-between"><div><CardTitle>Captured article</CardTitle><CardDescription>{summary ? 'AI summary of the captured source article.' : 'Content stored from the source endpoint.'}</CardDescription></div>{summary ? <Badge variant="secondary" className="w-fit">Summary</Badge> : null}</CardHeader>
           <CardContent className="space-y-5">
-            <p className="whitespace-pre-line text-sm leading-7 text-muted-foreground">{description || 'No article excerpt was supplied by this endpoint.'}</p>
+            <p className="line-clamp-6 whitespace-pre-line text-sm leading-7 text-muted-foreground">{capturedText || 'No article excerpt was supplied by this endpoint.'}</p>
             <dl className="grid gap-4 border-t pt-5 text-sm sm:grid-cols-2">
               <Detail label="Author" value={item.author || 'Not supplied'} />
               <Detail label="Received" value={date.format(new Date(item.received_at))} />
@@ -147,25 +170,7 @@ export function ArticleDetailPage() {
 
       <ContentVersionsCard content={item.content} analysis={item.analysis_document} />
 
-      <Card className="gap-0 py-0">
-        <CardHeader className="border-b py-6"><CardTitle>LLM telemetry</CardTitle><CardDescription>Model calls linked to this article and pipeline run.</CardDescription></CardHeader>
-        <CardContent className="px-0">
-          <Table>
-            <TableHeader className="bg-muted/30"><TableRow><TableHead>Task</TableHead><TableHead>Provider</TableHead><TableHead>Model</TableHead><TableHead>Result</TableHead><TableHead>Latency</TableHead><TableHead>Time</TableHead></TableRow></TableHeader>
-            <TableBody>
-              {item.llm_calls.length ? item.llm_calls.map((call) => (
-                <TableRow key={call.id}>
-                  <TableCell className="font-medium">{call.task.replaceAll('_', ' ')}</TableCell>
-                  <TableCell>{call.provider_id}</TableCell><TableCell>{call.model}<p className="mt-1 text-xs text-muted-foreground">{formatTokens(call)}</p></TableCell>
-                  <TableCell><Badge variant={call.outcome === 'ok' ? 'outline' : call.outcome === 'running' ? 'secondary' : 'destructive'}>{call.outcome}</Badge>{call.error_detail ? <p className="mt-1 max-w-md text-xs text-destructive">{call.error_detail}</p> : null}</TableCell>
-                  <TableCell className="tabular-nums">{call.latency_ms == null ? 'In progress' : formatDuration(call.latency_ms)}{call.first_token_ms != null ? <p className="mt-1 text-xs text-muted-foreground">first token {formatDuration(call.first_token_ms)}</p> : null}</TableCell>
-                  <TableCell className="text-muted-foreground">{date.format(new Date(call.created_at))}</TableCell>
-                </TableRow>
-              )) : <TableRow><TableCell colSpan={6} className="h-32 text-center text-muted-foreground">No LLM calls recorded for this article yet.</TableCell></TableRow>}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      <LLMTelemetryCard articleId={id} />
     </section>
   )
 }
@@ -611,7 +616,7 @@ function LLMCallInspector({ call }: { call: LLMCall }) {
 }
 
 function LogBlock({ title, value, error = false }: { title: string; value: string; error?: boolean }) {
-  return <div><p className={`text-xs font-medium ${error ? 'text-destructive' : ''}`}>{title}</p><pre className={`mt-2 max-h-64 overflow-auto rounded-lg border p-3 text-[11px] leading-5 ${error ? 'border-destructive/30 bg-destructive/5 text-destructive' : 'border-zinc-700 bg-zinc-950 text-zinc-200'}`}>{value}</pre></div>
+  return <div><p className={`text-xs font-medium ${error ? 'text-destructive' : ''}`}>{title}</p><ScrollArea className={`mt-2 h-64 rounded-lg border ${error ? 'border-destructive/30 bg-destructive/5' : 'border-zinc-700 bg-zinc-950'}`}><pre className={`whitespace-pre-wrap break-words p-3 text-[11px] leading-5 ${error ? 'text-destructive' : 'text-zinc-200'}`}>{value}</pre></ScrollArea></div>
 }
 
 function formatTokens(call: Pick<LLMCall, 'input_tokens' | 'output_tokens'>) {
@@ -646,12 +651,13 @@ function EventSpectrumCard({ analysis }: { analysis: EventNarrativeAnalysis }) {
       </CardHeader>
       <CardContent className="space-y-6 pt-6">
         <p className="max-w-5xl text-sm leading-7 text-muted-foreground">{analysis.summary}</p>
-        {analysis.rated_source_count > 0 ? <SpectrumBar left={analysis.left_percentage} center={analysis.center_percentage} right={analysis.right_percentage} /> : <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">No source in this event contains enough political framing to calculate a left/center/right distribution.</div>}
+        {analysis.rated_source_count > 0 ? <div className="space-y-6"><SpectrumBar left={analysis.left_percentage} center={analysis.center_percentage} right={analysis.right_percentage} /><SourceSpectrumRail sources={analysis.source_spectrum} /></div> : <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">No source in this event contains enough political framing to calculate a left/center/right distribution.</div>}
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {analysis.source_spectrum.map((source) => (
-            <div key={source.article_id} className="flex min-w-0 items-center gap-3 rounded-2xl border bg-muted/10 p-3">
+            <div key={source.article_id} className="flex min-w-0 items-start gap-3 rounded-2xl border bg-muted/10 p-3 transition-colors hover:bg-muted/30">
               <SourceAvatar name={source.source} iconUrl={source.source_icon} className="size-10" />
-              <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{source.source}</p><p className="mt-1 text-xs capitalize text-muted-foreground">{source.label === 'unrated' ? 'Unrated coverage' : `${source.label} · ${Math.round(source.confidence * 100)}% confidence`}</p></div>
+              <div className="min-w-0 flex-1"><Link to={`/articles/${source.article_id}`} className="line-clamp-2 text-sm font-medium leading-snug hover:underline">{source.headline || source.source}</Link><p className="mt-1 truncate text-xs text-muted-foreground">{source.source}</p><p className="mt-1 text-xs capitalize text-muted-foreground">{source.label === 'unrated' ? 'Unrated coverage' : `${source.label} · ${Math.round(source.confidence * 100)}% confidence`}</p></div>
+              {safeExternalURL(source.original_url) ? <Button variant="ghost" size="icon-sm" className="shrink-0" aria-label={`Open original article from ${source.source}`} nativeButton={false} render={<a href={safeExternalURL(source.original_url)} target="_blank" rel="noreferrer" />}><ExternalLink /></Button> : null}
             </div>
           ))}
         </div>
@@ -662,16 +668,62 @@ function EventSpectrumCard({ analysis }: { analysis: EventNarrativeAnalysis }) {
 }
 
 function SpectrumBar({ left, center, right }: { left: number; center: number; right: number }) {
+  const values = [
+    { key: 'L', label: 'Left', value: left, color: 'bg-rose-500/80' },
+    { key: 'C', label: 'Center', value: center, color: 'bg-zinc-200 dark:bg-zinc-100' },
+    { key: 'R', label: 'Right', value: right, color: 'bg-blue-500/80' },
+  ]
   return (
-    <div>
-      <div className="flex h-9 overflow-hidden rounded-xl border text-xs font-semibold" role="img" aria-label={`Left ${left.toFixed(1)}%, center ${center.toFixed(1)}%, right ${right.toFixed(1)}%`}>
-        {left > 0 ? <span className="flex items-center justify-center bg-rose-500/75 text-white" style={{ width: `${left}%` }}>L {Math.round(left)}%</span> : null}
-        {center > 0 ? <span className="flex items-center justify-center bg-zinc-200 text-zinc-900 dark:bg-zinc-100" style={{ width: `${center}%` }}>C {Math.round(center)}%</span> : null}
-        {right > 0 ? <span className="flex items-center justify-center bg-blue-500/80 text-white" style={{ width: `${right}%` }}>R {Math.round(right)}%</span> : null}
+    <div className="space-y-3">
+      <div className="flex h-3 overflow-hidden rounded-full border bg-muted" role="img" aria-label={`Left ${left.toFixed(1)}%, center ${center.toFixed(1)}%, right ${right.toFixed(1)}%`}>
+        {values.map((item) => item.value > 0 ? <span key={item.key} className={item.color} style={{ width: `${item.value}%` }} /> : null)}
       </div>
-      <div className="mt-2 flex justify-between text-xs text-muted-foreground"><span>Left</span><span>Center</span><span>Right</span></div>
+      <div className="grid grid-cols-3 gap-2">
+        {values.map((item) => <div key={item.key} className="min-w-0 rounded-xl border bg-muted/15 px-3 py-2 text-center"><div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground"><span className={`size-2 rounded-full ${item.color}`} />{item.label}</div><p className="mt-1 text-base font-semibold tabular-nums">{formatPercentage(item.value)}</p></div>)}
+      </div>
     </div>
   )
+}
+
+function SourceSpectrumRail({ sources }: { sources: EventNarrativeAnalysis['source_spectrum'] }) {
+  const markers = spectrumMarkers(sources)
+  if (markers.length === 0) return null
+  return (
+    <div className="rounded-2xl border bg-muted/10 p-4">
+      <div className="flex items-center justify-between gap-3"><p className="text-sm font-medium">Source positions</p><p className="text-xs text-muted-foreground">Select a source to inspect its article</p></div>
+      <div className="relative mt-4 h-28 px-4">
+        <div className="absolute top-10 right-4 left-4 h-2 rounded-full bg-gradient-to-r from-rose-500/75 via-zinc-200 to-blue-500/80 dark:via-zinc-100" />
+        <div className="absolute top-[2.15rem] left-1/2 h-5 w-px bg-foreground/30" />
+        {markers.map(({ source, position, lane }) => (
+          <Tooltip key={source.article_id}>
+            <TooltipTrigger render={<Link to={`/articles/${source.article_id}`} className="absolute z-10 -translate-x-1/2 rounded-full outline-none ring-background transition-transform hover:scale-110 focus-visible:ring-2 focus-visible:ring-ring" style={{ left: `${position}%`, top: `${lane * 28}px` }} aria-label={`Inspect ${source.source}: ${source.headline || 'coverage article'}`} />}>
+              <SourceAvatar name={source.source} iconUrl={source.source_icon} className="size-8 border-2 border-background shadow-sm" />
+            </TooltipTrigger>
+            <TooltipContent className="max-w-64"><div><p className="font-medium">{source.source} · {source.label}</p><p className="mt-1 line-clamp-2 opacity-80">{source.headline || 'Coverage article'}</p></div></TooltipContent>
+          </Tooltip>
+        ))}
+        <div className="absolute right-4 bottom-0 left-4 flex justify-between text-xs text-muted-foreground"><span>Left</span><span>Center</span><span>Right</span></div>
+      </div>
+    </div>
+  )
+}
+
+function spectrumMarkers(sources: EventNarrativeAnalysis['source_spectrum']) {
+  const laneEnds = [-100, -100, -100]
+  return sources
+    .filter((source) => source.label !== 'unrated')
+    .map((source) => ({ source, position: Math.min(97, Math.max(3, 50 + (source.right_probability - source.left_probability) * 50)) }))
+    .sort((left, right) => left.position - right.position)
+    .map((marker) => {
+      let lane = laneEnds.findIndex((end) => marker.position - end >= 8)
+      if (lane < 0) lane = laneEnds.indexOf(Math.min(...laneEnds))
+      laneEnds[lane] = marker.position
+      return { ...marker, lane }
+    })
+}
+
+function formatPercentage(value: number) {
+  return `${value < 10 && value % 1 !== 0 ? value.toFixed(1) : Math.round(value)}%`
 }
 
 function ContentVersionsCard({ content, analysis }: {

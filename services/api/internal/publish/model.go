@@ -35,6 +35,8 @@ type EventSourceSpectrum struct {
 	SourceID          string  `json:"source_id"`
 	Source            string  `json:"source"`
 	SourceIcon        string  `json:"source_icon"`
+	Headline          string  `json:"headline"`
+	OriginalURL       string  `json:"original_url"`
 	Label             string  `json:"label"`
 	LeftProbability   float64 `json:"left_probability"`
 	CenterProbability float64 `json:"center_probability"`

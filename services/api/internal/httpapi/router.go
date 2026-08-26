@@ -92,6 +92,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("GET /api/admin/articles", admin.articles)
 	protected.HandleFunc("GET /api/admin/articles/{id}", admin.article)
 	protected.HandleFunc("DELETE /api/admin/articles/{id}", admin.deleteArticle)
+	protected.HandleFunc("GET /api/admin/articles/{id}/llm-calls", admin.articleLLMCalls)
+	protected.HandleFunc("DELETE /api/admin/articles/{id}/llm-calls/{callId}", admin.deleteArticleLLMCall)
 	protected.HandleFunc("POST /api/admin/articles/{id}/pipeline/run", admin.runArticlePipeline)
 	protected.HandleFunc("GET /api/admin/quarantine", admin.quarantine)
 	protected.HandleFunc("POST /api/admin/articles/{id}/status", admin.articleStatus)

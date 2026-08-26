@@ -3,6 +3,7 @@ package desk
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 
@@ -121,6 +122,60 @@ func TestRemoveArticleRecordsActorAndDeleteAction(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, queueItems)
 	require.Zero(t, queueTotal)
+}
+
+func TestArticleLLMCallsPaginateAndDeleteWithAudit(t *testing.T) {
+	databaseURL := os.Getenv("SNAP_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("SNAP_TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	require.NoError(t, err)
+	defer pool.Close()
+
+	articleID := seedEditorialTestArticle(t, ctx, pool)
+	actorID := uuid.New()
+	callIDs := make([]int64, 0, 3)
+	for index := range 3 {
+		var callID int64
+		err = pool.QueryRow(ctx, `
+			INSERT INTO llm_calls (task, provider_id, model, latency_ms, outcome, article_id, created_at)
+			VALUES ($1, 'test-provider', 'test-model', $2::int, 'ok', $3, clock_timestamp() + ($2::int * interval '1 millisecond'))
+			RETURNING id
+		`, fmt.Sprintf("test-task-%d", index), index, articleID).Scan(&callID)
+		require.NoError(t, err)
+		callIDs = append(callIDs, callID)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM audit_logs WHERE target_type = 'llm_call' AND target_id = ANY($1)`, []string{
+			fmt.Sprint(callIDs[0]), fmt.Sprint(callIDs[1]), fmt.Sprint(callIDs[2]),
+		})
+		_, _ = pool.Exec(ctx, `DELETE FROM llm_calls WHERE article_id = $1`, articleID)
+	})
+
+	store := NewStore(pool)
+	items, total, err := store.ArticleLLMCalls(ctx, articleID.String(), pagination.Params{Page: 1, PerPage: 2})
+	require.NoError(t, err)
+	require.Equal(t, 3, total)
+	require.Len(t, items, 2)
+	require.Equal(t, "test-task-2", items[0].Task)
+	require.Equal(t, "test-task-1", items[1].Task)
+
+	items, total, err = store.ArticleLLMCalls(ctx, articleID.String(), pagination.Params{Page: 2, PerPage: 2})
+	require.NoError(t, err)
+	require.Equal(t, 3, total)
+	require.Len(t, items, 1)
+	require.Equal(t, "test-task-0", items[0].Task)
+
+	require.NoError(t, store.DeleteArticleLLMCall(ctx, articleID.String(), callIDs[1], actorID))
+	var savedActor uuid.UUID
+	err = pool.QueryRow(ctx, `
+		SELECT actor_id FROM audit_logs
+		WHERE action = 'delete_llm_call' AND target_type = 'llm_call' AND target_id = $1
+	`, fmt.Sprint(callIDs[1])).Scan(&savedActor)
+	require.NoError(t, err)
+	require.Equal(t, actorID, savedActor)
 }
 
 func seedEditorialTestArticle(t *testing.T, ctx context.Context, pool *pgxpool.Pool) uuid.UUID {

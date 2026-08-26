@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pagination"
@@ -136,6 +137,7 @@ type PipelineRun struct {
 
 type LLMCall struct {
 	ID             int64      `json:"id"`
+	PipelineRunID  *string    `json:"pipeline_run_id"`
 	PipelineStepID *string    `json:"pipeline_step_id"`
 	Task           string     `json:"task"`
 	ProviderID     string     `json:"provider_id"`
@@ -182,6 +184,8 @@ type EventSourceSpectrum struct {
 	SourceID          string  `json:"source_id"`
 	Source            string  `json:"source"`
 	SourceIcon        string  `json:"source_icon"`
+	Headline          string  `json:"headline"`
+	OriginalURL       string  `json:"original_url"`
 	Label             string  `json:"label"`
 	LeftProbability   float64 `json:"left_probability"`
 	CenterProbability float64 `json:"center_probability"`
@@ -366,6 +370,36 @@ func (store *Store) eventNarrativeAnalysis(ctx context.Context, eventID string) 
 	if item.SourceSpectrum == nil {
 		item.SourceSpectrum = []EventSourceSpectrum{}
 	}
+	rows, err := store.pool.Query(ctx, `
+		SELECT id::text, headline, original_url
+		FROM articles
+		WHERE event_id = $1
+	`, eventID)
+	if err != nil {
+		return nil, err
+	}
+	type articleLink struct{ headline, originalURL string }
+	links := make(map[string]articleLink, len(item.SourceSpectrum))
+	for rows.Next() {
+		var id string
+		var link articleLink
+		if err := rows.Scan(&id, &link.headline, &link.originalURL); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		links[id] = link
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	for index := range item.SourceSpectrum {
+		if link, ok := links[item.SourceSpectrum[index].ArticleID]; ok {
+			item.SourceSpectrum[index].Headline = link.headline
+			item.SourceSpectrum[index].OriginalURL = link.originalURL
+		}
+	}
 	return &item, nil
 }
 
@@ -491,7 +525,8 @@ func (store *Store) pipelineRuns(ctx context.Context, articleID string) ([]Pipel
 
 func (store *Store) articleLLMCalls(ctx context.Context, articleID string) ([]LLMCall, error) {
 	rows, err := store.pool.Query(ctx, `
-		SELECT id, pipeline_step_id::text, COALESCE(task, ''), COALESCE(provider_id, ''), COALESCE(model, ''),
+		SELECT id, pipeline_run_id::text, pipeline_step_id::text,
+		       COALESCE(task, ''), COALESCE(provider_id, ''), COALESCE(model, ''),
 		       input_tokens, output_tokens, latency_ms, first_token_ms, COALESCE(outcome, ''), streamed,
 		       COALESCE(response_text, ''), COALESCE(finish_reason, ''), error_detail, created_at, completed_at
 		FROM llm_calls WHERE article_id = $1 ORDER BY created_at DESC LIMIT 50
@@ -503,7 +538,8 @@ func (store *Store) articleLLMCalls(ctx context.Context, articleID string) ([]LL
 	items := make([]LLMCall, 0)
 	for rows.Next() {
 		var item LLMCall
-		if err := rows.Scan(&item.ID, &item.PipelineStepID, &item.Task, &item.ProviderID, &item.Model,
+		if err := rows.Scan(&item.ID, &item.PipelineRunID, &item.PipelineStepID,
+			&item.Task, &item.ProviderID, &item.Model,
 			&item.InputTokens, &item.OutputTokens, &item.LatencyMS, &item.FirstTokenMS, &item.Outcome,
 			&item.Streamed, &item.ResponseText, &item.FinishReason, &item.ErrorDetail,
 			&item.CreatedAt, &item.CompletedAt); err != nil {
@@ -512,4 +548,63 @@ func (store *Store) articleLLMCalls(ctx context.Context, articleID string) ([]LL
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// ArticleLLMCalls returns a stable, paginated trace history for one article.
+func (store *Store) ArticleLLMCalls(ctx context.Context, articleID string, params pagination.Params) ([]LLMCall, int, error) {
+	var total int
+	if err := store.pool.QueryRow(ctx, `SELECT count(*) FROM llm_calls WHERE article_id = $1`, articleID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count article LLM calls: %w", err)
+	}
+	rows, err := store.pool.Query(ctx, `
+		SELECT id, pipeline_run_id::text, pipeline_step_id::text,
+		       COALESCE(task, ''), COALESCE(provider_id, ''), COALESCE(model, ''),
+		       input_tokens, output_tokens, latency_ms, first_token_ms, COALESCE(outcome, ''), streamed,
+		       COALESCE(response_text, ''), COALESCE(finish_reason, ''), error_detail, created_at, completed_at
+		FROM llm_calls
+		WHERE article_id = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2 OFFSET $3
+	`, articleID, params.Limit(), params.Offset())
+	if err != nil {
+		return nil, 0, fmt.Errorf("list article LLM calls: %w", err)
+	}
+	defer rows.Close()
+	items := make([]LLMCall, 0, params.Limit())
+	for rows.Next() {
+		var item LLMCall
+		if err := rows.Scan(&item.ID, &item.PipelineRunID, &item.PipelineStepID,
+			&item.Task, &item.ProviderID, &item.Model,
+			&item.InputTokens, &item.OutputTokens, &item.LatencyMS, &item.FirstTokenMS, &item.Outcome,
+			&item.Streamed, &item.ResponseText, &item.FinishReason, &item.ErrorDetail,
+			&item.CreatedAt, &item.CompletedAt); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
+}
+
+// DeleteArticleLLMCall permanently removes one model-call trace and records the administrator action.
+func (store *Store) DeleteArticleLLMCall(ctx context.Context, articleID string, callID int64, actorID uuid.UUID) error {
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var deletedID int64
+	if err := tx.QueryRow(ctx, `
+		DELETE FROM llm_calls
+		WHERE id = $1 AND article_id = $2
+		RETURNING id
+	`, callID, articleID).Scan(&deletedID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_logs (actor_id, action, target_type, target_id, result)
+		VALUES ($1, 'delete_llm_call', 'llm_call', $2, 'ok')
+	`, actorID, fmt.Sprint(deletedID)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

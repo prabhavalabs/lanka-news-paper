@@ -138,17 +138,18 @@ func (store *Store) summarize(ctx context.Context, articleID, runID, stepID stri
 }
 
 type eventMember struct {
-	ArticleID  string
-	SourceID   string
-	Source     string
-	Icon       string
-	Headline   string
-	Summary    string
-	Relevant   *bool
-	Left       *float64
-	Center     *float64
-	Right      *float64
-	Confidence *float64
+	ArticleID   string
+	SourceID    string
+	Source      string
+	Icon        string
+	Headline    string
+	OriginalURL string
+	Summary     string
+	Relevant    *bool
+	Left        *float64
+	Center      *float64
+	Right       *float64
+	Confidence  *float64
 }
 
 type sourceSpectrumItem struct {
@@ -156,6 +157,8 @@ type sourceSpectrumItem struct {
 	SourceID          string  `json:"source_id"`
 	Source            string  `json:"source"`
 	SourceIcon        string  `json:"source_icon"`
+	Headline          string  `json:"headline"`
+	OriginalURL       string  `json:"original_url"`
 	Label             string  `json:"label"`
 	LeftProbability   float64 `json:"left_probability"`
 	CenterProbability float64 `json:"center_probability"`
@@ -192,7 +195,8 @@ func (store *Store) synthesizeEvent(ctx context.Context, articleID, runID, stepI
 		sourceIDs[member.SourceID] = struct{}{}
 		item := sourceSpectrumItem{
 			ArticleID: member.ArticleID, SourceID: member.SourceID, Source: member.Source,
-			SourceIcon: member.Icon, Label: "unrated", CenterProbability: 1,
+			SourceIcon: member.Icon, Headline: member.Headline, OriginalURL: member.OriginalURL,
+			Label: "unrated", CenterProbability: 1,
 		}
 		if member.Relevant != nil && *member.Relevant && member.Left != nil && member.Center != nil && member.Right != nil {
 			item.LeftProbability, item.CenterProbability, item.RightProbability = *member.Left, *member.Center, *member.Right
@@ -255,7 +259,7 @@ func (store *Store) eventMembers(ctx context.Context, eventID string) ([]eventMe
 	rows, err := store.pool.Query(ctx, `
 		SELECT DISTINCT ON (article.source_id)
 		       article.id::text, source.id::text, source.name, COALESCE(source.icon_url, ''),
-		       article.headline, COALESCE(document.summary_text, ''), analysis.relevant,
+		       article.headline, article.original_url, COALESCE(document.summary_text, ''), analysis.relevant,
 		       analysis.left_probability, analysis.center_probability,
 		       analysis.right_probability, analysis.confidence
 		FROM articles article
@@ -274,7 +278,7 @@ func (store *Store) eventMembers(ctx context.Context, eventID string) ([]eventMe
 		var member eventMember
 		if err := rows.Scan(
 			&member.ArticleID, &member.SourceID, &member.Source, &member.Icon,
-			&member.Headline, &member.Summary, &member.Relevant, &member.Left,
+			&member.Headline, &member.OriginalURL, &member.Summary, &member.Relevant, &member.Left,
 			&member.Center, &member.Right, &member.Confidence,
 		); err != nil {
 			return nil, err

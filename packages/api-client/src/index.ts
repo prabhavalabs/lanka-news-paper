@@ -49,6 +49,8 @@ export type EventSourceSpectrum = {
   source_id: string;
   source: string;
   source_icon: string;
+  headline: string;
+  original_url: string;
   label: "left" | "center" | "right" | "unrated";
   left_probability: number;
   center_probability: number;
@@ -487,6 +489,7 @@ export type PipelineStep = {
 
 export type LLMCall = {
   id: number;
+  pipeline_run_id: string | null;
   pipeline_step_id: string | null;
   task: string;
   provider_id: string;
@@ -837,7 +840,16 @@ export function createClient(baseUrl = "") {
         url(withQuery("/api/admin/articles", params))
       ),
     adminArticle: (id: string) =>
-      request<AdminArticleDetail>(url(`/api/admin/articles/${id}`)),
+      request<AdminArticleDetail>(url(`/api/admin/articles/${encodeURIComponent(id)}`)),
+    articleLLMCalls: (id: string, params: AdminTableQuery = {}) =>
+      request<PageResponse<LLMCall>>(
+        url(withQuery(`/api/admin/articles/${encodeURIComponent(id)}/llm-calls`, params))
+      ),
+    deleteArticleLLMCall: (articleId: string, callId: number) =>
+      request<{ ok: boolean }>(
+        url(`/api/admin/articles/${encodeURIComponent(articleId)}/llm-calls/${callId}`),
+        { method: "DELETE" }
+      ),
     runArticlePipeline: (id: string, step = "") =>
       request<{ ok: boolean }>(url(`/api/admin/articles/${id}/pipeline/run`), {
         method: "POST",
