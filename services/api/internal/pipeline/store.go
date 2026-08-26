@@ -94,7 +94,7 @@ func (store *Store) start(ctx context.Context, articleID, trigger, selectedStep 
 	var runID string
 	insertRun := `
 		INSERT INTO article_pipeline_runs (article_id, trigger, provider_id, provider_model)
-		SELECT article.id, $2, NULLIF($4, ''), NULLIF($5, '')
+		SELECT article.id, $2, NULLIF($3, ''), NULLIF($4, '')
 		FROM articles article
 		JOIN source_compliance_reviews compliance
 		  ON compliance.source_id = article.source_id AND compliance.active
@@ -108,7 +108,7 @@ func (store *Store) start(ctx context.Context, articleID, trigger, selectedStep 
 	if rejectActive {
 		insertRun = `
 			INSERT INTO article_pipeline_runs (article_id, trigger, provider_id, provider_model)
-			SELECT article.id, $2, NULLIF($4, ''), NULLIF($5, '')
+			SELECT article.id, $2, NULLIF($3, ''), NULLIF($4, '')
 			FROM articles article
 			JOIN source_compliance_reviews compliance
 			  ON compliance.source_id = article.source_id AND compliance.active
@@ -119,7 +119,7 @@ func (store *Store) start(ctx context.Context, articleID, trigger, selectedStep 
 			RETURNING id::text
 		`
 	}
-	err = tx.QueryRow(ctx, insertRun, articleID, trigger, selectedStep, selection.provider, selection.model).Scan(&runID)
+	err = tx.QueryRow(ctx, insertRun, articleID, trigger, selection.provider, selection.model).Scan(&runID)
 	if err == pgx.ErrNoRows {
 		if rejectActive {
 			return "", fmt.Errorf("article pipeline is already active or AI processing is not approved")
