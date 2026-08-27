@@ -25,8 +25,48 @@ The `production` environment needs these secrets:
 
 Application and database secrets are deliberately not copied through GitHub Actions. They are provisioned once in `/opt/lanka-news-paper/.env` with mode `0600`.
 
+Keep `SNAP_BOOTSTRAP_ADMIN_PASSWORD_HASH` inside single quotes in that file.
+Bcrypt hashes contain `$`, which Docker Compose otherwise treats as environment
+variable interpolation.
+
 `OPENROUTER_API_KEY` must be present in that file. Both API and worker containers
 receive it; the database stores only the environment-variable reference.
+
+### Morning newsletter
+
+The administrator mailing list is stored in PostgreSQL and managed from the
+admin application's **Mailing list** page. Configure delivery in
+`/opt/lanka-news-paper/.env`:
+
+The complete selection, writing, safety, and retry policy is documented in
+[`docs/newsletter.md`](newsletter.md).
+
+```dotenv
+RESEND_API_KEY=<sending-only Resend API key>
+SNAP_NEWSLETTER_ENABLED=true
+SNAP_NEWSLETTER_BASE_URL=https://lankanewspaper.prabhavalabs.com
+SNAP_NEWSLETTER_FROM="Morning Brief <brief@prabhavalabs.com>"
+SNAP_NEWSLETTER_RECIPIENT=<optional initial address, imported only once>
+SNAP_NEWSLETTER_TIMEZONE=Asia/Colombo
+SNAP_NEWSLETTER_SEND_HOUR=8
+```
+
+Only recipients with `active` status are sent the prior 24-hour brief. The
+worker records one edition per local calendar day and one idempotent delivery
+per recipient, so restarts cannot duplicate an already-sent edition. Every
+message includes web and one-click unsubscribe links.
+
+Resend's sending domain must remain verified. Publish SPF and DKIM exactly as
+shown by Resend, and publish this TXT record at `_dmarc.prabhavalabs.com`:
+
+```text
+v=DMARC1; p=none; rua=mailto:marc-reports@prabhavalabs.com; adkim=r; aspf=r; pct=100
+```
+
+The DNS value must contain a literal `@`, without a backslash. Ensure
+`marc-reports@prabhavalabs.com` is a real mailbox or forwarding alias so the
+aggregate reports are received. Begin with `p=none`; move to quarantine or
+reject only after the reports show that all legitimate senders align.
 
 ## Codex CLI administrative backfills
 

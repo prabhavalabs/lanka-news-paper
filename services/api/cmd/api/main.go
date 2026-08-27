@@ -23,6 +23,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/jobs"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/media"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/newsletter"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
@@ -93,6 +94,16 @@ func run(logger *slog.Logger) error {
 		return jobs.EnqueueContent(ctx, producer, articleID)
 	})
 	news := publish.NewStore(pool)
+	newsletterStore := newsletter.NewStore(pool)
+	if err := newsletterStore.SyncSettings(processContext, newsletter.Settings{
+		Enabled: loaded.Newsletter.Enabled, Timezone: loaded.Newsletter.Timezone,
+		SendHour: loaded.Newsletter.SendHour,
+	}); err != nil {
+		return err
+	}
+	if err := newsletterStore.ImportConfiguredRecipient(processContext, loaded.Newsletter.ConfiguredRecipient); err != nil {
+		return err
+	}
 	deskStore := desk.NewStore(pool)
 	monitorBroker := desk.NewMonitorBroker(processContext, pool, logger)
 	mediaStore, err := media.New(processContext, media.Config{
@@ -120,6 +131,7 @@ func run(logger *slog.Logger) error {
 			Media:          mediaStore,
 			Monitor:        monitorBroker,
 			News:           news,
+			Newsletter:     newsletterStore,
 			Poller:         poller,
 			Registry:       registry.NewStore(pool),
 			RunContentBackfill: func(ctx context.Context) error {

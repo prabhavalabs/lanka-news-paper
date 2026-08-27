@@ -100,6 +100,7 @@ const kindLabels: Record<string, string> = {
   'admin.article.analysis': 'Administrative article analysis',
   'ingest.poll': 'Source polling',
   'brief.daily': 'Daily brief',
+  'newsletter.daily': 'Morning newsletter',
   'intelligence.narration': 'Narration sweep',
   'queue.history.cleanup': 'Queue history cleanup',
 }
@@ -125,12 +126,14 @@ export function JobsPage() {
       window,
     }),
     placeholderData: keepPreviousData,
+    enabled: false,
     refetchOnWindowFocus: false,
     staleTime: Number.POSITIVE_INFINITY,
   })
   const cron = useQuery({
     queryKey: ['cron-jobs'],
     queryFn: () => client.cronJobs(),
+    enabled: false,
     refetchOnWindowFocus: false,
     staleTime: Number.POSITIVE_INFINITY,
   })

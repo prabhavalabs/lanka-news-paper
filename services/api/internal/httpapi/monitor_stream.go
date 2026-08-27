@@ -74,7 +74,7 @@ func parseQueueMonitorQuery(request *http.Request) (queueMonitorQuery, error) {
 	if err != nil {
 		return queueMonitorQuery{}, err
 	}
-	kind, err := parseFilter(request, "kind", "article.pipeline", "article.content", "article.content.backfill", "article.content.cleanup", "article.pipeline.dispatch", "admin.analysis.backfill.dispatch", "admin.article.analysis", "ingest.poll", "brief.daily", "intelligence.narration", "queue.history.cleanup")
+	kind, err := parseFilter(request, "kind", "article.pipeline", "article.content", "article.content.backfill", "article.content.cleanup", "article.pipeline.dispatch", "admin.analysis.backfill.dispatch", "admin.article.analysis", "ingest.poll", "brief.daily", "newsletter.daily", "intelligence.narration", "queue.history.cleanup")
 	if err != nil {
 		return queueMonitorQuery{}, err
 	}

@@ -772,6 +772,41 @@ export type WatchTowerSettings = {
   updated_at: string;
 };
 
+export type NewsletterSubscriberStatus = "active" | "paused" | "unsubscribed";
+
+export type NewsletterSubscriber = {
+  id: string;
+  email: string;
+  name: string;
+  status: NewsletterSubscriberStatus;
+  consent_source: string;
+  consented_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type NewsletterSubscriberInput = {
+  email: string;
+  name: string;
+  status: NewsletterSubscriberStatus;
+  consent_confirmed?: boolean;
+};
+
+export type NewsletterSubscriberList = {
+  items: NewsletterSubscriber[];
+  summary: {
+    total: number;
+    active: number;
+    paused: number;
+    unsubscribed: number;
+  };
+  settings: {
+    enabled: boolean;
+    timezone: string;
+    send_hour: number;
+  };
+};
+
 export type AdminTableQuery = {
   page?: number;
   per_page?: number;
@@ -1135,6 +1170,23 @@ export function createClient(baseUrl = "") {
       request<WatchTowerSettings>(url("/api/admin/settings/watch-tower"), {
         method: "POST",
         body: JSON.stringify(body)
-      })
+      }),
+    newsletterSubscribers: () =>
+      request<NewsletterSubscriberList>(url("/api/admin/newsletter/subscribers")),
+    createNewsletterSubscriber: (body: NewsletterSubscriberInput) =>
+      request<NewsletterSubscriber>(url("/api/admin/newsletter/subscribers"), {
+        method: "POST",
+        body: JSON.stringify(body)
+      }),
+    updateNewsletterSubscriber: (id: string, body: NewsletterSubscriberInput) =>
+      request<NewsletterSubscriber>(
+        url(`/api/admin/newsletter/subscribers/${encodeURIComponent(id)}`),
+        { method: "POST", body: JSON.stringify(body) }
+      ),
+    deleteNewsletterSubscriber: (id: string) =>
+      request<{ ok: boolean }>(
+        url(`/api/admin/newsletter/subscribers/${encodeURIComponent(id)}`),
+        { method: "DELETE" }
+      )
   };
 }

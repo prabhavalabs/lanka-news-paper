@@ -3,6 +3,7 @@ import {
   LayoutDashboardIcon,
   ListTreeIcon,
   ListChecksIcon,
+  MailIcon,
   MessageSquareWarningIcon,
   NetworkIcon,
   NewspaperIcon,
@@ -38,6 +39,7 @@ const navigation: NavItem[] = [
 ]
 
 const administratorNavigation: NavItem[] = [
+  { title: 'Mailing list', url: '/mailing-list', icon: MailIcon },
   { title: 'Settings', url: '/settings', icon: SettingsIcon },
 ]
 

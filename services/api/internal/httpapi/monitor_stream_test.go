@@ -130,3 +130,12 @@ func TestQueueMonitorAcceptsAdministrativeAnalysisFilters(t *testing.T) {
 	require.Equal(t, "admin-analysis", query.Queue)
 	require.Equal(t, "admin.article.analysis", query.Kind)
 }
+
+func TestQueueMonitorAcceptsNewsletterFilter(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/jobs?kind=newsletter.daily", nil)
+
+	query, err := parseQueueMonitorQuery(request)
+
+	require.NoError(t, err)
+	require.Equal(t, "newsletter.daily", query.Kind)
+}

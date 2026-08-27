@@ -11,6 +11,7 @@ const titles: Record<string, string> = {
   '/complaints': 'Complaints',
   '/routing': 'AI & routing',
   '/watch-tower': 'Watch Tower',
+  '/mailing-list': 'Mailing list',
 }
 
 export function SiteHeader() {

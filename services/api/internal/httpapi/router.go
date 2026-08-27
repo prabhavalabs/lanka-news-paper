@@ -11,6 +11,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/media"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/newsletter"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/registry"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/watchtower"
@@ -27,6 +28,7 @@ type Dependencies struct {
 	Media                       *media.Store
 	Monitor                     *desk.MonitorBroker
 	News                        *publish.Store
+	Newsletter                  newsletter.Repository
 	Poller                      *ingest.Poller
 	Registry                    *registry.Store
 	RunPipeline                 func(context.Context, string, string) error
@@ -46,6 +48,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	auth := newAuthHandler(dependencies.IAM, dependencies.SessionTTL, dependencies.CookieSecure)
 	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk, monitor: newMonitorService(dependencies.Desk, dependencies.Monitor), media: dependencies.Media, adminAnalysis: dependencies.AdminAnalysis, runPipeline: dependencies.RunPipeline, runContentBackfill: dependencies.RunContentBackfill, runAdminAnalysisBackfill: dependencies.RunAdminAnalysisBackfill, pauseAdminAnalysisBackfill: dependencies.PauseAdminAnalysisBackfill, resumeAdminAnalysisBackfill: dependencies.ResumeAdminAnalysisBackfill, cancelAdminAnalysisBackfill: dependencies.CancelAdminAnalysisBackfill}
 	watchTower := watchTowerHandler{service: dependencies.WatchTower}
+	newsletterAdmin := newsletterAdminHandler{repository: dependencies.Newsletter}
+	newsletterPublic := newsletterUnsubscribeHandler{repository: dependencies.Newsletter}
 
 	mux.HandleFunc("GET /api/v1/health/live", health.liveness)
 	mux.HandleFunc("GET /api/v1/health/ready", health.readiness)
@@ -61,6 +65,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/breaking", news.breaking)
 	mux.HandleFunc("GET /api/v1/brief", news.brief)
 	mux.HandleFunc("POST /api/v1/complaints", news.complain)
+	mux.HandleFunc("GET /api/v1/newsletter/unsubscribe/{token}", newsletterPublic.unsubscribe)
+	mux.HandleFunc("POST /api/v1/newsletter/unsubscribe/{token}", newsletterPublic.unsubscribe)
 	mux.Handle("POST /api/admin/login", withCSRF(http.HandlerFunc(auth.login)))
 	mux.Handle("POST /api/admin/logout", withCSRF(http.HandlerFunc(auth.logout)))
 
@@ -130,6 +136,10 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("POST /api/admin/watch-tower/threads/{id}/messages", watchTower.messages)
 	protected.HandleFunc("GET /api/admin/settings/watch-tower", watchTower.settings)
 	protected.HandleFunc("POST /api/admin/settings/watch-tower", watchTower.settings)
+	protected.HandleFunc("GET /api/admin/newsletter/subscribers", newsletterAdmin.subscribers)
+	protected.HandleFunc("POST /api/admin/newsletter/subscribers", newsletterAdmin.subscribers)
+	protected.HandleFunc("POST /api/admin/newsletter/subscribers/{id}", newsletterAdmin.subscriber)
+	protected.HandleFunc("DELETE /api/admin/newsletter/subscribers/{id}", newsletterAdmin.subscriber)
 	mux.Handle("/api/admin/", withCSRF(auth.requireAuth(protected)))
 
 	return withRecovery(withRequestID(withSecurityHeaders(withCORS(http.MaxBytesHandler(mux, 1<<20), dependencies.AllowedOrigins))))

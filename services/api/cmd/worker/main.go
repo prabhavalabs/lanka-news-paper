@@ -17,6 +17,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/jobs"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/newsletter"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
@@ -67,8 +68,32 @@ func run(logger *slog.Logger) error {
 		pipeline.WithAdminProviderSort(os.Getenv("SNAP_ADMIN_ANALYSIS_PROVIDER_SORT")),
 	)
 	contentStore := content.NewStore(pool)
+	newsletterStore := newsletter.NewStore(pool)
+	if err := newsletterStore.SyncSettings(processContext, newsletter.Settings{
+		Enabled: loaded.Newsletter.Enabled, Timezone: loaded.Newsletter.Timezone,
+		SendHour: loaded.Newsletter.SendHour,
+	}); err != nil {
+		return err
+	}
+	if err := newsletterStore.ImportConfiguredRecipient(processContext, loaded.Newsletter.ConfiguredRecipient); err != nil {
+		return err
+	}
+	newsletterLocation, err := time.LoadLocation(loaded.Newsletter.Timezone)
+	if err != nil {
+		return fmt.Errorf("load newsletter timezone: %w", err)
+	}
+	newsletterService := newsletter.NewService(
+		newsletterStore,
+		newsletter.NewResendSender(loaded.Newsletter.ResendAPIKey, nil),
+		newsletter.RuntimeConfig{
+			BaseURL: loaded.Newsletter.BaseURL, Enabled: loaded.Newsletter.Enabled,
+			From: loaded.Newsletter.From, Location: newsletterLocation,
+			SendHour: loaded.Newsletter.SendHour,
+		},
+		time.Now,
+	)
 	poller := ingest.NewPoller(pool, logger, clusters)
-	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news, adminAnalysis)
+	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news, newsletterService, adminAnalysis)
 	if err != nil {
 		return err
 	}

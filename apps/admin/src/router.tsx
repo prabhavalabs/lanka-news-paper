@@ -5,6 +5,7 @@ import { ArticleDetailPage } from './pages/article-detail-page'
 import { ArticlesPage } from './pages/articles-page'
 import { DashboardPage } from './pages/dashboard-page'
 import { LoginPage } from './pages/login-page'
+import { MailingListPage } from './pages/mailing-list-page'
 import { KnowledgeGraphPage } from './pages/knowledge-graph-page'
 import { JobsPage } from './pages/jobs-page'
 import { QueuePage } from './pages/queue-page'
@@ -37,6 +38,7 @@ export const router = createBrowserRouter([
       { path: 'routing', element: <RoutingPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: 'watch-tower', element: <WatchTowerPage /> },
+      { path: 'mailing-list', element: <MailingListPage /> },
     ],
   },
   { path: '*', element: <NotFoundPage />, errorElement: <RouteErrorPage /> },

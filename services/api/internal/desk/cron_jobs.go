@@ -125,7 +125,10 @@ func (store *Store) CronJobs(ctx context.Context) (CronMonitor, error) {
 		}
 		scheduleAnchor := cronScheduleAnchor(recent.createdAt, worker.ElectedAt, metadata.RunOnStart)
 		var nextRunAt *time.Time
-		if scheduleAnchor != nil {
+		if metadata.Schedule != nil {
+			next := metadata.Schedule.Next(now)
+			nextRunAt = &next
+		} else if scheduleAnchor != nil {
 			next := scheduleAnchor.Add(metadata.Interval)
 			nextRunAt = &next
 		}
@@ -205,7 +208,7 @@ func (store *Store) cronHistory(ctx context.Context, kinds []string) (map[string
 		       history.runs_24h,
 		       history.successful_runs_24h,
 		       history.failed_runs_24h,
-		       history.currently_running,
+		       active.currently_running,
 		       history.average_duration_ms
 		FROM kinds
 		LEFT JOIN LATERAL (
@@ -227,26 +230,26 @@ func (store *Store) cronHistory(ctx context.Context, kinds []string) (map[string
 			LIMIT 1
 		) AS latest ON true
 		LEFT JOIN LATERAL (
-			SELECT count(*) FILTER (
-			         WHERE job.created_at >= clock_timestamp() - make_interval(secs => $2)
-			       )::integer AS runs_24h,
+			SELECT count(*)::integer AS runs_24h,
 			       count(*) FILTER (
-			         WHERE job.created_at >= clock_timestamp() - make_interval(secs => $2)
-			           AND job.state = 'completed'
+			         WHERE job.state = 'completed'
 			       )::integer AS successful_runs_24h,
 			       count(*) FILTER (
-			         WHERE job.created_at >= clock_timestamp() - make_interval(secs => $2)
-			           AND job.state IN ('discarded', 'cancelled')
+			         WHERE job.state IN ('discarded', 'cancelled')
 			       )::integer AS failed_runs_24h,
-			       count(*) FILTER (WHERE job.state = 'running')::integer AS currently_running,
 			       (avg(extract(epoch FROM job.finalized_at - job.attempted_at) * 1000) FILTER (
-			         WHERE job.created_at >= clock_timestamp() - make_interval(secs => $2)
-			           AND job.attempted_at IS NOT NULL
+			         WHERE job.attempted_at IS NOT NULL
 			           AND job.finalized_at IS NOT NULL
 			       ))::bigint AS average_duration_ms
 			FROM river_job AS job
 			WHERE job.kind = kinds.kind
+			  AND job.created_at >= clock_timestamp() - make_interval(secs => $2)
 		) AS history ON true
+		LEFT JOIN LATERAL (
+			SELECT count(*)::integer AS currently_running
+			FROM river_job AS job
+			WHERE job.kind = kinds.kind AND job.state = 'running'
+		) AS active ON true
 		ORDER BY kinds.position
 	`, kinds, int64(cronHistoryWindow.Seconds()))
 	if err != nil {

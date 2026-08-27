@@ -106,6 +106,9 @@ WITH pipeline_entries AS (
            count(*) FILTER (WHERE step.status IN ('succeeded', 'skipped'))::integer AS terminal
     FROM article_pipeline_steps step WHERE step.run_id = run.id
   ) states
+	WHERE ($3 = '' OR $3 = 'article.pipeline')
+	  AND ($4::timestamptz IS NULL OR run.created_at >= $4)
+	  AND ($2 = '' OR COALESCE(job.queue, 'analysis') = $2)
 ), generic_entries AS (
   SELECT
     'river:' || job.id::text AS id,
@@ -121,6 +124,7 @@ WITH pipeline_entries AS (
 	  WHEN 'admin.analysis.backfill.dispatch' THEN 'Dispatch administrative AI backfill'
 	  WHEN 'admin.article.analysis' THEN COALESCE(generic_article.headline, 'Analyze article')
       WHEN 'brief.daily' THEN 'Generate daily news brief'
+	  WHEN 'newsletter.daily' THEN 'Send morning newsletter'
       WHEN 'intelligence.narration' THEN 'Run narration intelligence sweep'
       WHEN 'queue.history.cleanup' THEN 'Delete expired queue history'
       ELSE job.kind
@@ -155,6 +159,9 @@ WITH pipeline_entries AS (
 	  ON generic_article.id = NULLIF(job.args->>'article_id', '')::uuid
 	LEFT JOIN sources generic_source ON generic_source.id = generic_article.source_id
   WHERE job.kind <> 'article.pipeline'
+	AND ($3 = '' OR job.kind = $3)
+	AND ($4::timestamptz IS NULL OR job.created_at >= $4)
+	AND ($2 = '' OR job.queue = $2)
 ), entries AS (
   SELECT * FROM pipeline_entries
   UNION ALL
@@ -165,31 +172,24 @@ WITH pipeline_entries AS (
 const queueScope = `
 WHERE ($1 = '' OR title ILIKE '%' || $1 || '%' OR COALESCE(source, '') ILIKE '%' || $1 || '%'
        OR id ILIKE '%' || $1 || '%' OR kind ILIKE '%' || $1 || '%')
-  AND ($2 = '' OR queue = $2)
-  AND ($3 = '' OR kind = $3)
-  AND ($4::timestamptz IS NULL OR created_at >= $4)
 `
 
 func (store *Store) QueueJobs(ctx context.Context, params pagination.Params, status, queue, kind string, since *time.Time) (QueueMonitor, error) {
 	var summary QueueSummary
+	var total int
 	if err := store.pool.QueryRow(ctx, queueEntries+`
 		SELECT count(*),
 		       count(*) FILTER (WHERE status = 'queued'),
 		       count(*) FILTER (WHERE status = 'processing'),
 		       count(*) FILTER (WHERE status = 'completed'),
 		       count(*) FILTER (WHERE status = 'partially_completed'),
-		       count(*) FILTER (WHERE status = 'failed')
-		FROM entries `+queueScope, params.Search, queue, kind, since).Scan(
+		       count(*) FILTER (WHERE status = 'failed'),
+		       count(*) FILTER (WHERE $5 = '' OR status = $5)
+		FROM entries `+queueScope, params.Search, queue, kind, since, status).Scan(
 		&summary.Total, &summary.Queued, &summary.Processing, &summary.Completed,
-		&summary.PartiallyCompleted, &summary.Failed,
+		&summary.PartiallyCompleted, &summary.Failed, &total,
 	); err != nil {
 		return QueueMonitor{}, fmt.Errorf("summarize queue jobs: %w", err)
-	}
-
-	var total int
-	if err := store.pool.QueryRow(ctx, queueEntries+`SELECT count(*) FROM entries `+queueScope+`
-		AND ($5 = '' OR status = $5)`, params.Search, queue, kind, since, status).Scan(&total); err != nil {
-		return QueueMonitor{}, fmt.Errorf("count queue jobs: %w", err)
 	}
 
 	rows, err := store.pool.Query(ctx, queueEntries+`

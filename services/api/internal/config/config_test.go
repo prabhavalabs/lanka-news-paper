@@ -63,3 +63,48 @@ func TestBlockInSharedDevelopment(t *testing.T) {
 	require.ErrorContains(t, loaded.BlockInSharedDevelopment("worker"), "worker is disabled")
 	require.NoError(t, Config{Environment: "production"}.BlockInSharedDevelopment("worker"))
 }
+
+func TestLoadUsesDisabledNewsletterByDefault(t *testing.T) {
+	loaded, err := Load(func(key string) string {
+		if key == "SNAP_DATABASE_URL" {
+			return "postgres://snap:snap@127.0.0.1:55432/snap?sslmode=disable"
+		}
+		return ""
+	})
+
+	require.NoError(t, err)
+	require.False(t, loaded.Newsletter.Enabled)
+	require.Equal(t, "Asia/Colombo", loaded.Newsletter.Timezone)
+	require.Equal(t, 8, loaded.Newsletter.SendHour)
+}
+
+func TestLoadNewsletterConfiguration(t *testing.T) {
+	values := map[string]string{
+		"SNAP_DATABASE_URL":         "postgres://snap:snap@127.0.0.1:55432/snap?sslmode=disable",
+		"SNAP_NEWSLETTER_ENABLED":   "true",
+		"SNAP_NEWSLETTER_BASE_URL":  "https://news.example.com",
+		"SNAP_NEWSLETTER_FROM":      "Morning Brief <brief@example.com>",
+		"SNAP_NEWSLETTER_RECIPIENT": "reader@example.com",
+		"SNAP_NEWSLETTER_TIMEZONE":  "Asia/Colombo",
+		"SNAP_NEWSLETTER_SEND_HOUR": "8",
+		"RESEND_API_KEY":            "re_test",
+	}
+	loaded, err := Load(func(key string) string { return values[key] })
+
+	require.NoError(t, err)
+	require.True(t, loaded.Newsletter.Enabled)
+	require.Equal(t, "re_test", loaded.Newsletter.ResendAPIKey)
+	require.Equal(t, "reader@example.com", loaded.Newsletter.ConfiguredRecipient)
+}
+
+func TestLoadNewsletterRejectsMissingSender(t *testing.T) {
+	values := map[string]string{
+		"SNAP_DATABASE_URL":        "postgres://snap:snap@127.0.0.1:55432/snap?sslmode=disable",
+		"SNAP_NEWSLETTER_ENABLED":  "true",
+		"SNAP_NEWSLETTER_BASE_URL": "https://news.example.com",
+		"RESEND_API_KEY":           "re_test",
+	}
+	_, err := Load(func(key string) string { return values[key] })
+
+	require.ErrorContains(t, err, "SNAP_NEWSLETTER_FROM")
+}

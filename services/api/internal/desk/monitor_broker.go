@@ -13,8 +13,8 @@ const (
 	queueMonitorChannel       = "queue_monitor_changed"
 	monitorHealthInterval     = 15 * time.Second
 	monitorListenerRetryDelay = time.Second
-	monitorQuietWindow        = 250 * time.Millisecond
-	monitorMaximumDelay       = 2 * time.Second
+	monitorQuietWindow        = time.Second
+	monitorMaximumDelay       = 5 * time.Second
 )
 
 // MonitorBroker fans database change notifications out to every active SSE stream.

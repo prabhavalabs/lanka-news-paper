@@ -20,7 +20,7 @@ func TestQueueHistoryCutoff(t *testing.T) {
 func TestPeriodicJobCatalog(t *testing.T) {
 	catalog := PeriodicJobCatalog()
 
-	require.Len(t, catalog, 5)
+	require.Len(t, catalog, 6)
 	require.Equal(t, "ingest.poll", catalog[0].Kind)
 	require.Equal(t, time.Minute, catalog[0].Interval)
 	require.True(t, catalog[0].RunOnStart)
@@ -30,12 +30,35 @@ func TestPeriodicJobCatalog(t *testing.T) {
 	require.Equal(t, "brief.daily", catalog[2].Kind)
 	require.Equal(t, time.Hour, catalog[2].Interval)
 	require.False(t, catalog[2].RunOnStart)
-	require.Equal(t, "queue.history.cleanup", catalog[3].Kind)
+	require.Equal(t, "newsletter.daily", catalog[3].Kind)
 	require.Equal(t, 24*time.Hour, catalog[3].Interval)
-	require.True(t, catalog[3].RunOnStart)
-	require.Equal(t, "article.content.cleanup", catalog[4].Kind)
+	require.False(t, catalog[3].RunOnStart)
+	require.Equal(t, "queue.history.cleanup", catalog[4].Kind)
 	require.Equal(t, 24*time.Hour, catalog[4].Interval)
 	require.True(t, catalog[4].RunOnStart)
+	require.Equal(t, "article.content.cleanup", catalog[5].Kind)
+	require.Equal(t, 24*time.Hour, catalog[5].Interval)
+	require.True(t, catalog[5].RunOnStart)
+}
+
+func TestDailyScheduleTargetsEightInColombo(t *testing.T) {
+	location, err := time.LoadLocation("Asia/Colombo")
+	require.NoError(t, err)
+	schedule := newDailyAtSchedule(location, 8)
+
+	next := schedule.Next(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
+
+	require.Equal(t, time.Date(2026, 8, 27, 8, 0, 0, 0, location), next)
+}
+
+func TestDailyScheduleAdvancesAfterEightInColombo(t *testing.T) {
+	location, err := time.LoadLocation("Asia/Colombo")
+	require.NoError(t, err)
+	schedule := newDailyAtSchedule(location, 8)
+
+	next := schedule.Next(time.Date(2026, 8, 27, 3, 0, 0, 0, time.UTC))
+
+	require.Equal(t, time.Date(2026, 8, 28, 8, 0, 0, 0, location), next)
 }
 
 func TestQueueCatalog(t *testing.T) {

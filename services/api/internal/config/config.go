@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/mail"
 	"net/url"
 	"os"
 	"strconv"
@@ -25,6 +26,7 @@ type Config struct {
 	Environment                string
 	MediaLocalDirectory        string
 	MigrationsPath             string
+	Newsletter                 NewsletterConfig
 	R2AccessKeyID              string
 	R2AccountID                string
 	R2Bucket                   string
@@ -33,6 +35,16 @@ type Config struct {
 	SessionSecret              string
 	SessionTTL                 time.Duration
 	ShutdownTimeout            time.Duration
+}
+
+type NewsletterConfig struct {
+	BaseURL             string
+	ConfiguredRecipient string
+	Enabled             bool
+	From                string
+	ResendAPIKey        string
+	SendHour            int
+	Timezone            string
 }
 
 func (config Config) BlockInSharedDevelopment(process string) error {
@@ -93,6 +105,10 @@ func Load(lookup LookupFunc) (Config, error) {
 	if r2ConfiguredValues != 0 && r2ConfiguredValues != 4 {
 		return Config{}, fmt.Errorf("configure all SNAP_R2_* values or leave all of them empty")
 	}
+	newsletter, err := loadNewsletterConfig(lookup)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		Address:                    valueOrDefault(lookup("SNAP_API_ADDRESS"), defaultAddress),
@@ -103,6 +119,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		Environment:                environment,
 		MediaLocalDirectory:        valueOrDefault(lookup("SNAP_MEDIA_LOCAL_DIR"), ".data/media"),
 		MigrationsPath:             valueOrDefault(lookup("SNAP_MIGRATIONS_PATH"), "migrations"),
+		Newsletter:                 newsletter,
 		R2AccessKeyID:              r2AccessKeyID,
 		R2AccountID:                r2AccountID,
 		R2Bucket:                   r2Bucket,
@@ -112,6 +129,54 @@ func Load(lookup LookupFunc) (Config, error) {
 		SessionTTL:                 defaultSessionTTL,
 		ShutdownTimeout:            shutdownTimeout,
 	}, nil
+}
+
+func loadNewsletterConfig(lookup LookupFunc) (NewsletterConfig, error) {
+	configured := NewsletterConfig{
+		BaseURL:             strings.TrimRight(strings.TrimSpace(lookup("SNAP_NEWSLETTER_BASE_URL")), "/"),
+		ConfiguredRecipient: strings.ToLower(strings.TrimSpace(lookup("SNAP_NEWSLETTER_RECIPIENT"))),
+		From:                strings.TrimSpace(lookup("SNAP_NEWSLETTER_FROM")),
+		ResendAPIKey:        strings.TrimSpace(lookup("RESEND_API_KEY")),
+		SendHour:            8,
+		Timezone:            valueOrDefault(lookup("SNAP_NEWSLETTER_TIMEZONE"), "Asia/Colombo"),
+	}
+	if enabled := strings.TrimSpace(lookup("SNAP_NEWSLETTER_ENABLED")); enabled != "" {
+		parsed, err := strconv.ParseBool(enabled)
+		if err != nil {
+			return NewsletterConfig{}, fmt.Errorf("parse SNAP_NEWSLETTER_ENABLED: expected true or false")
+		}
+		configured.Enabled = parsed
+	}
+	if hour := strings.TrimSpace(lookup("SNAP_NEWSLETTER_SEND_HOUR")); hour != "" {
+		parsed, err := strconv.Atoi(hour)
+		if err != nil || parsed < 0 || parsed > 23 {
+			return NewsletterConfig{}, fmt.Errorf("parse SNAP_NEWSLETTER_SEND_HOUR: expected an hour from 0 to 23")
+		}
+		configured.SendHour = parsed
+	}
+	if _, err := time.LoadLocation(configured.Timezone); err != nil {
+		return NewsletterConfig{}, fmt.Errorf("parse SNAP_NEWSLETTER_TIMEZONE: unknown timezone")
+	}
+	if !configured.Enabled {
+		return configured, nil
+	}
+	if configured.ResendAPIKey == "" {
+		return NewsletterConfig{}, fmt.Errorf("RESEND_API_KEY is required when the newsletter is enabled")
+	}
+	if address, err := mail.ParseAddress(configured.From); err != nil || address.Address == "" {
+		return NewsletterConfig{}, fmt.Errorf("SNAP_NEWSLETTER_FROM must be a valid sender address")
+	}
+	parsedBaseURL, err := url.Parse(configured.BaseURL)
+	if err != nil || parsedBaseURL.Scheme != "https" || parsedBaseURL.Host == "" {
+		return NewsletterConfig{}, fmt.Errorf("SNAP_NEWSLETTER_BASE_URL must be an HTTPS URL")
+	}
+	if configured.ConfiguredRecipient != "" {
+		address, err := mail.ParseAddress(configured.ConfiguredRecipient)
+		if err != nil || address.Address != configured.ConfiguredRecipient {
+			return NewsletterConfig{}, fmt.Errorf("SNAP_NEWSLETTER_RECIPIENT must be a valid email")
+		}
+	}
+	return configured, nil
 }
 
 func parseAllowedOrigins(value string) ([]string, error) {

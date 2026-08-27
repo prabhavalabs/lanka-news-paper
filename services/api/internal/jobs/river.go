@@ -20,6 +20,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/adminanalysis"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/content"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/newsletter"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 )
@@ -365,6 +366,36 @@ type BriefWorker struct {
 	News *publish.Store
 }
 
+type NewsletterArgs struct{}
+
+func (NewsletterArgs) Kind() string { return "newsletter.daily" }
+
+func (NewsletterArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{MaxAttempts: 5, UniqueOpts: river.UniqueOpts{ByQueue: true, ByState: []rivertype.JobState{
+		rivertype.JobStateAvailable,
+		rivertype.JobStatePending,
+		rivertype.JobStateRunning,
+		rivertype.JobStateScheduled,
+		rivertype.JobStateRetryable,
+	}}}
+}
+
+type NewsletterWorker struct {
+	river.WorkerDefaults[NewsletterArgs]
+	Newsletter *newsletter.Service
+}
+
+func (worker *NewsletterWorker) Work(ctx context.Context, _ *river.Job[NewsletterArgs]) error {
+	if worker.Newsletter == nil {
+		return nil
+	}
+	return worker.Newsletter.SendDaily(ctx)
+}
+
+func (worker *NewsletterWorker) Timeout(*river.Job[NewsletterArgs]) time.Duration {
+	return 10 * time.Minute
+}
+
 func (worker *BriefWorker) Work(ctx context.Context, _ *river.Job[BriefArgs]) error {
 	if worker.News == nil {
 		return nil
@@ -422,6 +453,7 @@ type PeriodicJobMetadata struct {
 	Queue       string
 	Interval    time.Duration
 	RunOnStart  bool
+	Schedule    river.PeriodicSchedule
 }
 
 type periodicJobDefinition struct {
@@ -429,7 +461,32 @@ type periodicJobDefinition struct {
 	Constructor func() (river.JobArgs, *river.InsertOpts)
 }
 
-func periodicJobDefinitions() []periodicJobDefinition {
+type dailyAtSchedule struct {
+	location *time.Location
+	hour     int
+}
+
+func newDailyAtSchedule(location *time.Location, hour int) river.PeriodicSchedule {
+	if location == nil {
+		location = time.UTC
+	}
+	return &dailyAtSchedule{location: location, hour: hour}
+}
+
+func (schedule *dailyAtSchedule) Next(current time.Time) time.Time {
+	local := current.In(schedule.location)
+	next := time.Date(local.Year(), local.Month(), local.Day(), schedule.hour, 0, 0, 0, schedule.location)
+	if !next.After(local) {
+		next = next.AddDate(0, 0, 1)
+	}
+	return next
+}
+
+func periodicJobDefinitions(newsletterSchedule ...river.PeriodicSchedule) []periodicJobDefinition {
+	dailyNewsletterSchedule := newDailyAtSchedule(time.FixedZone("Asia/Colombo", 5*3600+30*60), 8)
+	if len(newsletterSchedule) > 0 && newsletterSchedule[0] != nil {
+		dailyNewsletterSchedule = newsletterSchedule[0]
+	}
 	return []periodicJobDefinition{
 		{
 			PeriodicJobMetadata: PeriodicJobMetadata{
@@ -462,6 +519,18 @@ func periodicJobDefinitions() []periodicJobDefinition {
 				Interval:    time.Hour,
 			},
 			Constructor: func() (river.JobArgs, *river.InsertOpts) { return BriefArgs{}, nil },
+		},
+		{
+			PeriodicJobMetadata: PeriodicJobMetadata{
+				Kind:        NewsletterArgs{}.Kind(),
+				Name:        "Morning newsletter",
+				Description: "Builds and sends the previous 24 hours of news to active recipients.",
+				Queue:       river.QueueDefault,
+				Interval:    24 * time.Hour,
+				RunOnStart:  false,
+				Schedule:    dailyNewsletterSchedule,
+			},
+			Constructor: func() (river.JobArgs, *river.InsertOpts) { return NewsletterArgs{}, nil },
 		},
 		{
 			PeriodicJobMetadata: PeriodicJobMetadata{
@@ -498,12 +567,20 @@ func PeriodicJobCatalog() []PeriodicJobMetadata {
 	return catalog
 }
 
-func configuredPeriodicJobs() []*river.PeriodicJob {
-	definitions := periodicJobDefinitions()
+func configuredPeriodicJobs(newsletterService *newsletter.Service) []*river.PeriodicJob {
+	var newsletterSchedule river.PeriodicSchedule
+	if newsletterService != nil {
+		newsletterSchedule = newDailyAtSchedule(newsletterService.Location(), newsletterService.SendHour())
+	}
+	definitions := periodicJobDefinitions(newsletterSchedule)
 	configured := make([]*river.PeriodicJob, 0, len(definitions))
 	for _, definition := range definitions {
+		schedule := definition.Schedule
+		if schedule == nil {
+			schedule = river.PeriodicInterval(definition.Interval)
+		}
 		configured = append(configured, river.NewPeriodicJob(
-			river.PeriodicInterval(definition.Interval),
+			schedule,
 			definition.Constructor,
 			&river.PeriodicJobOpts{RunOnStart: definition.RunOnStart},
 		))
@@ -559,7 +636,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
-func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, pipelineStore *pipeline.Store, contentStore *content.Store, news *publish.Store, adminAnalysis *adminanalysis.Service) (*river.Client[pgx.Tx], error) {
+func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, pipelineStore *pipeline.Store, contentStore *content.Store, news *publish.Store, newsletterService *newsletter.Service, adminAnalysis *adminanalysis.Service) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
 	dispatcher := &PipelineDispatchWorker{Pipeline: pipelineStore}
 	contentBackfill := &ArticleContentBackfillWorker{Content: contentStore}
@@ -571,6 +648,7 @@ func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, p
 	river.AddWorker(workers, contentBackfill)
 	river.AddWorker(workers, dispatcher)
 	river.AddWorker(workers, &BriefWorker{News: news})
+	river.AddWorker(workers, &NewsletterWorker{Newsletter: newsletterService})
 	river.AddWorker(workers, &QueueHistoryCleanupWorker{Pipeline: pipelineStore})
 	river.AddWorker(workers, &ArticleContentCleanupWorker{Content: contentStore})
 	if adminAnalysis != nil {
@@ -580,7 +658,7 @@ func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, p
 
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Logger:       logger,
-		PeriodicJobs: configuredPeriodicJobs(),
+		PeriodicJobs: configuredPeriodicJobs(newsletterService),
 		Queues:       configuredQueues(),
 		Workers:      workers,
 	})
