@@ -720,6 +720,53 @@ export type PageResponse<T> = {
   pagination: PaginationMeta;
 };
 
+export type WatchTowerThread = {
+  id: string;
+  title: string;
+  message_count: number;
+  last_message: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WatchTowerCitation = {
+  number: number;
+  article_id: string;
+  headline: string;
+  source: string;
+  category: string;
+  published_at: string;
+  original_url: string;
+};
+
+export type WatchTowerMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  citations: WatchTowerCitation[];
+  suggestions: string[];
+  provider?: string;
+  model?: string;
+  search?: {
+    label: string;
+    from: string;
+    to: string;
+    article_count: number;
+  };
+  created_at: string;
+};
+
+export type WatchTowerConversation = {
+  thread: WatchTowerThread;
+  messages: WatchTowerMessage[];
+};
+
+export type WatchTowerExchange = {
+  thread: WatchTowerThread;
+  user: WatchTowerMessage;
+  assistant: WatchTowerMessage;
+};
+
 export type AdminTableQuery = {
   page?: number;
   per_page?: number;
@@ -1055,6 +1102,27 @@ export function createClient(baseUrl = "") {
       request<AnalysisBackfillRun>(url("/api/admin/settings/analysis-backfills"), {
         method: "POST",
         body: JSON.stringify(body)
-      })
+      }),
+    watchTowerThreads: () =>
+      request<{ items: WatchTowerThread[] }>(url("/api/admin/watch-tower/threads")),
+    createWatchTowerThread: (title: string) =>
+      request<WatchTowerThread>(url("/api/admin/watch-tower/threads"), {
+        method: "POST",
+        body: JSON.stringify({ title })
+      }),
+    watchTowerConversation: (id: string) =>
+      request<WatchTowerConversation>(
+        url(`/api/admin/watch-tower/threads/${encodeURIComponent(id)}`)
+      ),
+    askWatchTower: (id: string, content: string) =>
+      request<WatchTowerExchange>(
+        url(`/api/admin/watch-tower/threads/${encodeURIComponent(id)}/messages`),
+        { method: "POST", body: JSON.stringify({ content }) }
+      ),
+    deleteWatchTowerThread: (id: string) =>
+      request<{ ok: boolean }>(
+        url(`/api/admin/watch-tower/threads/${encodeURIComponent(id)}`),
+        { method: "DELETE" }
+      )
   };
 }

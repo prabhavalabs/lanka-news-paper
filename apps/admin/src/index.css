@@ -156,6 +156,24 @@ body {
   }
 }
 
+.watch-tower-page {
+  height: calc(100dvh - var(--header-height) - 2rem);
+}
+
+.watch-tower-mobile-history {
+  display: block;
+}
+
+@media (min-width: 1024px) {
+  .watch-tower-page {
+    height: calc(100dvh - var(--header-height) - 3rem);
+  }
+
+  .watch-tower-mobile-history {
+    display: none;
+  }
+}
+
 @media (max-width: 639px) {
   .routing-model-sheet[data-side='right'] {
     inset: auto 0 0 !important;

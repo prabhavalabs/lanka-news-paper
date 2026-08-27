@@ -27,6 +27,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/registry"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/watchtower"
 )
 
 func main() {
@@ -68,6 +69,7 @@ func run(logger *slog.Logger) error {
 	adminAnalysis := adminanalysis.NewService(analysisStore, model, codex)
 	politicsStore := politics.NewStore(pool, model)
 	pipelineStore := pipeline.NewStore(pool, model, clusters, politicsStore)
+	watchTower := watchtower.NewService(watchtower.NewStore(pool), model, time.Now)
 	producer, err := jobs.NewProducer(pool, logger)
 	if err != nil {
 		return err
@@ -143,10 +145,11 @@ func run(logger *slog.Logger) error {
 				return jobs.EnqueuePipeline(ctx, producer, runID)
 			},
 			SessionTTL: loaded.SessionTTL,
+			WatchTower: watchTower,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       20 * time.Second,
-		WriteTimeout:      45 * time.Second,
+		WriteTimeout:      75 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}

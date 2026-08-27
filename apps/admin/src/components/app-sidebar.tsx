@@ -9,6 +9,7 @@ import {
   RadioTowerIcon,
   SettingsIcon,
   SparklesIcon,
+  TelescopeIcon,
 } from 'lucide-react'
 import { Link } from 'react-router'
 
@@ -29,6 +30,7 @@ const navigation: NavItem[] = [
   { title: 'Sources', url: '/sources', icon: RadioTowerIcon },
   { title: 'Articles', url: '/articles', icon: NewspaperIcon },
   { title: 'Knowledge graph', url: '/knowledge', icon: NetworkIcon },
+  { title: 'Watch Tower', url: '/watch-tower', icon: TelescopeIcon },
   { title: 'Queue monitor', url: '/jobs', icon: ListTreeIcon },
   { title: 'Editorial queue', url: '/queue', icon: ListChecksIcon },
   { title: 'Complaints', url: '/complaints', icon: MessageSquareWarningIcon },

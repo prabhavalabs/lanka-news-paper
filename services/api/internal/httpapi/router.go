@@ -13,6 +13,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/media"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/registry"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/watchtower"
 )
 
 type Dependencies struct {
@@ -35,6 +36,7 @@ type Dependencies struct {
 	ResumeAdminAnalysisBackfill func(context.Context, string) (adminanalysis.Run, error)
 	CancelAdminAnalysisBackfill func(context.Context, string) (adminanalysis.Run, error)
 	SessionTTL                  time.Duration
+	WatchTower                  *watchtower.Service
 }
 
 func NewRouter(dependencies Dependencies) http.Handler {
@@ -43,6 +45,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	news := newsHandler{reader: dependencies.News}
 	auth := newAuthHandler(dependencies.IAM, dependencies.SessionTTL, dependencies.CookieSecure)
 	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk, monitor: newMonitorService(dependencies.Desk, dependencies.Monitor), media: dependencies.Media, adminAnalysis: dependencies.AdminAnalysis, runPipeline: dependencies.RunPipeline, runContentBackfill: dependencies.RunContentBackfill, runAdminAnalysisBackfill: dependencies.RunAdminAnalysisBackfill, pauseAdminAnalysisBackfill: dependencies.PauseAdminAnalysisBackfill, resumeAdminAnalysisBackfill: dependencies.ResumeAdminAnalysisBackfill, cancelAdminAnalysisBackfill: dependencies.CancelAdminAnalysisBackfill}
+	watchTower := watchTowerHandler{service: dependencies.WatchTower}
 
 	mux.HandleFunc("GET /api/v1/health/live", health.liveness)
 	mux.HandleFunc("GET /api/v1/health/ready", health.readiness)
@@ -120,6 +123,11 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("DELETE /api/admin/settings/analysis-backfills/{id}", admin.deleteAnalysisBackfill)
 	protected.HandleFunc("POST /api/admin/settings/analysis-backfills/{id}/{action}", admin.controlAnalysisBackfill)
 	protected.HandleFunc("GET /api/admin/media/{key...}", admin.mediaFile)
+	protected.HandleFunc("GET /api/admin/watch-tower/threads", watchTower.threads)
+	protected.HandleFunc("POST /api/admin/watch-tower/threads", watchTower.threads)
+	protected.HandleFunc("GET /api/admin/watch-tower/threads/{id}", watchTower.thread)
+	protected.HandleFunc("DELETE /api/admin/watch-tower/threads/{id}", watchTower.thread)
+	protected.HandleFunc("POST /api/admin/watch-tower/threads/{id}/messages", watchTower.messages)
 	mux.Handle("/api/admin/", withCSRF(auth.requireAuth(protected)))
 
 	return withRecovery(withRequestID(withSecurityHeaders(withCORS(http.MaxBytesHandler(mux, 1<<20), dependencies.AllowedOrigins))))

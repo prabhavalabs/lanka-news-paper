@@ -10,6 +10,7 @@ const titles: Record<string, string> = {
   '/queue': 'Editorial queue',
   '/complaints': 'Complaints',
   '/routing': 'AI & routing',
+  '/watch-tower': 'Watch Tower',
 }
 
 export function SiteHeader() {
