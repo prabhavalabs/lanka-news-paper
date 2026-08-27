@@ -106,7 +106,7 @@ func TestDecodeOpenRouterModelsPreservesPricingContextAndCapabilities(t *testing
 	require.Equal(t, 0.28, models[0].OutputPricePerMillion)
 	require.Equal(t, 1310720, models[0].ContextLength)
 	require.NotNil(t, models[0].CompatibleTasks)
-	require.ElementsMatch(t, []string{"classify", "narration_framing"}, models[0].CompatibleTasks)
+	require.ElementsMatch(t, []string{"classify", "narration_framing", "watch_tower_retrieval", "watch_tower_answer"}, models[0].CompatibleTasks)
 }
 
 func TestNarrationRejectsModelWithoutStructuredOutput(t *testing.T) {
@@ -117,6 +117,17 @@ func TestNarrationRejectsModelWithoutStructuredOutput(t *testing.T) {
 
 	require.True(t, modelSupportsTask(model, "classify"))
 	require.False(t, modelSupportsTask(model, "narration_framing"))
+	require.False(t, modelSupportsTask(model, "watch_tower_answer"))
+}
+
+func TestWatchTowerAcceptsModelWithStructuredOutput(t *testing.T) {
+	model := Model{
+		OutputModalities:    []string{"text"},
+		SupportedParameters: []string{"max_tokens", "structured_outputs"},
+	}
+
+	require.True(t, modelSupportsTask(model, "watch_tower_retrieval"))
+	require.True(t, modelSupportsTask(model, "watch_tower_answer"))
 }
 
 func TestCallProviderUsesOpenRouterReasoningAndRoutingParameters(t *testing.T) {

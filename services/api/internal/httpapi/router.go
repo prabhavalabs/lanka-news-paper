@@ -128,6 +128,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("GET /api/admin/watch-tower/threads/{id}", watchTower.thread)
 	protected.HandleFunc("DELETE /api/admin/watch-tower/threads/{id}", watchTower.thread)
 	protected.HandleFunc("POST /api/admin/watch-tower/threads/{id}/messages", watchTower.messages)
+	protected.HandleFunc("GET /api/admin/settings/watch-tower", watchTower.settings)
+	protected.HandleFunc("POST /api/admin/settings/watch-tower", watchTower.settings)
 	mux.Handle("/api/admin/", withCSRF(auth.requireAuth(protected)))
 
 	return withRecovery(withRequestID(withSecurityHeaders(withCORS(http.MaxBytesHandler(mux, 1<<20), dependencies.AllowedOrigins))))

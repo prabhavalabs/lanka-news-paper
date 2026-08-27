@@ -40,6 +40,7 @@ func TestServiceAskPersistsAGroundedAnswer(t *testing.T) {
 	userID := uuid.New()
 	articleID := uuid.New()
 	repository := &fakeRepository{
+		settings: Settings{ResponseLanguage: LanguageSinhala},
 		conversation: Conversation{
 			Thread:   Thread{ID: threadID, UserID: userID, Title: "Sri Lanka today"},
 			Messages: []Message{{Role: RoleUser, Content: "Focus on the economy."}},
@@ -62,6 +63,7 @@ func TestServiceAskPersistsAGroundedAnswer(t *testing.T) {
 	result, err := service.Ask(context.Background(), userID, threadID, "What happened in the economy today?")
 
 	require.NoError(t, err)
+	require.Contains(t, model.request.System, "Write the complete answer in Sinhala")
 	require.Contains(t, model.request.Input, "Central bank holds policy rates")
 	require.Contains(t, model.request.Input, "Focus on the economy.")
 	require.Equal(t, "## Economy\n\nThe central bank held policy rates steady [1].", result.Assistant.Content)
@@ -87,6 +89,7 @@ func TestServiceAskCarriesContextIntoAFollowUpQuestion(t *testing.T) {
 	from := time.Date(2026, time.August, 26, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, time.August, 27, 0, 0, 0, 0, time.UTC)
 	repository := &fakeRepository{
+		settings: Settings{ResponseLanguage: LanguageSinhala},
 		conversation: Conversation{
 			Thread: Thread{ID: threadID, UserID: userID, Title: "Economic briefing"},
 			Messages: []Message{
@@ -127,6 +130,7 @@ func TestServiceAskExpandsAnAmbiguousQuestionForSinhalaRetrieval(t *testing.T) {
 	threadID := uuid.New()
 	userID := uuid.New()
 	repository := &fakeRepository{
+		settings:     Settings{ResponseLanguage: LanguageSinhala},
 		conversation: Conversation{Thread: Thread{ID: threadID, UserID: userID, Title: "Fuel prices"}},
 		articles:     []ArticleEvidence{{ID: uuid.New(), Headline: "Fuel report", Source: "Daily News", Summary: "A report about fuel."}},
 	}
@@ -147,12 +151,47 @@ func TestServiceAskExpandsAnAmbiguousQuestionForSinhalaRetrieval(t *testing.T) {
 	require.Equal(t, "watch_tower_answer", model.requests[1].Task)
 }
 
+func TestServiceUpdateSettingsAcceptsEnglish(t *testing.T) {
+	repository := &fakeRepository{settings: Settings{ResponseLanguage: LanguageSinhala}}
+	service := NewService(repository, &fakeCompleter{}, time.Now)
+	userID := uuid.New()
+
+	settings, err := service.UpdateSettings(context.Background(), userID, LanguageEnglish)
+
+	require.NoError(t, err)
+	require.Equal(t, LanguageEnglish, settings.ResponseLanguage)
+	require.Equal(t, userID, repository.settingsUpdatedBy)
+}
+
+func TestServiceUpdateSettingsRejectsUnsupportedLanguage(t *testing.T) {
+	service := NewService(&fakeRepository{}, &fakeCompleter{}, time.Now)
+
+	_, err := service.UpdateSettings(context.Background(), uuid.New(), "fr")
+
+	require.ErrorIs(t, err, ErrInvalidSettings)
+}
+
 type fakeRepository struct {
-	conversation   Conversation
-	articles       []ArticleEvidence
-	savedQuestion  string
-	savedAssistant MessageDraft
-	searchedScope  SearchScope
+	settings          Settings
+	settingsUpdatedBy uuid.UUID
+	conversation      Conversation
+	articles          []ArticleEvidence
+	savedQuestion     string
+	savedAssistant    MessageDraft
+	searchedScope     SearchScope
+}
+
+func (repository *fakeRepository) Settings(context.Context) (Settings, error) {
+	if repository.settings.ResponseLanguage == "" {
+		return Settings{ResponseLanguage: LanguageSinhala}, nil
+	}
+	return repository.settings, nil
+}
+
+func (repository *fakeRepository) UpdateSettings(_ context.Context, userID uuid.UUID, settings Settings) (Settings, error) {
+	repository.settings = settings
+	repository.settingsUpdatedBy = userID
+	return settings, nil
 }
 
 func (repository *fakeRepository) CreateThread(_ context.Context, userID uuid.UUID, title string) (Thread, error) {

@@ -89,6 +89,18 @@ func (service *Service) DeleteThread(ctx context.Context, userID, threadID uuid.
 	return service.repository.DeleteThread(ctx, userID, threadID)
 }
 
+func (service *Service) Settings(ctx context.Context) (Settings, error) {
+	return service.repository.Settings(ctx)
+}
+
+func (service *Service) UpdateSettings(ctx context.Context, userID uuid.UUID, language string) (Settings, error) {
+	language = strings.TrimSpace(strings.ToLower(language))
+	if language != LanguageSinhala && language != LanguageEnglish {
+		return Settings{}, ErrInvalidSettings
+	}
+	return service.repository.UpdateSettings(ctx, userID, Settings{ResponseLanguage: language})
+}
+
 func (service *Service) Ask(ctx context.Context, userID, threadID uuid.UUID, question string) (Exchange, error) {
 	question = strings.TrimSpace(question)
 	if question == "" || utf8.RuneCountInString(question) > 4000 {
@@ -97,6 +109,10 @@ func (service *Service) Ask(ctx context.Context, userID, threadID uuid.UUID, que
 	conversation, err := service.repository.Conversation(ctx, userID, threadID)
 	if err != nil {
 		return Exchange{}, err
+	}
+	settings, err := service.repository.Settings(ctx)
+	if err != nil {
+		return Exchange{}, fmt.Errorf("load watch tower settings: %w", err)
 	}
 	scope := ParseSearchScope(question, service.now().UTC())
 	scope = carryConversationContext(question, scope, conversation.Messages)
@@ -111,10 +127,10 @@ func (service *Service) Ask(ctx context.Context, userID, threadID uuid.UUID, que
 		Search: SearchSummary{Label: scope.Label, From: scope.From, To: scope.To, ArticleCount: len(articles)},
 	}
 	if len(articles) == 0 {
-		draft.Content = fmt.Sprintf("I couldn't find any matching newsroom articles for **%s**. Try broadening the time period or asking about a different topic.", scope.Label)
+		draft.Content = emptyAnswer(settings.ResponseLanguage, scope.Label)
 	} else {
 		response, completeErr := service.model.Complete(ctx, llm.Request{
-			Task: "watch_tower_answer", System: watchTowerSystemPrompt,
+			Task: "watch_tower_answer", System: answerSystemPrompt(settings.ResponseLanguage),
 			Input:            buildPrompt(question, conversation.Messages, scope, articles),
 			JSONSchema:       watchTowerSchema,
 			MaxTokens:        1800,
@@ -146,6 +162,21 @@ func (service *Service) Ask(ctx context.Context, userID, threadID uuid.UUID, que
 		Thread: updated.Thread,
 		User:   updated.Messages[len(updated.Messages)-2], Assistant: updated.Messages[len(updated.Messages)-1],
 	}, nil
+}
+
+func answerSystemPrompt(language string) string {
+	directive := "Write the complete answer in Sinhala, including headings and follow-up questions. Keep source names and proper nouns in their clearest original form. Only answer in another language when the editor explicitly asks you to do so."
+	if language == LanguageEnglish {
+		directive = "Write the complete answer in English, including headings and follow-up questions. Only answer in another language when the editor explicitly asks you to do so."
+	}
+	return watchTowerSystemPrompt + "\n\nRESPONSE LANGUAGE\n" + directive
+}
+
+func emptyAnswer(language, label string) string {
+	if language == LanguageEnglish {
+		return fmt.Sprintf("I couldn't find any matching newsroom articles for **%s**. Try broadening the time period or asking about a different topic.", label)
+	}
+	return fmt.Sprintf("**%s** සඳහා ගැළපෙන පුවත් ලිපි අපගේ දත්ත ගබඩාවෙන් හමු නොවීය. කාල පරාසය පුළුල් කර හෝ වෙනත් මාතෘකාවක් පිළිබඳව විමසන්න.", label)
 }
 
 func (service *Service) expandRetrieval(ctx context.Context, question string, messages []Message, scope SearchScope) SearchScope {

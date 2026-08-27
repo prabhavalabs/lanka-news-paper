@@ -20,6 +20,26 @@ func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
+func (store *Store) Settings(ctx context.Context) (Settings, error) {
+	var settings Settings
+	err := store.pool.QueryRow(ctx, `
+		SELECT response_language, updated_at
+		FROM watch_tower_settings
+		WHERE singleton
+	`).Scan(&settings.ResponseLanguage, &settings.UpdatedAt)
+	return settings, err
+}
+
+func (store *Store) UpdateSettings(ctx context.Context, userID uuid.UUID, settings Settings) (Settings, error) {
+	err := store.pool.QueryRow(ctx, `
+		UPDATE watch_tower_settings
+		SET response_language = $1, updated_by = $2, updated_at = clock_timestamp()
+		WHERE singleton
+		RETURNING response_language, updated_at
+	`, settings.ResponseLanguage, userID).Scan(&settings.ResponseLanguage, &settings.UpdatedAt)
+	return settings, err
+}
+
 func (store *Store) CreateThread(ctx context.Context, userID uuid.UUID, title string) (Thread, error) {
 	var thread Thread
 	err := store.pool.QueryRow(ctx, `

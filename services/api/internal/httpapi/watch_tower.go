@@ -100,12 +100,46 @@ func (handler watchTowerHandler) messages(w http.ResponseWriter, request *http.R
 	writeJSON(w, http.StatusOK, exchange)
 }
 
+func (handler watchTowerHandler) settings(w http.ResponseWriter, request *http.Request) {
+	if handler.service == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Watch Tower unavailable", "The newsroom agent is not configured.")
+		return
+	}
+	if !requireAdministrator(w, request) {
+		return
+	}
+	if request.Method == http.MethodGet {
+		settings, err := handler.service.Settings(request.Context())
+		if err != nil {
+			handler.writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, settings)
+		return
+	}
+	var body struct {
+		ResponseLanguage string `json:"response_language"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "A response language is required.")
+		return
+	}
+	settings, err := handler.service.UpdateSettings(request.Context(), currentUser(request).ID, body.ResponseLanguage)
+	if err != nil {
+		handler.writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
 func (handler watchTowerHandler) writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, watchtower.ErrNotFound):
 		writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Conversation not found", "This Watch Tower conversation does not exist.")
 	case errors.Is(err, watchtower.ErrInvalidQuestion):
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid question", "Enter a question up to 4,000 characters.")
+	case errors.Is(err, watchtower.ErrInvalidSettings):
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid settings", "Choose Sinhala or English as the response language.")
 	default:
 		slog.Error("watch tower request failed", "error", err)
 		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Watch Tower could not answer", "The newsroom agent could not complete this question. Try again.")

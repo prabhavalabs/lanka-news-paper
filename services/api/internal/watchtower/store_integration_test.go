@@ -20,7 +20,7 @@ func TestStorePersistsListsAndDeletesAConversation(t *testing.T) {
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, databaseURL)
 	require.NoError(t, err)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	userID := uuid.New()
 	_, err = pool.Exec(ctx, `
@@ -31,6 +31,17 @@ func TestStorePersistsListsAndDeletesAConversation(t *testing.T) {
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM admin_users WHERE id = $1`, userID) })
 
 	store := NewStore(pool)
+	settings, err := store.Settings(ctx)
+	require.NoError(t, err)
+	require.Equal(t, LanguageSinhala, settings.ResponseLanguage)
+
+	settings, err = store.UpdateSettings(ctx, userID, Settings{ResponseLanguage: LanguageEnglish})
+	require.NoError(t, err)
+	require.Equal(t, LanguageEnglish, settings.ResponseLanguage)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `UPDATE watch_tower_settings SET response_language = 'si', updated_by = NULL`)
+	})
+
 	thread, err := store.CreateThread(ctx, userID, "What happened today?")
 	require.NoError(t, err)
 

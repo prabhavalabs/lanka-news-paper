@@ -6,6 +6,8 @@ import {
   type AnalysisBackfillRun,
   type AnalysisBackfillScope,
   type AnalysisBackfillWorkflow,
+  type LlmModel,
+  type WatchTowerSettings,
 } from '@snap/api-client'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -18,6 +20,7 @@ import {
   ExternalLink,
   FileText,
   LoaderCircle,
+  Languages,
   EllipsisVertical,
   Pause,
   RefreshCw,
@@ -26,6 +29,7 @@ import {
   Sparkles,
   Square,
   TerminalSquare,
+  Telescope,
   Trash2,
   Wifi,
   WifiOff,
@@ -37,6 +41,7 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList, ComboboxTrigger } from '@/components/ui/combobox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -64,6 +69,8 @@ export function SettingsPage() {
   const [selectedArticle, setSelectedArticle] = useState<AdminArticleListItem | null>(null)
   const [streamState, setStreamState] = useState<BackfillStreamState>('connecting')
   const [destructiveAction, setDestructiveAction] = useState<DestructiveBackfillAction | null>(null)
+  const [watchTowerModel, setWatchTowerModel] = useState('')
+  const [watchTowerLanguage, setWatchTowerLanguage] = useState<WatchTowerSettings['response_language'] | ''>('')
 
   const openRouter = useQuery({
     queryKey: ['llm-provider'],
@@ -85,6 +92,10 @@ export function SettingsPage() {
     queryFn: () => client.codexStatus(),
     staleTime: 30_000,
   })
+  const watchTowerSettings = useQuery({
+    queryKey: ['watch-tower-settings'],
+    queryFn: () => client.watchTowerSettings(),
+  })
   const runs = useQuery({
     queryKey: ['analysis-backfills'],
     queryFn: () => client.analysisBackfills(),
@@ -104,6 +115,25 @@ export function SettingsPage() {
       (model.supported_parameters.includes('structured_outputs') || model.supported_parameters.includes('response_format')),
     )
   }, [models.data?.items])
+  const watchTowerProfiles = (profiles.data?.items ?? []).filter((profile) => profile.task === 'watch_tower_retrieval' || profile.task === 'watch_tower_answer')
+  const configuredWatchTowerModel = watchTowerProfiles.find((profile) => profile.task === 'watch_tower_answer')?.model ?? ''
+  const activeWatchTowerModel = watchTowerModel || configuredWatchTowerModel
+  const activeWatchTowerLanguage = watchTowerLanguage || watchTowerSettings.data?.response_language || 'si'
+  const watchTowerModels = useMemo(() => {
+    return (models.data?.items ?? []).filter((item) =>
+      item.compatible_tasks.includes('watch_tower_retrieval') && item.compatible_tasks.includes('watch_tower_answer'),
+    )
+  }, [models.data?.items])
+  const watchTowerModelItems = useMemo(() => watchTowerModels.map((item) => ({
+    value: item.id,
+    label: item.name,
+    detail: modelPriceLabel(item),
+  })), [watchTowerModels])
+  const selectedWatchTowerModel = watchTowerModelItems.find((item) => item.value === activeWatchTowerModel) ?? null
+  const watchTowerDirty = Boolean(
+    activeWatchTowerModel &&
+    (activeWatchTowerModel !== configuredWatchTowerModel || activeWatchTowerLanguage !== (watchTowerSettings.data?.response_language ?? 'si')),
+  )
   const defaultOpenRouterModel = profiles.data?.items.find((profile) => profile.task === 'narration_framing')?.model ?? openRouterModels[0]?.id ?? ''
   const availableModels = provider === 'codex_cli' ? (codex.data?.models ?? []) : openRouterModels.map((model) => model.id)
   const model = availableModels.includes(selectedModel)
@@ -184,6 +214,27 @@ export function SettingsPage() {
     onError: () => toast.error('Could not delete the administrative backfill record'),
   })
 
+  const saveWatchTower = useMutation({
+    mutationFn: async () => {
+      if (!activeWatchTowerModel) throw new Error('A Watch Tower model is required')
+      await Promise.all([
+        client.updateLlmProfile({ task: 'watch_tower_retrieval', model: activeWatchTowerModel }),
+        client.updateLlmProfile({ task: 'watch_tower_answer', model: activeWatchTowerModel }),
+        client.updateWatchTowerSettings({ response_language: activeWatchTowerLanguage }),
+      ])
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['llm-profiles'] }),
+        queryClient.invalidateQueries({ queryKey: ['watch-tower-settings'] }),
+      ])
+      setWatchTowerModel('')
+      setWatchTowerLanguage('')
+      toast.success('Watch Tower defaults updated')
+    },
+    onError: () => toast.error('Could not update Watch Tower defaults'),
+  })
+
   useEffect(() => {
 	const events = new EventSource(client.analysisBackfillStreamURL(), { withCredentials: true })
 	const updateRuns = (event: MessageEvent<string>) => {
@@ -237,6 +288,65 @@ export function SettingsPage() {
           metadata={codex.data?.installed ? `${codex.data.version || 'Version unknown'} · ${authLabel(codex.data.auth_method)}` : ''}
         />
       </div>
+
+      <Card className="gap-0 overflow-hidden py-0 shadow-sm">
+        <CardHeader className="border-b py-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><Telescope /></span>
+              <div>
+                <CardTitle>Watch Tower defaults</CardTitle>
+                <CardDescription className="mt-1 max-w-3xl">
+                  Choose the OpenRouter model used for retrieval and cited answers, plus the language Watch Tower uses by default.
+                </CardDescription>
+              </div>
+            </div>
+            <Badge variant="secondary"><Languages /> {activeWatchTowerLanguage === 'si' ? 'Sinhala default' : 'English default'}</Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[0.7fr_minmax(0,1.5fr)_0.8fr_auto] lg:items-end">
+          <Field label="Provider" htmlFor="watch-tower-provider">
+            <div id="watch-tower-provider" className="flex h-8 items-center rounded-3xl bg-input/50 px-3 text-sm">OpenRouter</div>
+          </Field>
+          <Field label="Model" htmlFor="watch-tower-model">
+            <Combobox
+              items={watchTowerModelItems}
+              value={selectedWatchTowerModel}
+              disabled={models.isPending || watchTowerModelItems.length === 0}
+              autoHighlight
+              isItemEqualToValue={(item, selected) => item.value === selected.value}
+              onValueChange={(item) => setWatchTowerModel(item?.value ?? '')}
+            >
+              <ComboboxTrigger id="watch-tower-model" className="w-full justify-between border bg-background" aria-label="Watch Tower model">
+                {selectedWatchTowerModel?.label ?? (models.isPending ? 'Loading models…' : activeWatchTowerModel || 'Choose a model')}
+              </ComboboxTrigger>
+              <ComboboxContent className="w-[min(34rem,calc(100vw-2rem))]">
+                <ComboboxInput placeholder="Search compatible models…" aria-label="Search Watch Tower models" />
+                <ComboboxEmpty>No compatible model found.</ComboboxEmpty>
+                <ComboboxList>
+                  {(item) => <ComboboxItem key={item.value} value={item}><span className="min-w-0"><span className="block truncate">{item.label}</span><span className="block truncate text-xs font-normal text-muted-foreground">{item.detail}</span></span></ComboboxItem>}
+                </ComboboxList>
+              </ComboboxContent>
+            </Combobox>
+          </Field>
+          <Field label="Default answer language" htmlFor="watch-tower-language">
+            <Select value={activeWatchTowerLanguage} onValueChange={(value) => setWatchTowerLanguage(value as WatchTowerSettings['response_language'])}>
+              <SelectTrigger id="watch-tower-language" className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="si">සිංහල (Sinhala)</SelectItem>
+                <SelectItem value="en">English</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Button onClick={() => saveWatchTower.mutate()} disabled={!watchTowerDirty || saveWatchTower.isPending || !openRouter.data?.available}>
+            {saveWatchTower.isPending ? <LoaderCircle className="animate-spin" /> : <CheckCircle2 />}
+            {saveWatchTower.isPending ? 'Saving…' : 'Save defaults'}
+          </Button>
+          <div className="rounded-xl border bg-muted/20 p-3 text-xs leading-5 text-muted-foreground lg:col-span-4">
+            The same model is applied to bilingual retrieval planning and final answer generation. Current selection: <strong className="text-foreground">{selectedWatchTowerModel?.label ?? (activeWatchTowerModel || 'Not configured')}</strong>{selectedWatchTowerModel ? ` · ${selectedWatchTowerModel.detail}` : ''}.
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="gap-0 overflow-hidden py-0 shadow-sm">
         <CardHeader className="border-b py-6">
@@ -638,5 +748,7 @@ function workflowLabel(workflow: AnalysisBackfillRun['workflow']) { return workf
 function scopeLabel(scope: AnalysisBackfillScope) { return scope === 'catalog' ? 'Entire catalog' : scope === 'article' ? 'Single article' : 'Date range' }
 function authLabel(value: string) { return value === 'chatgpt' ? 'ChatGPT authentication' : value === 'api_key' ? 'API key authentication' : 'Authenticated' }
 function modelName(id: string, models: { id: string; name: string }[] | undefined) { return models?.find((model) => model.id === id)?.name ?? id }
+function modelPriceLabel(model: LlmModel) { return `${formatModelPrice(model.input_price_per_million)} input · ${formatModelPrice(model.output_price_per_million)} output per 1M tokens` }
+function formatModelPrice(value: number) { return value === 0 ? 'Free' : `$${value.toLocaleString(undefined, { maximumFractionDigits: 3 })}` }
 function daysAgo(days: number) { const value = new Date(); value.setDate(value.getDate() - days); return value }
 function dateInput(value: Date) { return value.toISOString().slice(0, 10) }

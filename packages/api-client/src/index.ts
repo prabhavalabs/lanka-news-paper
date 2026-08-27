@@ -767,6 +767,11 @@ export type WatchTowerExchange = {
   assistant: WatchTowerMessage;
 };
 
+export type WatchTowerSettings = {
+  response_language: "si" | "en";
+  updated_at: string;
+};
+
 export type AdminTableQuery = {
   page?: number;
   per_page?: number;
@@ -1123,6 +1128,13 @@ export function createClient(baseUrl = "") {
       request<{ ok: boolean }>(
         url(`/api/admin/watch-tower/threads/${encodeURIComponent(id)}`),
         { method: "DELETE" }
-      )
+      ),
+    watchTowerSettings: () =>
+      request<WatchTowerSettings>(url("/api/admin/settings/watch-tower")),
+    updateWatchTowerSettings: (body: { response_language: "si" | "en" }) =>
+      request<WatchTowerSettings>(url("/api/admin/settings/watch-tower"), {
+        method: "POST",
+        body: JSON.stringify(body)
+      })
   };
 }

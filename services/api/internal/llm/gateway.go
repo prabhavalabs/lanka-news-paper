@@ -570,9 +570,9 @@ func decodeOpenRouterModels(reader io.Reader) ([]Model, error) {
 			ID: value.ID, Name: value.Name, ContextLength: value.ContextLength,
 			InputPricePerMillion: inputPrice, OutputPricePerMillion: outputPrice,
 			InputModalities: append([]string{}, value.Architecture.InputModalities...), OutputModalities: append([]string{}, value.Architecture.OutputModalities...),
-			SupportedParameters: append([]string{}, value.SupportedParameters...), CompatibleTasks: make([]string, 0, 2),
+			SupportedParameters: append([]string{}, value.SupportedParameters...), CompatibleTasks: make([]string, 0, 4),
 		}
-		for _, task := range []string{"classify", "narration_framing"} {
+		for _, task := range []string{"classify", "narration_framing", "watch_tower_retrieval", "watch_tower_answer"} {
 			if modelSupportsTask(model, task) {
 				model.CompatibleTasks = append(model.CompatibleTasks, task)
 			}
@@ -598,7 +598,7 @@ func modelSupportsTask(model Model, task string) bool {
 	if !contains(model.OutputModalities, "text") || !contains(model.SupportedParameters, "max_tokens") {
 		return false
 	}
-	if task == "narration_framing" {
+	if task == "narration_framing" || task == "watch_tower_retrieval" || task == "watch_tower_answer" {
 		return contains(model.SupportedParameters, "structured_outputs") || contains(model.SupportedParameters, "response_format")
 	}
 	return task == "classify"
@@ -632,14 +632,25 @@ var taskDefinitions = map[string]struct{ name, purpose string }{
 		name:    "Narration analysis",
 		purpose: "Identifies political-economic framing and supporting evidence.",
 	},
+	"watch_tower_retrieval": {
+		name:    "Watch Tower retrieval",
+		purpose: "Builds bilingual search plans for newsroom questions.",
+	},
+	"watch_tower_answer": {
+		name:    "Watch Tower answers",
+		purpose: "Synthesizes cited answers from the retrieved newsroom evidence.",
+	},
 }
 
 func (gateway *Gateway) ListProfiles(ctx context.Context) ([]TaskProfile, error) {
 	rows, err := gateway.pool.Query(ctx, `
 		SELECT task, provider_id, model, timeout_seconds, enabled
 		FROM llm_task_profiles
-		WHERE task IN ('classify', 'narration_framing') AND provider_id = 'openrouter'
-		ORDER BY CASE task WHEN 'classify' THEN 1 ELSE 2 END
+		WHERE task IN ('classify', 'narration_framing', 'watch_tower_retrieval', 'watch_tower_answer')
+		  AND provider_id = 'openrouter'
+		ORDER BY CASE task
+		  WHEN 'classify' THEN 1 WHEN 'narration_framing' THEN 2
+		  WHEN 'watch_tower_retrieval' THEN 3 ELSE 4 END
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("list LLM profiles: %w", err)

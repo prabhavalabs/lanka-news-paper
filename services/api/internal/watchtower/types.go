@@ -10,13 +10,21 @@ import (
 
 var (
 	ErrInvalidQuestion = errors.New("question is required")
+	ErrInvalidSettings = errors.New("watch tower settings are invalid")
 	ErrNotFound        = errors.New("watch tower conversation not found")
 )
 
 const (
-	RoleUser      = "user"
-	RoleAssistant = "assistant"
+	RoleUser        = "user"
+	RoleAssistant   = "assistant"
+	LanguageSinhala = "si"
+	LanguageEnglish = "en"
 )
+
+type Settings struct {
+	ResponseLanguage string    `json:"response_language"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
 
 type Thread struct {
 	ID           uuid.UUID `json:"id"`
@@ -100,6 +108,8 @@ type MessageDraft struct {
 }
 
 type Repository interface {
+	Settings(context.Context) (Settings, error)
+	UpdateSettings(context.Context, uuid.UUID, Settings) (Settings, error)
 	CreateThread(context.Context, uuid.UUID, string) (Thread, error)
 	ListThreads(context.Context, uuid.UUID) ([]Thread, error)
 	Conversation(context.Context, uuid.UUID, uuid.UUID) (Conversation, error)
