@@ -50,3 +50,20 @@ func TestCronJobsCompletesWithinBudget(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, monitor.Items)
 }
+
+func TestQueueCleanupPreviewProtectsActiveJobsIntegration(t *testing.T) {
+	databaseURL := os.Getenv("SNAP_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("SNAP_TEST_DATABASE_URL is not configured")
+	}
+	pool, err := pgxpool.New(context.Background(), databaseURL)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+
+	preview, err := NewStore(pool).PreviewQueueCleanup(context.Background(), QueueCleanupAll)
+
+	require.NoError(t, err)
+	require.True(t, preview.ActiveProtected)
+	require.Equal(t, "DELETE QUEUE HISTORY", preview.Confirmation)
+	require.GreaterOrEqual(t, preview.TotalRecords, preview.RiverJobs+preview.PipelineRuns)
+}

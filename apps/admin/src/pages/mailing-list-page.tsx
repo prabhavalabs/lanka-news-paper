@@ -16,10 +16,12 @@ import {
   Plus,
   Trash2,
   ShieldCheck,
+  Settings2,
   UserRoundX,
   UsersRound,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { Link } from 'react-router'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -115,8 +117,10 @@ export function MailingListPage() {
             Manage who receives the Sinhala briefing generated from the previous 24 hours of reporting.
           </p>
         </div>
-        <Dialog open={addOpen} onOpenChange={setAddOpen}>
-          <DialogTrigger render={<Button />}><Plus data-icon="inline-start" />Add recipient</DialogTrigger>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" render={<Link to="/workflows?workflow=newsletter_editorial" />}><Settings2 /> Configure newsletter</Button>
+          <Dialog open={addOpen} onOpenChange={setAddOpen}>
+            <DialogTrigger render={<Button />}><Plus data-icon="inline-start" />Add recipient</DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Add newsletter recipient</DialogTitle>
@@ -140,7 +144,8 @@ export function MailingListPage() {
               </FieldGroup>
             </form>
           </DialogContent>
-        </Dialog>
+          </Dialog>
+        </div>
       </div>
 
       {!settings?.enabled ? (
@@ -153,12 +158,12 @@ export function MailingListPage() {
       <Card className="gap-0 overflow-hidden py-0 shadow-sm">
         <CardHeader className="border-b py-5">
           <CardTitle className="flex items-center gap-2"><Bot className="size-5" />Autonomous newsletter workflow</CardTitle>
-          <CardDescription>No manual editorial action is required at send time. The morning worker follows this policy every day.</CardDescription>
+          <CardDescription>The versioned Morning newsletter workflow controls its instructions, personality, templates, ranking, and delivery schedule.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-0 p-0 md:grid-cols-2">
-          <WorkflowRule icon={Clock3} title="1. Select the exact window">Use only eligible stories published during the 24 hours ending at 08:00 Asia/Colombo.</WorkflowRule>
+          <WorkflowRule icon={Clock3} title="1. Select the exact window">Use eligible stories from the 24 hours ending at {String(settings?.send_hour ?? 8).padStart(2, '0')}:00 in {settings?.timezone ?? 'Asia/Colombo'}.</WorkflowRule>
           <WorkflowRule icon={ShieldCheck} title="2. Verify and rank">Exclude held or restricted content, group related coverage, then prioritize breaking and independently corroborated stories.</WorkflowRule>
-          <WorkflowRule icon={Mail} title="3. Write readable Sinhala">Use neutral, factual Sinhala; preserve uncertainty; never invent details. Lead with five essentials, then organize the rest by category with source links.</WorkflowRule>
+          <WorkflowRule icon={Mail} title="3. Write readable Sinhala">The editorial agent orders up to {settings?.max_stories ?? 30} verified stories, leads with {settings?.lead_story_count ?? 5}, and writes the introduction using the configured personality and tone.</WorkflowRule>
           <WorkflowRule icon={CheckCircle2} title="4. Deliver safely">Render a mobile-friendly Sinhala email and send one copy per active recipient with idempotency and one-click unsubscribe.</WorkflowRule>
         </CardContent>
       </Card>
@@ -239,7 +244,7 @@ function SummaryCard({ icon: Icon, label, value }: { icon: typeof UsersRound; la
   return <Card size="sm"><CardContent className="flex items-center gap-4"><span className="grid size-10 place-items-center rounded-2xl bg-muted"><Icon className="size-5" /></span><div><p className="text-2xl font-semibold tabular-nums">{value}</p><p className="text-xs text-muted-foreground">{label}</p></div></CardContent></Card>
 }
 
-function WorkflowRule({ icon: Icon, title, children }: { icon: typeof UsersRound; title: string; children: string }) {
+function WorkflowRule({ icon: Icon, title, children }: { icon: typeof UsersRound; title: string; children: ReactNode }) {
   return <div className="flex gap-3 border-b p-5 last:border-b-0 md:odd:border-r"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted"><Icon className="size-4" /></span><div><p className="font-medium">{title}</p><p className="mt-1 text-sm leading-6 text-muted-foreground">{children}</p></div></div>
 }
 

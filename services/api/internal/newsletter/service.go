@@ -7,67 +7,73 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
 )
 
 type RuntimeConfig struct {
-	BaseURL  string
-	Enabled  bool
-	From     string
-	Location *time.Location
-	SendHour int
+	BaseURL string
+	From    string
 }
 
 type Service struct {
 	store  *Store
 	sender Sender
+	model  llm.Completer
 	config RuntimeConfig
 	now    func() time.Time
 }
 
-func NewService(store *Store, sender Sender, config RuntimeConfig, now func() time.Time) *Service {
+func NewService(store *Store, sender Sender, model llm.Completer, config RuntimeConfig, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{store: store, sender: sender, config: config, now: now}
+	return &Service{store: store, sender: sender, model: model, config: config, now: now}
 }
 
 func (service *Service) Enabled() bool {
-	return service != nil && service.config.Enabled && service.sender != nil && service.store != nil
-}
-
-func (service *Service) Location() *time.Location {
-	if service == nil || service.config.Location == nil {
-		return time.UTC
-	}
-	return service.config.Location
-}
-
-func (service *Service) SendHour() int {
-	if service == nil {
-		return 8
-	}
-	return service.config.SendHour
+	return service != nil && service.sender != nil && service.store != nil
 }
 
 func (service *Service) SendDaily(ctx context.Context) error {
 	if !service.Enabled() {
 		return nil
 	}
-	editionDate, start, end, due := deliveryWindow(service.now(), service.config.Location, service.config.SendHour)
+	settings, err := service.store.GetSettings(ctx)
+	if err != nil {
+		return err
+	}
+	if !settings.Enabled {
+		return nil
+	}
+	location, err := time.LoadLocation(settings.Timezone)
+	if err != nil {
+		return fmt.Errorf("load newsletter timezone: %w", err)
+	}
+	editionDate, start, end, due := deliveryWindow(service.now(), location, settings.SendHour)
 	if !due {
 		return nil
 	}
-	digest, err := service.store.BuildDigest(ctx, editionDate, start, end, service.config.BaseURL)
+	edition, exists, err := service.store.LoadEdition(ctx, editionDate)
 	if err != nil {
 		return err
 	}
-	metadata, err := RenderEdition(digest, "", service.config.BaseURL)
-	if err != nil {
-		return err
-	}
-	edition, err := service.store.CreateOrLoadEdition(ctx, digest, metadata.Subject, metadata.Preheader)
-	if err != nil {
-		return err
+	if !exists {
+		digest, buildErr := service.store.BuildDigest(ctx, editionDate, start, end, service.config.BaseURL)
+		if buildErr != nil {
+			return buildErr
+		}
+		if len(digest.Stories) > settings.MaxStories {
+			digest.Stories = digest.Stories[:settings.MaxStories]
+		}
+		digest, settings = applyEditorialPlan(ctx, service.model, digest, settings)
+		metadata, renderErr := RenderEditionWithSettings(digest, "", service.config.BaseURL, settings)
+		if renderErr != nil {
+			return renderErr
+		}
+		edition, err = service.store.CreateOrLoadEdition(ctx, digest, metadata.Subject, metadata.Preheader)
+		if err != nil {
+			return err
+		}
 	}
 	subscribers, err := service.store.ActiveSubscribers(ctx)
 	if err != nil {
@@ -84,7 +90,10 @@ func (service *Service) SendDaily(ctx context.Context) error {
 			continue
 		}
 		unsubscribeURL := fmt.Sprintf("%s/api/v1/newsletter/unsubscribe/%s", service.config.BaseURL, subscriber.UnsubscribeToken)
-		rendered, renderErr := RenderEdition(edition.Digest, subscriber.Name, unsubscribeURL)
+		deliverySettings := settings
+		deliverySettings.SubjectTemplate = edition.Subject
+		deliverySettings.PreheaderTemplate = edition.Preheader
+		rendered, renderErr := RenderEditionWithSettings(edition.Digest, subscriber.Name, unsubscribeURL, deliverySettings)
 		if renderErr != nil {
 			service.recordFailure(ctx, edition.ID, subscriber.ID, renderErr, &deliveryErrors)
 			continue

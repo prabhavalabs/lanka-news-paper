@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/mail"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -32,19 +33,103 @@ func (store *Store) SyncSettings(ctx context.Context, settings Settings) error {
 	_, err := store.pool.Exec(ctx, `
 		UPDATE newsletter_settings
 		SET enabled = $1, timezone = $2, send_hour = $3,
-		    updated_at = CASE
-		      WHEN enabled IS DISTINCT FROM $1
-		        OR timezone IS DISTINCT FROM $2
-		        OR send_hour IS DISTINCT FROM $3
-		      THEN clock_timestamp()
-		      ELSE updated_at
-		    END
-		WHERE singleton
+		    runtime_bootstrapped = true, updated_at = clock_timestamp()
+		WHERE singleton AND NOT runtime_bootstrapped
 	`, settings.Enabled, settings.Timezone, settings.SendHour)
 	if err != nil {
 		return fmt.Errorf("sync newsletter settings: %w", err)
 	}
 	return nil
+}
+
+func defaultSettings() Settings {
+	return Settings{
+		Timezone: "Asia/Colombo", SendHour: 8, MaxStories: 30, LeadStoryCount: 5,
+		SubjectTemplate:   "උදෑසන පුවත් සංග්‍රහය — {{date}}",
+		PreheaderTemplate: "පසුගිය පැය 24: පුවත් {{articles}} · සිදුවීම් {{events}} · මූලාශ්‍ර {{sources}}",
+		IntroText:         "ඔබ දැනගත යුතු පසුගිය පැය 24 හි වැදගත් පුවත් මෙන්න.",
+		FooterText:        "මෙම සංග්‍රහය ප්‍රකාශිත පුවත් සහ මූලාශ්‍ර-අතර සාරාංශ මත ස්වයංක්‍රීයව සකස් කර ඇත. සම්පූර්ණ විස්තර සඳහා සබැඳි විවෘත කරන්න.",
+	}
+}
+
+func validateSettings(settings Settings) (Settings, error) {
+	settings.Timezone = strings.TrimSpace(settings.Timezone)
+	settings.SubjectTemplate = strings.TrimSpace(settings.SubjectTemplate)
+	settings.PreheaderTemplate = strings.TrimSpace(settings.PreheaderTemplate)
+	settings.IntroText = strings.TrimSpace(settings.IntroText)
+	settings.FooterText = strings.TrimSpace(settings.FooterText)
+	if _, err := time.LoadLocation(settings.Timezone); err != nil {
+		return Settings{}, ErrInvalidSettings
+	}
+	if settings.SendHour < 0 || settings.SendHour > 23 ||
+		settings.MaxStories < 1 || settings.MaxStories > 50 ||
+		settings.LeadStoryCount < 1 || settings.LeadStoryCount > 10 ||
+		settings.LeadStoryCount > settings.MaxStories ||
+		utf8.RuneCountInString(settings.SubjectTemplate) < 1 || utf8.RuneCountInString(settings.SubjectTemplate) > 240 ||
+		utf8.RuneCountInString(settings.PreheaderTemplate) < 1 || utf8.RuneCountInString(settings.PreheaderTemplate) > 500 ||
+		utf8.RuneCountInString(settings.IntroText) > 1200 || utf8.RuneCountInString(settings.FooterText) > 2000 {
+		return Settings{}, ErrInvalidSettings
+	}
+	return settings, nil
+}
+
+func scanSettings(scanner subscriberScanner) (Settings, error) {
+	var settings Settings
+	err := scanner.Scan(
+		&settings.Enabled, &settings.Timezone, &settings.SendHour,
+		&settings.MaxStories, &settings.LeadStoryCount, &settings.SubjectTemplate,
+		&settings.PreheaderTemplate, &settings.IntroText, &settings.FooterText, &settings.UpdatedAt,
+	)
+	return settings, err
+}
+
+func (store *Store) GetSettings(ctx context.Context) (Settings, error) {
+	settings, err := scanSettings(store.pool.QueryRow(ctx, `
+		SELECT enabled, timezone, send_hour, max_stories, lead_story_count,
+		       subject_template, preheader_template, intro_text, footer_text, updated_at
+		FROM newsletter_settings WHERE singleton
+	`))
+	if err != nil {
+		return Settings{}, fmt.Errorf("load newsletter settings: %w", err)
+	}
+	return settings, nil
+}
+
+func (store *Store) UpdateSettings(ctx context.Context, settings Settings, actor uuid.UUID) (Settings, error) {
+	settings, err := validateSettings(settings)
+	if err != nil {
+		return Settings{}, err
+	}
+	transaction, err := store.pool.Begin(ctx)
+	if err != nil {
+		return Settings{}, fmt.Errorf("begin newsletter settings update: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+	settings, err = scanSettings(transaction.QueryRow(ctx, `
+		UPDATE newsletter_settings
+		SET enabled = $1, timezone = $2, send_hour = $3, max_stories = $4,
+		    lead_story_count = $5, subject_template = $6, preheader_template = $7,
+		    intro_text = $8, footer_text = $9, runtime_bootstrapped = true,
+		    updated_by = $10, updated_at = clock_timestamp()
+		WHERE singleton
+		RETURNING enabled, timezone, send_hour, max_stories, lead_story_count,
+		          subject_template, preheader_template, intro_text, footer_text, updated_at
+	`, settings.Enabled, settings.Timezone, settings.SendHour, settings.MaxStories,
+		settings.LeadStoryCount, settings.SubjectTemplate, settings.PreheaderTemplate,
+		settings.IntroText, settings.FooterText, actor))
+	if err != nil {
+		return Settings{}, fmt.Errorf("update newsletter settings: %w", err)
+	}
+	if _, err := transaction.Exec(ctx, `
+		INSERT INTO audit_logs (actor_id, action, target_type, target_id, result)
+		VALUES ($1, 'update_newsletter_settings', 'newsletter_settings', 'daily', 'ok')
+	`, actor); err != nil {
+		return Settings{}, fmt.Errorf("audit newsletter settings: %w", err)
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return Settings{}, fmt.Errorf("commit newsletter settings update: %w", err)
+	}
+	return settings, nil
 }
 
 func normalizeSubscriberInput(input SubscriberInput, requireConsent bool) (SubscriberInput, error) {
@@ -78,13 +163,9 @@ func validateStatusTransition(current string, input SubscriberInput) error {
 }
 
 func (store *Store) ListSubscribers(ctx context.Context) (SubscriberList, error) {
-	settings := Settings{}
-	if err := store.pool.QueryRow(ctx, `
-		SELECT enabled, timezone, send_hour
-		FROM newsletter_settings
-		WHERE singleton
-	`).Scan(&settings.Enabled, &settings.Timezone, &settings.SendHour); err != nil {
-		return SubscriberList{}, fmt.Errorf("load newsletter settings: %w", err)
+	settings, err := store.GetSettings(ctx)
+	if err != nil {
+		return SubscriberList{}, err
 	}
 	rows, err := store.pool.Query(ctx, `
 		SELECT id, email::text, name, status, consent_source, consented_at,

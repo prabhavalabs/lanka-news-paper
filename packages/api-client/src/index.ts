@@ -567,6 +567,19 @@ export type QueueMonitor = PageResponse<QueueJob> & {
   };
 };
 
+export type QueueCleanupScope = "failed" | "all";
+
+export type QueueCleanupPreview = {
+  scope: QueueCleanupScope;
+  confirmation: string;
+  river_jobs: number;
+  pipeline_runs: number;
+  pipeline_steps: number;
+  pipeline_logs: number;
+  total_records: number;
+  active_jobs_protected: boolean;
+};
+
 export type QueueJobArtifact = {
   id: string;
   role: "input" | "output";
@@ -792,6 +805,19 @@ export type NewsletterSubscriberInput = {
   consent_confirmed?: boolean;
 };
 
+export type NewsletterSettings = {
+  enabled: boolean;
+  timezone: string;
+  send_hour: number;
+  max_stories: number;
+  lead_story_count: number;
+  subject_template: string;
+  preheader_template: string;
+  intro_text: string;
+  footer_text: string;
+  updated_at: string;
+};
+
 export type NewsletterSubscriberList = {
   items: NewsletterSubscriber[];
   summary: {
@@ -800,11 +826,40 @@ export type NewsletterSubscriberList = {
     paused: number;
     unsubscribed: number;
   };
-  settings: {
-    enabled: boolean;
-    timezone: string;
-    send_hour: number;
-  };
+  settings: NewsletterSettings;
+};
+
+export type AgentWorkflow = {
+  task: string;
+  name: string;
+  purpose: string;
+  category: string;
+  custom_instructions: string;
+  personality: string;
+  learning_notes: string;
+  tone: string;
+  response_language: string;
+  audience: string;
+  enabled: boolean;
+  revision: number;
+  model: string;
+  updated_at: string;
+};
+
+export type AgentWorkflowInput = Pick<AgentWorkflow,
+  "custom_instructions" | "personality" | "tone" | "response_language" | "audience" | "enabled"
+>;
+
+export type AgentFeedback = {
+  id: string;
+  workflow_task: string;
+  workflow_name: string;
+  rating: "helpful" | "needs_improvement";
+  category: "accuracy" | "tone" | "relevance" | "formatting" | "safety" | "other";
+  message: string;
+  status: "new" | "reviewed" | "applied" | "dismissed";
+  created_at: string;
+  reviewed_at: string | null;
 };
 
 export type AdminTableQuery = {
@@ -919,6 +974,13 @@ export function createClient(baseUrl = "") {
       ),
     queueJobs: (params: AdminTableQuery = {}) =>
       request<QueueMonitor>(url(withQuery("/api/admin/jobs", params))),
+    queueCleanupPreview: (scope: QueueCleanupScope) =>
+      request<QueueCleanupPreview>(url(withQuery("/api/admin/jobs/cleanup", { scope }))),
+    cleanupQueue: (scope: QueueCleanupScope, confirmation: string) =>
+      request<QueueCleanupPreview>(url("/api/admin/jobs/cleanup"), {
+        method: "POST",
+        body: JSON.stringify({ scope, confirmation })
+      }),
     queueJobArtifacts: (id: string) =>
       request<QueueJobArtifacts>(url(`/api/admin/jobs/${encodeURIComponent(id)}`)),
     queueMonitorStreamURL: (params: AdminTableQuery = {}) =>
@@ -1187,6 +1249,32 @@ export function createClient(baseUrl = "") {
       request<{ ok: boolean }>(
         url(`/api/admin/newsletter/subscribers/${encodeURIComponent(id)}`),
         { method: "DELETE" }
-      )
+      ),
+    newsletterSettings: () =>
+      request<NewsletterSettings>(url("/api/admin/newsletter/settings")),
+    updateNewsletterSettings: (body: NewsletterSettings) =>
+      request<NewsletterSettings>(url("/api/admin/newsletter/settings"), {
+        method: "POST",
+        body: JSON.stringify(body)
+      }),
+    agentWorkflows: () =>
+      request<{ items: AgentWorkflow[] }>(url("/api/admin/workflows")),
+    updateAgentWorkflow: (task: string, body: AgentWorkflowInput) =>
+      request<AgentWorkflow>(url(`/api/admin/workflows/${encodeURIComponent(task)}`), {
+        method: "POST",
+        body: JSON.stringify(body)
+      }),
+    agentFeedback: () =>
+      request<{ items: AgentFeedback[] }>(url("/api/admin/workflows/feedback")),
+    createAgentFeedback: (body: Pick<AgentFeedback, "workflow_task" | "rating" | "category" | "message">) =>
+      request<AgentFeedback>(url("/api/admin/workflows/feedback"), {
+        method: "POST",
+        body: JSON.stringify(body)
+      }),
+    reviewAgentFeedback: (id: string, status: "reviewed" | "applied" | "dismissed") =>
+      request<AgentFeedback>(url(`/api/admin/workflows/feedback/${encodeURIComponent(id)}`), {
+        method: "POST",
+        body: JSON.stringify({ status })
+      })
   };
 }

@@ -31,7 +31,7 @@ func TestPeriodicJobCatalog(t *testing.T) {
 	require.Equal(t, time.Hour, catalog[2].Interval)
 	require.False(t, catalog[2].RunOnStart)
 	require.Equal(t, "newsletter.daily", catalog[3].Kind)
-	require.Equal(t, 24*time.Hour, catalog[3].Interval)
+	require.Equal(t, time.Hour, catalog[3].Interval)
 	require.False(t, catalog[3].RunOnStart)
 	require.Equal(t, "queue.history.cleanup", catalog[4].Kind)
 	require.Equal(t, 24*time.Hour, catalog[4].Interval)

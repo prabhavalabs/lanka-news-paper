@@ -8,6 +8,7 @@ import {
   type QueueJobArtifact,
   type QueueJobArtifacts,
   type QueueJobStatus,
+  type QueueCleanupScope,
   type QueueMonitorSnapshot,
 } from '@snap/api-client'
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
@@ -33,6 +34,8 @@ import {
   RefreshCw,
   RotateCcw,
   ServerCog,
+  ShieldCheck,
+  Trash2,
   TriangleAlert,
 } from 'lucide-react'
 import { lazy, startTransition, Suspense, useEffect, useId, useState } from 'react'
@@ -44,6 +47,8 @@ import { SourceAvatar } from '@/components/source-avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -114,6 +119,8 @@ export function JobsPage() {
   const kind = kindFilter === 'all' ? '' : kindFilter || 'article.pipeline'
   const window = table.filter('window') || '7d'
   const [selectedID, setSelectedID] = useState<string | null>(null)
+  const [cleanupScope, setCleanupScope] = useState<QueueCleanupScope | null>(null)
+  const user = queryClient.getQueryData<{ role: string }>(['me'])
   const jobs = useQuery({
     queryKey: ['queue-jobs', table.page, table.perPage, table.search, status, queue, kind, window],
     queryFn: () => client.queueJobs({
@@ -179,6 +186,11 @@ export function JobsPage() {
         </div>
         <div className="flex shrink-0 items-center gap-3">
           <LiveConnectionStatus status={streamStatus} />
+          {user?.role === 'administrator' ? (
+            <Button variant="outline" onClick={() => setCleanupScope('failed')}>
+              <Trash2 /> Clean up
+            </Button>
+          ) : null}
           <Button variant="outline" size="icon" aria-label="Refresh queue" disabled={jobs.isFetching || cron.isFetching} onClick={() => void Promise.all([jobs.refetch(), cron.refetch()])}>
             <RefreshCw className={cn((jobs.isFetching || cron.isFetching) && 'animate-spin')} />
           </Button>
@@ -264,8 +276,107 @@ export function JobsPage() {
         onRetry={() => retry.mutate()}
         onRetryArtifacts={() => void artifacts.refetch()}
       />
+      <QueueCleanupDialog
+        scope={cleanupScope}
+        onScopeChange={setCleanupScope}
+        onClose={() => setCleanupScope(null)}
+      />
     </section>
   )
+}
+
+function QueueCleanupDialog({
+  scope,
+  onScopeChange,
+  onClose,
+}: {
+  scope: QueueCleanupScope | null
+  onScopeChange: (scope: QueueCleanupScope) => void
+  onClose: () => void
+}) {
+  const queryClient = useQueryClient()
+  const [confirmation, setConfirmation] = useState('')
+  const preview = useQuery({
+    queryKey: ['queue-cleanup-preview', scope],
+    queryFn: () => client.queueCleanupPreview(scope!),
+    enabled: scope !== null,
+  })
+  const cleanup = useMutation({
+    mutationFn: () => client.cleanupQueue(scope!, confirmation),
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['queue-jobs'] }),
+        queryClient.invalidateQueries({ queryKey: ['queue-cleanup-preview'] }),
+      ])
+      toast.success(`${result.total_records.toLocaleString()} terminal queue records removed`)
+      setConfirmation('')
+      onClose()
+    },
+    onError: () => toast.error('Could not clean queue history'),
+  })
+  const expected = preview.data?.confirmation ?? ''
+
+  return (
+    <Dialog open={scope !== null} onOpenChange={(open) => { if (!open) { setConfirmation(''); onClose() } }}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Clean queue history</DialogTitle>
+          <DialogDescription>
+            Delete terminal telemetry records. Active, scheduled, available, retryable, and running jobs are always protected.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-2 rounded-xl bg-muted p-1">
+          <Button variant={scope === 'failed' ? 'default' : 'ghost'} onClick={() => { setConfirmation(''); onScopeChange('failed') }}>
+            Failed only
+          </Button>
+          <Button variant={scope === 'all' ? 'default' : 'ghost'} onClick={() => { setConfirmation(''); onScopeChange('all') }}>
+            All terminal history
+          </Button>
+        </div>
+        {preview.isPending ? <Skeleton className="h-28 w-full" /> : null}
+        {preview.isError ? <p className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">Cleanup preview is unavailable.</p> : null}
+        {preview.data ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <CleanupCount label="River jobs" value={preview.data.river_jobs} />
+              <CleanupCount label="Pipeline runs" value={preview.data.pipeline_runs} />
+              <CleanupCount label="Steps" value={preview.data.pipeline_steps} />
+              <CleanupCount label="Logs" value={preview.data.pipeline_logs} />
+            </div>
+            <p className="flex items-start gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs text-emerald-800 dark:text-emerald-300">
+              <ShieldCheck className="mt-0.5 size-4 shrink-0" /> Active work cannot be selected by this operation.
+            </p>
+            <div>
+              <label htmlFor="queue-cleanup-confirmation" className="text-sm font-medium">
+                Type <span className="font-mono">{expected}</span> to confirm
+              </label>
+              <Input
+                id="queue-cleanup-confirmation"
+                className="mt-2 font-mono"
+                value={confirmation}
+                autoComplete="off"
+                onChange={(event) => setConfirmation(event.target.value)}
+              />
+            </div>
+          </div>
+        ) : null}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button
+            variant="destructive"
+            disabled={!preview.data || confirmation !== expected || cleanup.isPending}
+            onClick={() => cleanup.mutate()}
+          >
+            <Trash2 /> {cleanup.isPending ? 'Deleting…' : `Delete ${preview.data?.total_records.toLocaleString() ?? 0} records`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function CleanupCount({ label, value }: { label: string; value: number }) {
+  return <div className="rounded-xl border p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 text-lg font-semibold tabular-nums">{value.toLocaleString()}</p></div>
 }
 
 type MonitorConnectionStatus = 'connecting' | 'live' | 'reconnecting'
@@ -319,7 +430,7 @@ function useQueueMonitorStream({
         setConnection('reconnecting')
       }
     }
-    events.onopen = () => setConnection('live')
+    events.onopen = () => setConnection('connecting')
     events.onerror = () => setConnection('reconnecting')
     events.addEventListener('monitor', receiveMonitor as EventListener)
     events.addEventListener('monitor-error', () => setConnection('reconnecting'))

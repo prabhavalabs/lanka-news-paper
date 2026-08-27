@@ -24,6 +24,7 @@ type Story struct {
 
 type Digest struct {
 	EditionDate  string    `json:"edition_date"`
+	Intro        string    `json:"intro,omitempty"`
 	WindowStart  time.Time `json:"window_start"`
 	WindowEnd    time.Time `json:"window_end"`
 	ArticleCount int       `json:"article_count"`

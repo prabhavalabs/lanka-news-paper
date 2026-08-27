@@ -22,6 +22,8 @@ type editionView struct {
 	Sections       []storySection
 	Subject        string
 	Preheader      string
+	IntroText      string
+	FooterText     string
 	UnsubscribeURL string
 }
 
@@ -31,17 +33,36 @@ type storySection struct {
 }
 
 func RenderEdition(digest Digest, recipientName, unsubscribeURL string) (RenderedEdition, error) {
-	subject := fmt.Sprintf("උදෑසන පුවත් සංග්‍රහය — %s", digest.EditionDate)
-	preheader := fmt.Sprintf("පසුගිය පැය 24: පුවත් %d · සිදුවීම් %d · මූලාශ්‍ර %d", digest.ArticleCount, digest.EventCount, digest.SourceCount)
+	return RenderEditionWithSettings(digest, recipientName, unsubscribeURL, defaultSettings())
+}
+
+func RenderEditionWithSettings(digest Digest, recipientName, unsubscribeURL string, settings Settings) (RenderedEdition, error) {
+	if settings.SubjectTemplate == "" {
+		settings = defaultSettings()
+	}
+	replacements := strings.NewReplacer(
+		"{{date}}", digest.EditionDate,
+		"{{articles}}", fmt.Sprint(digest.ArticleCount),
+		"{{events}}", fmt.Sprint(digest.EventCount),
+		"{{sources}}", fmt.Sprint(digest.SourceCount),
+	)
+	subject := replacements.Replace(settings.SubjectTemplate)
+	preheader := replacements.Replace(settings.PreheaderTemplate)
+	if strings.TrimSpace(digest.Intro) != "" {
+		settings.IntroText = digest.Intro
+	}
 	greeting := "සුබ උදෑසනක්"
 	if name := strings.TrimSpace(recipientName); name != "" {
 		greeting += ", " + name
 	}
-	leadCount := min(5, len(digest.Stories))
+	storyCount := min(settings.MaxStories, len(digest.Stories))
+	digest.Stories = digest.Stories[:storyCount]
+	leadCount := min(settings.LeadStoryCount, len(digest.Stories))
 	view := editionView{
 		Digest: digest, Greeting: greeting, LeadStories: digest.Stories[:leadCount],
 		Sections: groupStories(digest.Stories[leadCount:]), Subject: subject,
-		Preheader: preheader, UnsubscribeURL: unsubscribeURL,
+		Preheader: preheader, IntroText: settings.IntroText, FooterText: settings.FooterText,
+		UnsubscribeURL: unsubscribeURL,
 	}
 	var htmlOutput bytes.Buffer
 	if err := newsletterHTML.Execute(&htmlOutput, view); err != nil {
@@ -94,6 +115,7 @@ var newsletterHTML = htmltemplate.Must(htmltemplate.New("newsletter").Funcs(html
 </td></tr>
 <tr><td class="pad" style="padding:28px 42px 8px">
 <p style="margin:0 0 12px;font-size:17px;line-height:1.75">{{.Greeting}}</p>
+{{if .IntroText}}<p style="margin:0 0 12px;font-size:16px;line-height:1.8;color:#3d3a35">{{.IntroText}}</p>{{end}}
 <p style="margin:0;font-size:15px;line-height:1.7;color:#55524c">පුවත් {{.Digest.ArticleCount}} · සිදුවීම් {{.Digest.EventCount}} · මූලාශ්‍ර {{.Digest.SourceCount}}</p>
 </td></tr>
 {{if .LeadStories}}
@@ -119,7 +141,7 @@ var newsletterHTML = htmltemplate.Must(htmltemplate.New("newsletter").Funcs(html
 </td></tr>
 {{end}}{{end}}
 <tr><td class="pad" style="padding:28px 42px;background:#f8f7f4;color:#68645d;font-size:12px;line-height:1.7">
-<p style="margin:0 0 8px">මෙම සංග්‍රහය ප්‍රකාශිත පුවත් සහ මූලාශ්‍ර-අතර සාරාංශ මත ස්වයංක්‍රීයව සකස් කර ඇත. සම්පූර්ණ විස්තර සඳහා සබැඳි විවෘත කරන්න.</p>
+<p style="margin:0 0 8px">{{.FooterText}}</p>
 <p style="margin:0"><a href="{{.UnsubscribeURL}}" style="color:#52504b">පුවත් සංග්‍රහයෙන් ඉවත් වන්න</a></p>
 </td></tr></table></td></tr></table></body></html>`))
 
@@ -129,6 +151,9 @@ var newsletterText = texttemplate.Must(texttemplate.New("newsletter-text").Funcs
 {{.Preheader}}
 
 {{.Greeting}}
+{{if .IntroText}}
+{{.IntroText}}
+{{end}}
 
 {{if .LeadStories}}අද දැනගත යුතු ප්‍රධාන කරුණු
 {{range .LeadStories}}

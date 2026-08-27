@@ -17,6 +17,7 @@ import { SourceDetailPage } from './pages/source-detail-page'
 import { SourceFeedPage } from './pages/source-feed-page'
 import { SourcesPage } from './pages/sources-page'
 import { WatchTowerPage } from './pages/watch-tower-page'
+import { WorkflowsPage } from './pages/workflows-page'
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage />, errorElement: <RouteErrorPage /> },
@@ -36,6 +37,7 @@ export const router = createBrowserRouter([
       { path: 'queue', element: <QueuePage /> },
       { path: 'complaints', element: <ComplaintsPage /> },
       { path: 'routing', element: <RoutingPage /> },
+      { path: 'workflows', element: <WorkflowsPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: 'watch-tower', element: <WatchTowerPage /> },
       { path: 'mailing-list', element: <MailingListPage /> },

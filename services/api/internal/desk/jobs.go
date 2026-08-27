@@ -54,61 +54,41 @@ const queueEntries = `
 WITH pipeline_entries AS (
   SELECT
     'pipeline:' || run.id::text AS id,
-    job.id AS job_id,
+    NULL::bigint AS job_id,
     run.id::text AS run_id,
     run.article_id::text AS article_id,
     article.headline AS title,
     source.name AS source,
     COALESCE(source.icon_url, '') AS source_icon,
     'article.pipeline'::text AS kind,
-    COALESCE(job.queue, 'analysis') AS queue,
-    CASE
-      WHEN run.status = 'running' OR states.running > 0 THEN 'processing'
-      WHEN states.failed > 0 AND states.succeeded > 0 THEN 'partially_completed'
-      WHEN states.failed > 0 THEN 'failed'
-      WHEN states.total > 0 AND states.terminal = states.total THEN 'completed'
-      WHEN run.status = 'succeeded' THEN 'completed'
-      WHEN run.status = 'failed' THEN 'failed'
-      ELSE 'queued'
-    END AS status,
-    COALESCE(job.state, CASE WHEN run.status = 'running' THEN 'running' ELSE 'available' END) AS river_state,
+    'analysis'::text AS queue,
+    run.monitor_status AS status,
+    CASE run.monitor_status
+      WHEN 'processing' THEN 'running'
+      WHEN 'completed' THEN 'completed'
+      WHEN 'partially_completed' THEN 'discarded'
+      WHEN 'failed' THEN 'discarded'
+      ELSE 'available'
+    END AS river_state,
     run.trigger,
-    COALESCE(job.attempt, run.attempt)::integer AS attempt,
-    COALESCE(job.max_attempts, 5)::integer AS max_attempts,
+    run.attempt::integer AS attempt,
+    5::integer AS max_attempts,
     run.current_step,
     run.created_at,
-    COALESCE(job.attempted_at, run.started_at) AS started_at,
-    COALESCE(job.finalized_at, run.finished_at) AS finished_at,
+    run.started_at,
+    run.finished_at,
     CASE WHEN run.started_at IS NULL THEN NULL ELSE
       GREATEST(0, (extract(epoch FROM COALESCE(run.finished_at, clock_timestamp()) - run.started_at) * 1000)::bigint)
     END AS duration_ms,
-    COALESCE(run.last_error, job.error_detail) AS error_detail,
-    job.error_trace,
+    run.last_error AS error_detail,
+    NULL::text AS error_trace,
     run.status AS run_status
   FROM article_pipeline_runs run
   JOIN articles article ON article.id = run.article_id
   JOIN sources source ON source.id = article.source_id
-  LEFT JOIN LATERAL (
-    SELECT river.id, river.queue, river.state::text AS state, river.attempt, river.max_attempts,
-           river.attempted_at, river.finalized_at,
-           CASE WHEN cardinality(river.errors) > 0 THEN river.errors[cardinality(river.errors)]->>'error' END AS error_detail,
-           CASE WHEN cardinality(river.errors) > 0 THEN river.errors[cardinality(river.errors)]->>'trace' END AS error_trace
-    FROM river_job river
-    WHERE river.kind = 'article.pipeline' AND river.args->>'run_id' = run.id::text
-    ORDER BY river.created_at DESC, river.id DESC
-    LIMIT 1
-  ) job ON true
-  CROSS JOIN LATERAL (
-    SELECT count(*)::integer AS total,
-           count(*) FILTER (WHERE step.status = 'running')::integer AS running,
-           count(*) FILTER (WHERE step.status = 'failed')::integer AS failed,
-           count(*) FILTER (WHERE step.status = 'succeeded')::integer AS succeeded,
-           count(*) FILTER (WHERE step.status IN ('succeeded', 'skipped'))::integer AS terminal
-    FROM article_pipeline_steps step WHERE step.run_id = run.id
-  ) states
 	WHERE ($3 = '' OR $3 = 'article.pipeline')
 	  AND ($4::timestamptz IS NULL OR run.created_at >= $4)
-	  AND ($2 = '' OR COALESCE(job.queue, 'analysis') = $2)
+	  AND ($2 = '' OR $2 = 'analysis')
 ), generic_entries AS (
   SELECT
     'river:' || job.id::text AS id,

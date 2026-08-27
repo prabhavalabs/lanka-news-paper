@@ -35,10 +35,10 @@ const navigation: NavItem[] = [
   { title: 'Queue monitor', url: '/jobs', icon: ListTreeIcon },
   { title: 'Editorial queue', url: '/queue', icon: ListChecksIcon },
   { title: 'Complaints', url: '/complaints', icon: MessageSquareWarningIcon },
-  { title: 'AI & routing', url: '/routing', icon: SparklesIcon },
 ]
 
 const administratorNavigation: NavItem[] = [
+  { title: 'Workflow manager', url: '/workflows', icon: SparklesIcon },
   { title: 'Mailing list', url: '/mailing-list', icon: MailIcon },
   { title: 'Settings', url: '/settings', icon: SettingsIcon },
 ]

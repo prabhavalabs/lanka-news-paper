@@ -14,6 +14,36 @@ type newsletterAdminHandler struct {
 	repository newsletter.Repository
 }
 
+func (handler newsletterAdminHandler) settings(w http.ResponseWriter, request *http.Request) {
+	if !requireAdministrator(w, request) {
+		return
+	}
+	if request.Method == http.MethodGet {
+		settings, err := handler.repository.GetSettings(request.Context())
+		if err != nil {
+			writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not load newsletter settings.")
+			return
+		}
+		writeJSON(w, http.StatusOK, settings)
+		return
+	}
+	var input newsletter.Settings
+	if err := decodeJSON(request, &input); err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
+		return
+	}
+	settings, err := handler.repository.UpdateSettings(request.Context(), input, currentUser(request).ID)
+	if errors.Is(err, newsletter.ErrInvalidSettings) {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "Check the timezone, delivery hour, story limits, and template lengths.")
+		return
+	}
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not update newsletter settings.")
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
 func (handler newsletterAdminHandler) subscribers(w http.ResponseWriter, request *http.Request) {
 	if !requireAdministrator(w, request) {
 		return
@@ -77,7 +107,8 @@ func writeNewsletterProblem(w http.ResponseWriter, err error) {
 	case errors.Is(err, newsletter.ErrSubscriberMissing):
 		writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Not found", err.Error())
 	case errors.Is(err, newsletter.ErrConsentRequired), errors.Is(err, newsletter.ErrInvalidEmail),
-		errors.Is(err, newsletter.ErrInvalidName), errors.Is(err, newsletter.ErrInvalidStatus):
+		errors.Is(err, newsletter.ErrInvalidName), errors.Is(err, newsletter.ErrInvalidStatus),
+		errors.Is(err, newsletter.ErrInvalidSettings):
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
 	default:
 		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not update the newsletter recipient.")

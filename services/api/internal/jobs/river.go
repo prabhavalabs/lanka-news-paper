@@ -483,7 +483,7 @@ func (schedule *dailyAtSchedule) Next(current time.Time) time.Time {
 }
 
 func periodicJobDefinitions(newsletterSchedule ...river.PeriodicSchedule) []periodicJobDefinition {
-	dailyNewsletterSchedule := newDailyAtSchedule(time.FixedZone("Asia/Colombo", 5*3600+30*60), 8)
+	var dailyNewsletterSchedule river.PeriodicSchedule
 	if len(newsletterSchedule) > 0 && newsletterSchedule[0] != nil {
 		dailyNewsletterSchedule = newsletterSchedule[0]
 	}
@@ -526,7 +526,7 @@ func periodicJobDefinitions(newsletterSchedule ...river.PeriodicSchedule) []peri
 				Name:        "Morning newsletter",
 				Description: "Builds and sends the previous 24 hours of news to active recipients.",
 				Queue:       river.QueueDefault,
-				Interval:    24 * time.Hour,
+				Interval:    time.Hour,
 				RunOnStart:  false,
 				Schedule:    dailyNewsletterSchedule,
 			},
@@ -567,12 +567,8 @@ func PeriodicJobCatalog() []PeriodicJobMetadata {
 	return catalog
 }
 
-func configuredPeriodicJobs(newsletterService *newsletter.Service) []*river.PeriodicJob {
-	var newsletterSchedule river.PeriodicSchedule
-	if newsletterService != nil {
-		newsletterSchedule = newDailyAtSchedule(newsletterService.Location(), newsletterService.SendHour())
-	}
-	definitions := periodicJobDefinitions(newsletterSchedule)
+func configuredPeriodicJobs(_ *newsletter.Service) []*river.PeriodicJob {
+	definitions := periodicJobDefinitions()
 	configured := make([]*river.PeriodicJob, 0, len(definitions))
 	for _, definition := range definitions {
 		schedule := definition.Schedule

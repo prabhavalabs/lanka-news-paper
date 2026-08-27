@@ -560,6 +560,44 @@ func (handler adminHandler) jobs(w http.ResponseWriter, request *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (handler adminHandler) queueCleanup(w http.ResponseWriter, request *http.Request) {
+	if !requireAdministrator(w, request) {
+		return
+	}
+	scope := request.URL.Query().Get("scope")
+	if request.Method == http.MethodGet {
+		preview, err := handler.desk.PreviewQueueCleanup(request.Context(), scope)
+		if errors.Is(err, desk.ErrInvalidQueueCleanupScope) {
+			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+			return
+		}
+		if err != nil {
+			writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not preview queue cleanup.")
+			return
+		}
+		writeJSON(w, http.StatusOK, preview)
+		return
+	}
+	var input struct {
+		Scope        string `json:"scope"`
+		Confirmation string `json:"confirmation"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
+		return
+	}
+	result, err := handler.desk.CleanupQueue(request.Context(), input.Scope, input.Confirmation, currentUser(request).ID)
+	if errors.Is(err, desk.ErrInvalidQueueCleanupScope) || errors.Is(err, desk.ErrInvalidQueueCleanupConfirmation) {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
+		return
+	}
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not clean queue history.")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (handler adminHandler) jobArtifacts(w http.ResponseWriter, request *http.Request) {
 	result, err := handler.desk.QueueJobArtifacts(request.Context(), request.PathValue("id"))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -903,6 +941,9 @@ func (handler adminHandler) updateEndpoint(w http.ResponseWriter, request *http.
 
 func (handler adminHandler) profiles(w http.ResponseWriter, request *http.Request) {
 	if request.Method == http.MethodPost {
+		if !requireAdministrator(w, request) {
+			return
+		}
 		var body struct {
 			Task  string `json:"task"`
 			Model string `json:"model"`

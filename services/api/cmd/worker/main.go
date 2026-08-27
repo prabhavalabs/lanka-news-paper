@@ -78,17 +78,12 @@ func run(logger *slog.Logger) error {
 	if err := newsletterStore.ImportConfiguredRecipient(processContext, loaded.Newsletter.ConfiguredRecipient); err != nil {
 		return err
 	}
-	newsletterLocation, err := time.LoadLocation(loaded.Newsletter.Timezone)
-	if err != nil {
-		return fmt.Errorf("load newsletter timezone: %w", err)
-	}
 	newsletterService := newsletter.NewService(
 		newsletterStore,
 		newsletter.NewResendSender(loaded.Newsletter.ResendAPIKey, nil),
+		model,
 		newsletter.RuntimeConfig{
-			BaseURL: loaded.Newsletter.BaseURL, Enabled: loaded.Newsletter.Enabled,
-			From: loaded.Newsletter.From, Location: newsletterLocation,
-			SendHour: loaded.Newsletter.SendHour,
+			BaseURL: loaded.Newsletter.BaseURL, From: loaded.Newsletter.From,
 		},
 		time.Now,
 	)

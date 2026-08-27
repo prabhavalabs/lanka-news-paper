@@ -50,6 +50,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	watchTower := watchTowerHandler{service: dependencies.WatchTower}
 	newsletterAdmin := newsletterAdminHandler{repository: dependencies.Newsletter}
 	newsletterPublic := newsletterUnsubscribeHandler{repository: dependencies.Newsletter}
+	workflowAdmin := workflowAdminHandler{gateway: dependencies.LLM}
 
 	mux.HandleFunc("GET /api/v1/health/live", health.liveness)
 	mux.HandleFunc("GET /api/v1/health/ready", health.readiness)
@@ -96,6 +97,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("GET /api/admin/queue", admin.queue)
 	protected.HandleFunc("GET /api/admin/jobs", admin.jobs)
 	protected.HandleFunc("GET /api/admin/jobs/stream", admin.monitorStream)
+	protected.HandleFunc("GET /api/admin/jobs/cleanup", admin.queueCleanup)
+	protected.HandleFunc("POST /api/admin/jobs/cleanup", admin.queueCleanup)
 	protected.HandleFunc("GET /api/admin/jobs/{id}", admin.jobArtifacts)
 	protected.HandleFunc("GET /api/admin/cron-jobs", admin.cronJobs)
 	protected.HandleFunc("GET /api/admin/articles", admin.articles)
@@ -140,6 +143,13 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("POST /api/admin/newsletter/subscribers", newsletterAdmin.subscribers)
 	protected.HandleFunc("POST /api/admin/newsletter/subscribers/{id}", newsletterAdmin.subscriber)
 	protected.HandleFunc("DELETE /api/admin/newsletter/subscribers/{id}", newsletterAdmin.subscriber)
+	protected.HandleFunc("GET /api/admin/newsletter/settings", newsletterAdmin.settings)
+	protected.HandleFunc("POST /api/admin/newsletter/settings", newsletterAdmin.settings)
+	protected.HandleFunc("GET /api/admin/workflows", workflowAdmin.workflows)
+	protected.HandleFunc("POST /api/admin/workflows/{task}", workflowAdmin.workflow)
+	protected.HandleFunc("GET /api/admin/workflows/feedback", workflowAdmin.feedback)
+	protected.HandleFunc("POST /api/admin/workflows/feedback", workflowAdmin.feedback)
+	protected.HandleFunc("POST /api/admin/workflows/feedback/{id}", workflowAdmin.reviewFeedback)
 	mux.Handle("/api/admin/", withCSRF(auth.requireAuth(protected)))
 
 	return withRecovery(withRequestID(withSecurityHeaders(withCORS(http.MaxBytesHandler(mux, 1<<20), dependencies.AllowedOrigins))))

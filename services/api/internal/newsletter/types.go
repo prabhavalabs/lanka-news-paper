@@ -14,6 +14,7 @@ var (
 	ErrInvalidEmail      = errors.New("a valid recipient email is required")
 	ErrInvalidName       = errors.New("recipient name must be 160 characters or fewer")
 	ErrInvalidStatus     = errors.New("newsletter recipient status is invalid")
+	ErrInvalidSettings   = errors.New("newsletter settings are invalid")
 	ErrSubscriberMissing = errors.New("newsletter recipient was not found")
 )
 
@@ -50,9 +51,16 @@ type SubscriberSummary struct {
 }
 
 type Settings struct {
-	Enabled  bool   `json:"enabled"`
-	Timezone string `json:"timezone"`
-	SendHour int    `json:"send_hour"`
+	Enabled           bool      `json:"enabled"`
+	Timezone          string    `json:"timezone"`
+	SendHour          int       `json:"send_hour"`
+	MaxStories        int       `json:"max_stories"`
+	LeadStoryCount    int       `json:"lead_story_count"`
+	SubjectTemplate   string    `json:"subject_template"`
+	PreheaderTemplate string    `json:"preheader_template"`
+	IntroText         string    `json:"intro_text"`
+	FooterText        string    `json:"footer_text"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type SubscriberList struct {
@@ -63,6 +71,8 @@ type SubscriberList struct {
 
 type Repository interface {
 	ListSubscribers(ctx context.Context) (SubscriberList, error)
+	GetSettings(ctx context.Context) (Settings, error)
+	UpdateSettings(ctx context.Context, settings Settings, actor uuid.UUID) (Settings, error)
 	CreateSubscriber(ctx context.Context, input SubscriberInput, actor uuid.UUID) (Subscriber, error)
 	UpdateSubscriber(ctx context.Context, id uuid.UUID, input SubscriberInput, actor uuid.UUID) (Subscriber, error)
 	DeleteSubscriber(ctx context.Context, id uuid.UUID, actor uuid.UUID) error

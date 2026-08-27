@@ -18,6 +18,26 @@ type Edition struct {
 	Preheader string
 }
 
+func (store *Store) LoadEdition(ctx context.Context, editionDate string) (Edition, bool, error) {
+	var edition Edition
+	var storedDigest []byte
+	err := store.pool.QueryRow(ctx, `
+		SELECT id, subject, preheader, digest
+		FROM newsletter_editions
+		WHERE edition_date = $1::date
+	`, editionDate).Scan(&edition.ID, &edition.Subject, &edition.Preheader, &storedDigest)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Edition{}, false, nil
+	}
+	if err != nil {
+		return Edition{}, false, fmt.Errorf("load newsletter edition: %w", err)
+	}
+	if err := json.Unmarshal(storedDigest, &edition.Digest); err != nil {
+		return Edition{}, false, fmt.Errorf("decode newsletter edition: %w", err)
+	}
+	return edition, true, nil
+}
+
 func (store *Store) CreateOrLoadEdition(ctx context.Context, digest Digest, subject, preheader string) (Edition, error) {
 	digestJSON, err := json.Marshal(digest)
 	if err != nil {

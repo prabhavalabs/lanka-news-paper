@@ -63,6 +63,7 @@ func NewGateway(pool *pgxpool.Pool) *Gateway {
 }
 
 func (gateway *Gateway) Complete(ctx context.Context, request Request) (Response, error) {
+	request = gateway.applyWorkflow(ctx, request)
 	var profile providerProfile
 	err := gateway.pool.QueryRow(ctx, `
 		SELECT p.id, p.kind, COALESCE(p.base_url, ''), COALESCE(p.api_key_ref, ''), t.model, t.timeout_seconds
@@ -83,6 +84,7 @@ func (gateway *Gateway) Complete(ctx context.Context, request Request) (Response
 // Administrative backfills use this path so a failed provider request remains
 // visible and retryable instead of silently falling back to keyword rules.
 func (gateway *Gateway) CompleteWithModel(ctx context.Context, request Request, providerID, model string) (Response, error) {
+	request = gateway.applyWorkflow(ctx, request)
 	providerID = strings.TrimSpace(providerID)
 	model = strings.TrimSpace(model)
 	if providerID != "openrouter" {
@@ -575,9 +577,9 @@ func decodeOpenRouterModels(reader io.Reader) ([]Model, error) {
 			ID: value.ID, Name: value.Name, ContextLength: value.ContextLength,
 			InputPricePerMillion: inputPrice, OutputPricePerMillion: outputPrice,
 			InputModalities: append([]string{}, value.Architecture.InputModalities...), OutputModalities: append([]string{}, value.Architecture.OutputModalities...),
-			SupportedParameters: append([]string{}, value.SupportedParameters...), CompatibleTasks: make([]string, 0, 4),
+			SupportedParameters: append([]string{}, value.SupportedParameters...), CompatibleTasks: make([]string, 0, len(orderedTasks)),
 		}
-		for _, task := range []string{"classify", "narration_framing", "watch_tower_retrieval", "watch_tower_answer"} {
+		for _, task := range orderedTasks {
 			if modelSupportsTask(model, task) {
 				model.CompatibleTasks = append(model.CompatibleTasks, task)
 			}
@@ -603,10 +605,10 @@ func modelSupportsTask(model Model, task string) bool {
 	if !contains(model.OutputModalities, "text") || !contains(model.SupportedParameters, "max_tokens") {
 		return false
 	}
-	if task == "narration_framing" || task == "watch_tower_retrieval" || task == "watch_tower_answer" {
-		return contains(model.SupportedParameters, "structured_outputs") || contains(model.SupportedParameters, "response_format")
+	if _, ok := taskDefinitions[task]; !ok {
+		return false
 	}
-	return task == "classify"
+	return task == "classify" || contains(model.SupportedParameters, "structured_outputs") || contains(model.SupportedParameters, "response_format")
 }
 
 func contains(values []string, expected string) bool {
@@ -629,6 +631,14 @@ type TaskProfile struct {
 }
 
 var taskDefinitions = map[string]struct{ name, purpose string }{
+	"content_cleaning": {
+		name:    "Content cleaning",
+		purpose: "Turns captured publisher pages into faithful, readable Markdown.",
+	},
+	"article_summary": {
+		name:    "Article summary",
+		purpose: "Creates factual summaries and key points from cleaned articles.",
+	},
 	"classify": {
 		name:    "Classification",
 		purpose: "Assigns a newsroom category when keyword confidence is low.",
@@ -636,6 +646,14 @@ var taskDefinitions = map[string]struct{ name, purpose string }{
 	"narration_framing": {
 		name:    "Narration analysis",
 		purpose: "Identifies political-economic framing and supporting evidence.",
+	},
+	"event_synthesis": {
+		name:    "Event synthesis",
+		purpose: "Combines multiple reports about one event while preserving source differences.",
+	},
+	"admin_article_analysis": {
+		name:    "Administrative analysis",
+		purpose: "Produces detailed structured analysis for editorial review.",
 	},
 	"watch_tower_retrieval": {
 		name:    "Watch Tower retrieval",
@@ -645,17 +663,29 @@ var taskDefinitions = map[string]struct{ name, purpose string }{
 		name:    "Watch Tower answers",
 		purpose: "Synthesizes cited answers from the retrieved newsroom evidence.",
 	},
+	"newsletter_editorial": {
+		name:    "Morning newsletter",
+		purpose: "Prepares the last-24-hours email edition from approved published stories.",
+	},
+}
+
+var orderedTasks = []string{
+	"content_cleaning", "article_summary", "classify", "event_synthesis",
+	"narration_framing", "admin_article_analysis", "watch_tower_retrieval",
+	"watch_tower_answer", "newsletter_editorial",
 }
 
 func (gateway *Gateway) ListProfiles(ctx context.Context) ([]TaskProfile, error) {
 	rows, err := gateway.pool.Query(ctx, `
 		SELECT task, provider_id, model, timeout_seconds, enabled
 		FROM llm_task_profiles
-		WHERE task IN ('classify', 'narration_framing', 'watch_tower_retrieval', 'watch_tower_answer')
+		WHERE task IN (
+		  'content_cleaning', 'article_summary', 'classify', 'event_synthesis',
+		  'narration_framing', 'admin_article_analysis', 'watch_tower_retrieval',
+		  'watch_tower_answer', 'newsletter_editorial'
+		)
 		  AND provider_id = 'openrouter'
-		ORDER BY CASE task
-		  WHEN 'classify' THEN 1 WHEN 'narration_framing' THEN 2
-		  WHEN 'watch_tower_retrieval' THEN 3 ELSE 4 END
+		ORDER BY task
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("list LLM profiles: %w", err)
