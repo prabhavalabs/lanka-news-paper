@@ -20,6 +20,9 @@ Cite factual claims with evidence numbers such as [1] or [2]. Never invent a cit
 
 const retrievalSystemPrompt = `Convert an editor's question into a compact newsroom search plan. Return useful search terms in both the language of the question and Sinhala when translation is possible. Choose one category only when clearly applicable. Do not answer the question.`
 
+const compactRetryDirective = `COMPACT RETRY
+The previous structured answer exceeded the output limit. Return a complete JSON object this time. Limit the briefing to at most 8 prioritized developments and 350 words. Shorten explanations before omitting the closing JSON syntax, cited_indices, or follow_up_questions.`
+
 var watchTowerSchema = map[string]any{
 	"type": "object",
 	"properties": map[string]any{
@@ -129,18 +132,28 @@ func (service *Service) Ask(ctx context.Context, userID, threadID uuid.UUID, que
 	if len(articles) == 0 {
 		draft.Content = emptyAnswer(settings.ResponseLanguage, scope.Label)
 	} else {
-		response, completeErr := service.model.Complete(ctx, llm.Request{
+		answerRequest := llm.Request{
 			Task: "watch_tower_answer", System: answerSystemPrompt(settings.ResponseLanguage),
 			Input:            buildPrompt(question, conversation.Messages, scope, articles),
 			JSONSchema:       watchTowerSchema,
-			MaxTokens:        1800,
+			MaxTokens:        3200,
 			ProviderSort:     "throughput",
 			DisableReasoning: true,
-		})
+		}
+		response, completeErr := service.model.Complete(ctx, answerRequest)
 		if completeErr != nil {
 			return Exchange{}, fmt.Errorf("answer with newsroom evidence: %w", completeErr)
 		}
 		answer, parseErr := parseModelAnswer(response.Text)
+		if response.FinishReason == "length" || parseErr != nil {
+			answerRequest.System += "\n\n" + compactRetryDirective
+			answerRequest.MaxTokens = 4000
+			response, completeErr = service.model.Complete(ctx, answerRequest)
+			if completeErr != nil {
+				return Exchange{}, fmt.Errorf("retry compact newsroom answer: %w", completeErr)
+			}
+			answer, parseErr = parseModelAnswer(response.Text)
+		}
 		if parseErr != nil {
 			return Exchange{}, parseErr
 		}
@@ -169,7 +182,7 @@ func answerSystemPrompt(language string) string {
 	if language == LanguageEnglish {
 		directive = "Write the complete answer in English, including headings and follow-up questions. Only answer in another language when the editor explicitly asks you to do so."
 	}
-	return watchTowerSystemPrompt + "\n\nRESPONSE LANGUAGE\n" + directive
+	return watchTowerSystemPrompt + "\n\nRESPONSE LANGUAGE\n" + directive + "\n\nANSWER BUDGET\nFor broad briefings, cover no more than 10 prioritized developments and keep the complete answer under 500 words. Always reserve enough output to close the JSON object and include cited_indices and follow_up_questions."
 }
 
 func emptyAnswer(language, label string) string {

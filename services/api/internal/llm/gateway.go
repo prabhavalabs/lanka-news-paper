@@ -34,9 +34,10 @@ type Request struct {
 }
 
 type Response struct {
-	Text     string
-	Provider string
-	Model    string
+	Text         string
+	Provider     string
+	Model        string
+	FinishReason string
 }
 
 type providerProfile struct {
@@ -138,14 +139,18 @@ func (gateway *Gateway) completeWithProfile(ctx context.Context, request Request
 		}
 		return Response{}, callErr
 	}
-	gateway.finishCall(recordContext, callID, "ok", latencyMS, result, nil)
+	outcome := "ok"
+	if result.FinishReason == "length" {
+		outcome = "truncated"
+	}
+	gateway.finishCall(recordContext, callID, outcome, latencyMS, result, nil)
 	gateway.logPipeline(recordContext, request, "info", "provider_response_completed", "Structured response completed", map[string]any{
 		"call_id": callID, "provider": profile.id, "model": profile.model,
 		"latency_ms": latencyMS, "first_token_ms": result.FirstTokenMS,
 		"input_tokens": result.InputTokens, "output_tokens": result.OutputTokens,
 		"finish_reason": result.FinishReason,
 	}, time.Now())
-	return Response{Text: result.Text, Provider: profile.id, Model: profile.model}, nil
+	return Response{Text: result.Text, Provider: profile.id, Model: profile.model, FinishReason: result.FinishReason}, nil
 }
 
 func (gateway *Gateway) fallback(request Request) Response {

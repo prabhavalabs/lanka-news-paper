@@ -75,6 +75,34 @@ func TestServiceAskPersistsAGroundedAnswer(t *testing.T) {
 	require.Equal(t, result.Assistant.Citations, repository.savedAssistant.Citations)
 }
 
+func TestServiceAskRetriesATruncatedAnswerWithACompactBrief(t *testing.T) {
+	threadID := uuid.New()
+	userID := uuid.New()
+	repository := &fakeRepository{
+		settings:     Settings{ResponseLanguage: LanguageSinhala},
+		conversation: Conversation{Thread: Thread{ID: threadID, UserID: userID, Title: "Daily briefing"}},
+		articles: []ArticleEvidence{{
+			ID: uuid.New(), Headline: "Policy rates held", Source: "Daily News",
+			Category: "Economy", Summary: "The central bank kept its policy rates unchanged.",
+		}},
+	}
+	model := &fakeCompleter{responses: []llm.Response{
+		{Text: `{"answer_markdown":"An unfinished`, FinishReason: "length"},
+		{Text: `{"answer_markdown":"## කෙටි සාරාංශය\n\nප්‍රතිපත්ති පොලී අනුපාත නොවෙනස්ව පවතී [1].","cited_indices":[1],"follow_up_questions":[]}`, Provider: "openrouter", Model: "test-model", FinishReason: "stop"},
+	}}
+	service := NewService(repository, model, time.Now)
+
+	result, err := service.Ask(context.Background(), userID, threadID, "What happened in the economy today?")
+
+	require.NoError(t, err)
+	require.Len(t, model.requests, 2)
+	require.Equal(t, 3200, model.requests[0].MaxTokens)
+	require.Equal(t, 4000, model.requests[1].MaxTokens)
+	require.Contains(t, model.requests[1].System, "COMPACT RETRY")
+	require.Contains(t, result.Assistant.Content, "කෙටි සාරාංශය")
+	require.Equal(t, "openrouter", repository.savedAssistant.Provider)
+}
+
 func TestServiceAskRejectsBlankQuestions(t *testing.T) {
 	service := NewService(&fakeRepository{}, &fakeCompleter{}, time.Now)
 
