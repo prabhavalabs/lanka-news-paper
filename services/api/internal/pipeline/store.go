@@ -30,19 +30,33 @@ latest, politics, economy, world, crime, health, environment, sport, education, 
 Use the article meaning, not isolated keywords. Return only the lowercase slug and nothing else.`
 
 type Store struct {
-	pool     *pgxpool.Pool
-	model    llm.Completer
-	clusters *cluster.Store
-	politics *politics.Store
+	pool              *pgxpool.Pool
+	model             llm.Completer
+	clusters          *cluster.Store
+	politics          *politics.Store
+	adminProviderSort string
 }
 
 type modelSelection struct {
-	provider string
-	model    string
+	provider     string
+	model        string
+	providerSort string
 }
 
-func NewStore(pool *pgxpool.Pool, model llm.Completer, clusters *cluster.Store, politicsStore *politics.Store) *Store {
-	return &Store{pool: pool, model: model, clusters: clusters, politics: politicsStore}
+type Option func(*Store)
+
+func WithAdminProviderSort(value string) Option {
+	return func(store *Store) {
+		store.adminProviderSort = normalizeProviderSort(value)
+	}
+}
+
+func NewStore(pool *pgxpool.Pool, model llm.Completer, clusters *cluster.Store, politicsStore *politics.Store, options ...Option) *Store {
+	store := &Store{pool: pool, model: model, clusters: clusters, politics: politicsStore}
+	for _, option := range options {
+		option(store)
+	}
+	return store
 }
 
 func (store *Store) Start(ctx context.Context, articleID, trigger string) (string, error) {
@@ -291,6 +305,7 @@ type stepResult struct {
 
 func (store *Store) complete(ctx context.Context, request llm.Request, selection modelSelection) (llm.Response, error) {
 	if selection.provider != "" {
+		request.ProviderSort = selection.providerSort
 		return store.model.CompleteWithModel(ctx, request, selection.provider, selection.model)
 	}
 	return store.model.Complete(ctx, request)
@@ -305,17 +320,18 @@ func (store *Store) Process(ctx context.Context, runID string) error {
 		return store.skipUnapprovedRun(ctx, runID)
 	}
 
-	var articleID string
+	var articleID, trigger string
 	var selection modelSelection
 	if err := store.pool.QueryRow(ctx, `
 		UPDATE article_pipeline_runs
 		SET status = 'running', attempt = attempt + 1, started_at = COALESCE(started_at, clock_timestamp()),
 		    finished_at = NULL, last_error = NULL, updated_at = clock_timestamp()
 		WHERE id = $1 AND status IN ('queued', 'running', 'failed')
-		RETURNING article_id::text, COALESCE(provider_id, ''), COALESCE(provider_model, '')
-	`, runID).Scan(&articleID, &selection.provider, &selection.model); err != nil {
+		RETURNING article_id::text, trigger, COALESCE(provider_id, ''), COALESCE(provider_model, '')
+	`, runID).Scan(&articleID, &trigger, &selection.provider, &selection.model); err != nil {
 		return fmt.Errorf("start pipeline run %s: %w", runID, err)
 	}
+	selection = store.routeSelection(trigger, selection)
 
 	rows, err := store.pool.Query(ctx, `
 		SELECT id::text, name, position, status, attempt, max_attempts
@@ -490,12 +506,30 @@ func (store *Store) execute(ctx context.Context, articleID, runID string, item s
 	case "event_clustering":
 		return store.cluster(ctx, articleID)
 	case "stance_evaluation", "narration_analysis":
-		result, err := store.politics.AnalyzeArticleWithModel(ctx, articleID, runID, item.id, selection.provider, selection.model)
+		result, err := store.politics.AnalyzeArticleWithRouting(
+			ctx, articleID, runID, item.id, selection.provider, selection.model, selection.providerSort,
+		)
 		return stepResult{output: result}, err
 	case "event_synthesis":
 		return store.synthesizeEvent(ctx, articleID, runID, item.id, selection)
 	default:
 		return stepResult{}, fmt.Errorf("unknown pipeline step %q", item.name)
+	}
+}
+
+func (store *Store) routeSelection(trigger string, selection modelSelection) modelSelection {
+	if trigger == "admin_backfill" && selection.provider == "openrouter" {
+		selection.providerSort = store.adminProviderSort
+	}
+	return selection
+}
+
+func normalizeProviderSort(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "price", "throughput", "latency":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
 	}
 }
 

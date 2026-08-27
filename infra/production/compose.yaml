@@ -4,6 +4,8 @@ x-app-environment: &app-environment
   SNAP_DATABASE_URL: ${SNAP_DATABASE_URL:?set SNAP_DATABASE_URL}
   SNAP_ENV: production
   OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY}
+  SNAP_ADMIN_ANALYSIS_PROVIDER_SORT: ${SNAP_ADMIN_ANALYSIS_PROVIDER_SORT:-throughput}
+  SNAP_ADMIN_ANALYSIS_WORKERS: ${SNAP_ADMIN_ANALYSIS_WORKERS:-48}
   CODEX_HOME: /data/codex
   CODEX_BACKFILL_MODELS: ${CODEX_BACKFILL_MODELS:-gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol}
   SNAP_MEDIA_LOCAL_DIR: /data/media
@@ -82,8 +84,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    mem_limit: 768m
-    cpus: 1
+    mem_limit: 2g
+    cpus: 4
 
   codex-login:
     image: ghcr.io/prabhavalabs/lanka-news-paper-api:${IMAGE_TAG:?set IMAGE_TAG}

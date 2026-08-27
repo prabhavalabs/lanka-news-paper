@@ -70,7 +70,7 @@ func parseQueueMonitorQuery(request *http.Request) (queueMonitorQuery, error) {
 	if err != nil {
 		return queueMonitorQuery{}, err
 	}
-	queue, err := parseFilter(request, "queue", "default", "analysis", "crawl", "admin-analysis")
+	queue, err := parseFilter(request, "queue", "default", "analysis", "crawl", "admin-analysis-dispatch", "admin-analysis")
 	if err != nil {
 		return queueMonitorQuery{}, err
 	}

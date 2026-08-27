@@ -39,24 +39,44 @@ func TestPeriodicJobCatalog(t *testing.T) {
 }
 
 func TestQueueCatalog(t *testing.T) {
+	t.Setenv("SNAP_ADMIN_ANALYSIS_WORKERS", "")
 	catalog := QueueCatalog()
 
-	require.Len(t, catalog, 4)
+	require.Len(t, catalog, 5)
 	require.Equal(t, "default", catalog[0].Name)
 	require.Equal(t, 2, catalog[0].MaxWorkers)
 	require.Equal(t, "analysis", catalog[1].Name)
 	require.Equal(t, 5, catalog[1].MaxWorkers)
 	require.Equal(t, "crawl", catalog[2].Name)
 	require.Equal(t, 1, catalog[2].MaxWorkers)
-	require.Equal(t, "admin-analysis", catalog[3].Name)
+	require.Equal(t, "admin-analysis-dispatch", catalog[3].Name)
 	require.Equal(t, 1, catalog[3].MaxWorkers)
+	require.Equal(t, "admin-analysis", catalog[4].Name)
+	require.Equal(t, 1, catalog[4].MaxWorkers)
 }
 
-func TestAdminAnalysisJobsUseIsolatedLowConcurrencyQueue(t *testing.T) {
+func TestQueueCatalogUsesConfiguredAdministrativeConcurrency(t *testing.T) {
+	t.Setenv("SNAP_ADMIN_ANALYSIS_WORKERS", "48")
+
+	catalog := QueueCatalog()
+
+	require.Equal(t, "admin-analysis", catalog[4].Name)
+	require.Equal(t, 48, catalog[4].MaxWorkers)
+}
+
+func TestQueueCatalogBoundsAdministrativeConcurrency(t *testing.T) {
+	t.Setenv("SNAP_ADMIN_ANALYSIS_WORKERS", "999")
+
+	catalog := QueueCatalog()
+
+	require.Equal(t, 64, catalog[4].MaxWorkers)
+}
+
+func TestAdminAnalysisJobsSeparateDispatchFromArticleExecution(t *testing.T) {
 	dispatch := (AdminAnalysisBackfillDispatchArgs{RunID: "run"}).InsertOpts()
 	article := (AdminArticleAnalysisArgs{RunID: "run", ArticleID: "article"}).InsertOpts()
 
-	require.Equal(t, "admin-analysis", dispatch.Queue)
+	require.Equal(t, "admin-analysis-dispatch", dispatch.Queue)
 	require.Equal(t, "admin-analysis", article.Queue)
 	require.Equal(t, 4, article.Priority)
 	require.True(t, dispatch.UniqueOpts.ByArgs)

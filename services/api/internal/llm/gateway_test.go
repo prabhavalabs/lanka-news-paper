@@ -127,6 +127,7 @@ func TestCallProviderUsesOpenRouterReasoningAndRoutingParameters(t *testing.T) {
 		require.Nil(t, payload["reasoning_effort"])
 		require.Equal(t, "none", payload["reasoning"].(map[string]any)["effort"])
 		require.Equal(t, true, payload["provider"].(map[string]any)["require_parameters"])
+		require.Equal(t, "throughput", payload["provider"].(map[string]any)["sort"])
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
@@ -137,8 +138,34 @@ func TestCallProviderUsesOpenRouterReasoningAndRoutingParameters(t *testing.T) {
 	gateway := &Gateway{client: &http.Client{Transport: transport}}
 
 	response, err := gateway.callProvider(context.Background(), "openai_api", "https://openrouter.ai/api/v1", "TEST_OPENROUTER_KEY", "deepseek/deepseek-v4-flash-0731", Request{
-		JSONSchema: map[string]any{"type": "object"}, DisableReasoning: true,
+		JSONSchema: map[string]any{"type": "object"}, DisableReasoning: true, ProviderSort: "throughput",
 	}, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, "ok", response.Text)
+}
+
+func TestCallProviderUsesOpenRouterProviderSortWithoutStructuredOutput(t *testing.T) {
+	t.Setenv("TEST_OPENROUTER_KEY", "test-secret")
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		var payload map[string]any
+		require.NoError(t, json.NewDecoder(request.Body).Decode(&payload))
+		require.Equal(t, "throughput", payload["provider"].(map[string]any)["sort"])
+		require.Nil(t, payload["response_format"])
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")),
+			Request:    request,
+		}, nil
+	})
+	gateway := &Gateway{client: &http.Client{Transport: transport}}
+
+	response, err := gateway.callProvider(
+		context.Background(), "openai_api", "https://openrouter.ai/api/v1",
+		"TEST_OPENROUTER_KEY", "deepseek/deepseek-v4-flash-0731",
+		Request{ProviderSort: "throughput"}, nil,
+	)
 
 	require.NoError(t, err)
 	require.Equal(t, "ok", response.Text)

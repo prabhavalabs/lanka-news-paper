@@ -62,7 +62,10 @@ func run(logger *slog.Logger) error {
 	adminAnalysis := adminanalysis.NewService(analysisStore, model, codex)
 	clusters := cluster.NewStore(pool)
 	politicsStore := politics.NewStore(pool, model)
-	pipelineStore := pipeline.NewStore(pool, model, clusters, politicsStore)
+	pipelineStore := pipeline.NewStore(
+		pool, model, clusters, politicsStore,
+		pipeline.WithAdminProviderSort(os.Getenv("SNAP_ADMIN_ANALYSIS_PROVIDER_SORT")),
+	)
 	contentStore := content.NewStore(pool)
 	poller := ingest.NewPoller(pool, logger, clusters)
 	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news, adminAnalysis)

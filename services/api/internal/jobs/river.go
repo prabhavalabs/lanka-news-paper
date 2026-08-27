@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -130,7 +133,7 @@ func (AdminAnalysisBackfillDispatchArgs) Kind() string { return "admin.analysis.
 
 func (args AdminAnalysisBackfillDispatchArgs) InsertOpts() river.InsertOpts {
 	return river.InsertOpts{
-		Queue:       "admin-analysis",
+		Queue:       adminAnalysisDispatchQueue,
 		MaxAttempts: 5,
 		UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: []rivertype.JobState{
 			rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning,
@@ -148,7 +151,7 @@ func (AdminArticleAnalysisArgs) Kind() string { return "admin.article.analysis" 
 
 func (args AdminArticleAnalysisArgs) InsertOpts() river.InsertOpts {
 	return river.InsertOpts{
-		Queue:       "admin-analysis",
+		Queue:       adminAnalysisQueue,
 		Priority:    4,
 		MaxAttempts: 5,
 		UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: []rivertype.JobState{
@@ -170,7 +173,13 @@ type AdminArticleAnalysisWorker struct {
 	Pipeline *pipeline.Store
 }
 
-const adminAnalysisDispatchBatchSize = 100
+const (
+	adminAnalysisDispatchBatchSize = 100
+	adminAnalysisDispatchQueue     = "admin-analysis-dispatch"
+	adminAnalysisQueue             = "admin-analysis"
+	defaultAdminAnalysisWorkers    = 1
+	maxAdminAnalysisWorkers        = 64
+)
 
 func (worker *AdminAnalysisBackfillDispatchWorker) Work(ctx context.Context, job *river.Job[AdminAnalysisBackfillDispatchArgs]) error {
 	if err := worker.Analysis.Store().MarkRunStarted(ctx, job.Args.RunID); err != nil {
@@ -514,8 +523,21 @@ func QueueCatalog() []QueueMetadata {
 		{Name: river.QueueDefault, MaxWorkers: 2},
 		{Name: "analysis", MaxWorkers: 5},
 		{Name: "crawl", MaxWorkers: 1},
-		{Name: "admin-analysis", MaxWorkers: 1},
+		{Name: adminAnalysisDispatchQueue, MaxWorkers: 1},
+		{Name: adminAnalysisQueue, MaxWorkers: configuredAdminAnalysisWorkers(os.Getenv)},
 	}
+}
+
+func configuredAdminAnalysisWorkers(lookup func(string) string) int {
+	configured := strings.TrimSpace(lookup("SNAP_ADMIN_ANALYSIS_WORKERS"))
+	if configured == "" {
+		return defaultAdminAnalysisWorkers
+	}
+	workers, err := strconv.Atoi(configured)
+	if err != nil || workers < 1 {
+		return defaultAdminAnalysisWorkers
+	}
+	return min(workers, maxAdminAnalysisWorkers)
 }
 
 func configuredQueues() map[string]river.QueueConfig {

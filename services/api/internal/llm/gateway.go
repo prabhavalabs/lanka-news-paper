@@ -30,6 +30,7 @@ type Request struct {
 	ArticleID        string
 	PipelineRunID    string
 	PipelineStepID   string
+	ProviderSort     string
 }
 
 type Response struct {
@@ -183,6 +184,7 @@ func (gateway *Gateway) callProvider(ctx context.Context, kind, baseURL, keyRef,
 		},
 	}
 	isOpenRouter := strings.HasPrefix(strings.TrimRight(baseURL, "/"), "https://openrouter.ai/api/v1")
+	providerOptions := make(map[string]any)
 	if request.JSONSchema != nil {
 		payloadValue["response_format"] = map[string]any{
 			"type": "json_schema",
@@ -193,8 +195,14 @@ func (gateway *Gateway) callProvider(ctx context.Context, kind, baseURL, keyRef,
 			},
 		}
 		if isOpenRouter {
-			payloadValue["provider"] = map[string]any{"require_parameters": true}
+			providerOptions["require_parameters"] = true
 		}
+	}
+	if isOpenRouter && validProviderSort(request.ProviderSort) {
+		providerOptions["sort"] = request.ProviderSort
+	}
+	if len(providerOptions) > 0 {
+		payloadValue["provider"] = providerOptions
 	}
 	if request.DisableReasoning {
 		if isOpenRouter {
@@ -293,6 +301,15 @@ func (gateway *Gateway) callProvider(ctx context.Context, kind, baseURL, keyRef,
 		return result, fmt.Errorf("empty completion")
 	}
 	return result, nil
+}
+
+func validProviderSort(value string) bool {
+	switch value {
+	case "price", "throughput", "latency":
+		return true
+	default:
+		return false
+	}
 }
 
 func intPointer(value int) *int {

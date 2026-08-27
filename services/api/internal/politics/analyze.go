@@ -131,6 +131,10 @@ func (store *Store) AnalyzeArticle(ctx context.Context, articleID, runID, stepID
 }
 
 func (store *Store) AnalyzeArticleWithModel(ctx context.Context, articleID, runID, stepID, provider, model string) (Result, error) {
+	return store.AnalyzeArticleWithRouting(ctx, articleID, runID, stepID, provider, model, "")
+}
+
+func (store *Store) AnalyzeArticleWithRouting(ctx context.Context, articleID, runID, stepID, provider, model, providerSort string) (Result, error) {
 	var headline, description, cleaned, summary string
 	if err := store.pool.QueryRow(ctx, `
 		SELECT article.headline, COALESCE(article.description, ''),
@@ -153,7 +157,7 @@ func (store *Store) AnalyzeArticleWithModel(ctx context.Context, articleID, runI
 	request := llm.Request{
 		Task: task, System: systemPrompt, Input: string(input), JSONSchema: schema,
 		DisableReasoning: true, MaxTokens: 1024, ArticleID: articleID,
-		PipelineRunID: runID, PipelineStepID: stepID,
+		PipelineRunID: runID, PipelineStepID: stepID, ProviderSort: providerSort,
 	}
 	var response llm.Response
 	if provider != "" {
