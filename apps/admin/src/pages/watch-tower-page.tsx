@@ -361,7 +361,7 @@ export function WatchTowerPage() {
             </SheetDescription>
           </SheetHeader>
 
-          <div className="space-y-4 border-b px-6 pb-5">
+          <div className="space-y-4 border-b px-6 py-5">
             <div className="flex items-center justify-between gap-3 rounded-xl border bg-muted/20 p-4">
               <div className="min-w-0">
                 <p className="font-medium">OpenRouter</p>
