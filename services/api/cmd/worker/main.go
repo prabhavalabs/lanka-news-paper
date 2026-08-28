@@ -84,6 +84,7 @@ func run(logger *slog.Logger) error {
 		model,
 		newsletter.RuntimeConfig{
 			BaseURL: loaded.Newsletter.BaseURL, From: loaded.Newsletter.From,
+			TestSendReady: loaded.Newsletter.ResendAPIKey != "" && loaded.Newsletter.From != "",
 		},
 		time.Now,
 	)

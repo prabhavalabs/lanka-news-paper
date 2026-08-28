@@ -10,14 +10,16 @@ import (
 
 type editorialCompleter struct {
 	response string
+	provider string
+	model    string
 }
 
 func (completer editorialCompleter) Complete(context.Context, llm.Request) (llm.Response, error) {
-	return llm.Response{Text: completer.response}, nil
+	return llm.Response{Text: completer.response, Provider: completer.provider, Model: completer.model}, nil
 }
 
 func (completer editorialCompleter) CompleteWithModel(context.Context, llm.Request, string, string) (llm.Response, error) {
-	return llm.Response{Text: completer.response}, nil
+	return llm.Response{Text: completer.response, Provider: completer.provider, Model: completer.model}, nil
 }
 
 func TestApplyEditorialPlanOnlyReordersKnownStories(t *testing.T) {

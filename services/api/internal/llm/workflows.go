@@ -36,6 +36,7 @@ type Workflow struct {
 	Audience           string    `json:"audience"`
 	Enabled            bool      `json:"enabled"`
 	Revision           int       `json:"revision"`
+	Provider           string    `json:"provider_id"`
 	Model              string    `json:"model"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
@@ -47,6 +48,8 @@ type WorkflowInput struct {
 	ResponseLanguage   string `json:"response_language"`
 	Audience           string `json:"audience"`
 	Enabled            bool   `json:"enabled"`
+	Provider           string `json:"provider_id"`
+	Model              string `json:"model"`
 }
 
 type WorkflowFeedback struct {
@@ -74,11 +77,16 @@ func validateWorkflowInput(input WorkflowInput) (WorkflowInput, error) {
 	input.Tone = strings.TrimSpace(input.Tone)
 	input.ResponseLanguage = strings.TrimSpace(input.ResponseLanguage)
 	input.Audience = strings.TrimSpace(input.Audience)
+	input.Provider = strings.TrimSpace(input.Provider)
+	input.Model = strings.TrimSpace(input.Model)
 	if utf8.RuneCountInString(input.CustomInstructions) > 12000 ||
 		utf8.RuneCountInString(input.Personality) > 3000 ||
 		input.Tone == "" || utf8.RuneCountInString(input.Tone) > 80 ||
 		input.ResponseLanguage == "" || utf8.RuneCountInString(input.ResponseLanguage) > 40 ||
 		input.Audience == "" || utf8.RuneCountInString(input.Audience) > 160 {
+		return WorkflowInput{}, ErrWorkflowInvalid
+	}
+	if (input.Provider == "") != (input.Model == "") {
 		return WorkflowInput{}, ErrWorkflowInvalid
 	}
 	return input, nil
@@ -89,7 +97,8 @@ func (gateway *Gateway) ListWorkflows(ctx context.Context) ([]Workflow, error) {
 		SELECT workflow.task, workflow.name, workflow.purpose, workflow.category,
 		       workflow.custom_instructions, workflow.personality, workflow.learning_notes,
 		       workflow.tone, workflow.response_language, workflow.audience, workflow.enabled,
-		       workflow.revision, COALESCE(profile.model, ''), workflow.updated_at
+		       workflow.revision, COALESCE(profile.provider_id, ''),
+		       COALESCE(profile.model, ''), workflow.updated_at
 		FROM agent_workflows workflow
 		LEFT JOIN llm_task_profiles profile ON profile.task = workflow.task
 		ORDER BY CASE workflow.category
@@ -107,7 +116,7 @@ func (gateway *Gateway) ListWorkflows(ctx context.Context) ([]Workflow, error) {
 			&item.Task, &item.Name, &item.Purpose, &item.Category,
 			&item.CustomInstructions, &item.Personality, &item.LearningNotes,
 			&item.Tone, &item.ResponseLanguage, &item.Audience, &item.Enabled,
-			&item.Revision, &item.Model, &item.UpdatedAt,
+			&item.Revision, &item.Provider, &item.Model, &item.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan agent workflow: %w", err)
 		}
@@ -122,6 +131,11 @@ func (gateway *Gateway) UpdateWorkflow(ctx context.Context, task string, input W
 		return Workflow{}, err
 	}
 	task = strings.TrimSpace(task)
+	if input.Provider != "" {
+		if err := gateway.validateWorkflowProfile(ctx, task, input.Provider, input.Model); err != nil {
+			return Workflow{}, fmt.Errorf("%w: %v", ErrWorkflowInvalid, err)
+		}
+	}
 	transaction, err := gateway.pool.Begin(ctx)
 	if err != nil {
 		return Workflow{}, fmt.Errorf("begin workflow update: %w", err)
@@ -148,6 +162,25 @@ func (gateway *Gateway) UpdateWorkflow(ctx context.Context, task string, input W
 	if err != nil {
 		return Workflow{}, fmt.Errorf("update agent workflow: %w", err)
 	}
+	if input.Provider != "" {
+		command, updateErr := transaction.Exec(ctx, `
+			UPDATE llm_task_profiles
+			SET provider_id = $2, model = $3, enabled = true
+			WHERE task = $1
+		`, task, input.Provider, input.Model)
+		if updateErr != nil {
+			return Workflow{}, fmt.Errorf("update workflow model assignment: %w", updateErr)
+		}
+		if command.RowsAffected() == 0 {
+			return Workflow{}, ErrWorkflowMissing
+		}
+	}
+	if err := transaction.QueryRow(ctx, `
+		SELECT COALESCE(provider_id, ''), COALESCE(model, '')
+		FROM llm_task_profiles WHERE task = $1
+	`, task).Scan(&item.Provider, &item.Model); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return Workflow{}, fmt.Errorf("load workflow model assignment: %w", err)
+	}
 	if err := insertWorkflowVersion(ctx, transaction, item, actor); err != nil {
 		return Workflow{}, err
 	}
@@ -160,8 +193,36 @@ func (gateway *Gateway) UpdateWorkflow(ctx context.Context, task string, input W
 	if err := transaction.Commit(ctx); err != nil {
 		return Workflow{}, fmt.Errorf("commit agent workflow update: %w", err)
 	}
-	_ = gateway.pool.QueryRow(ctx, `SELECT COALESCE(model, '') FROM llm_task_profiles WHERE task = $1`, task).Scan(&item.Model)
 	return item, nil
+}
+
+func (gateway *Gateway) validateWorkflowProfile(ctx context.Context, task, providerID, modelID string) error {
+	if providerID != "openrouter" {
+		return fmt.Errorf("provider %q is not available for autonomous workflows", providerID)
+	}
+	var currentProvider, currentModel string
+	err := gateway.pool.QueryRow(ctx, `
+		SELECT provider_id, model FROM llm_task_profiles WHERE task = $1
+	`, task).Scan(&currentProvider, &currentModel)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("task profile %q was not found", task)
+	}
+	if err != nil {
+		return fmt.Errorf("load task profile: %w", err)
+	}
+	if currentProvider == providerID && currentModel == modelID {
+		return nil
+	}
+	models, err := gateway.ListModels(ctx)
+	if err != nil {
+		return err
+	}
+	for _, model := range models {
+		if model.ID == modelID && contains(model.CompatibleTasks, task) {
+			return nil
+		}
+	}
+	return fmt.Errorf("model %q is unavailable or incompatible with %s", modelID, task)
 }
 
 func insertWorkflowVersion(ctx context.Context, transaction pgx.Tx, item Workflow, actor uuid.UUID) error {
@@ -170,10 +231,12 @@ func insertWorkflowVersion(ctx context.Context, transaction pgx.Tx, item Workflo
 		VALUES ($1, $2, jsonb_build_object(
 		  'custom_instructions', $3::text, 'personality', $4::text,
 		  'learning_notes', $5::text, 'tone', $6::text,
-		  'response_language', $7::text, 'audience', $8::text, 'enabled', $9::boolean
-		), $10)
+		  'response_language', $7::text, 'audience', $8::text, 'enabled', $9::boolean,
+		  'provider_id', $10::text, 'model', $11::text
+		), $12)
 	`, item.Task, item.Revision, item.CustomInstructions, item.Personality,
-		item.LearningNotes, item.Tone, item.ResponseLanguage, item.Audience, item.Enabled, actor)
+		item.LearningNotes, item.Tone, item.ResponseLanguage, item.Audience, item.Enabled,
+		item.Provider, item.Model, actor)
 	if err != nil {
 		return fmt.Errorf("version agent workflow: %w", err)
 	}
@@ -289,6 +352,12 @@ func (gateway *Gateway) ReviewWorkflowFeedback(ctx context.Context, id uuid.UUID
 		)
 		if err != nil {
 			return WorkflowFeedback{}, fmt.Errorf("apply agent feedback: %w", err)
+		}
+		if err := transaction.QueryRow(ctx, `
+			SELECT COALESCE(provider_id, ''), COALESCE(model, '')
+			FROM llm_task_profiles WHERE task = $1
+		`, workflow.Task).Scan(&workflow.Provider, &workflow.Model); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return WorkflowFeedback{}, fmt.Errorf("load workflow model assignment: %w", err)
 		}
 		if err := insertWorkflowVersion(ctx, transaction, workflow, actor); err != nil {
 			return WorkflowFeedback{}, err

@@ -11,8 +11,16 @@ import (
 )
 
 type RuntimeConfig struct {
-	BaseURL string
-	From    string
+	BaseURL       string
+	From          string
+	TestSendReady bool
+}
+
+func (service *Service) ListTests(ctx context.Context) ([]TestRun, error) {
+	if service == nil || service.store == nil {
+		return nil, ErrTestSendDisabled
+	}
+	return service.store.ListTests(ctx)
 }
 
 type Service struct {

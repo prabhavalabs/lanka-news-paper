@@ -15,6 +15,8 @@ var (
 	ErrInvalidName       = errors.New("recipient name must be 160 characters or fewer")
 	ErrInvalidStatus     = errors.New("newsletter recipient status is invalid")
 	ErrInvalidSettings   = errors.New("newsletter settings are invalid")
+	ErrInvalidTest       = errors.New("newsletter test settings are invalid")
+	ErrTestSendDisabled  = errors.New("newsletter test sending is not configured")
 	ErrSubscriberMissing = errors.New("newsletter recipient was not found")
 )
 
@@ -67,6 +69,45 @@ type SubscriberList struct {
 	Items    []Subscriber      `json:"items"`
 	Summary  SubscriberSummary `json:"summary"`
 	Settings Settings          `json:"settings"`
+}
+
+type TestInput struct {
+	Mode           string `json:"mode"`
+	WindowMode     string `json:"window_mode"`
+	RecipientEmail string `json:"recipient_email"`
+	RecipientName  string `json:"recipient_name"`
+}
+
+type TestRun struct {
+	ID                uuid.UUID `json:"id"`
+	Mode              string    `json:"mode"`
+	WindowMode        string    `json:"window_mode"`
+	Status            string    `json:"status"`
+	RecipientEmail    string    `json:"recipient_email,omitempty"`
+	Provider          string    `json:"provider_id"`
+	Model             string    `json:"model"`
+	Subject           string    `json:"subject"`
+	Preheader         string    `json:"preheader"`
+	StoryCount        int       `json:"story_count"`
+	ArticleCount      int       `json:"article_count"`
+	EventCount        int       `json:"event_count"`
+	SourceCount       int       `json:"source_count"`
+	DurationMS        int       `json:"duration_ms"`
+	ProviderMessageID string    `json:"provider_message_id,omitempty"`
+	ErrorDetail       string    `json:"error_detail,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	CompletedAt       time.Time `json:"completed_at"`
+}
+
+type TestResult struct {
+	TestRun
+	HTML string `json:"html"`
+	Text string `json:"text"`
+}
+
+type Tester interface {
+	RunTest(context.Context, TestInput, uuid.UUID) (TestResult, error)
+	ListTests(context.Context) ([]TestRun, error)
 }
 
 type Repository interface {

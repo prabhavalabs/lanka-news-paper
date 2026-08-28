@@ -2,6 +2,9 @@ import {
   createClient,
   type NewsletterSubscriber,
   type NewsletterSubscriberStatus,
+  type NewsletterTestInput,
+  type NewsletterTestResult,
+  type NewsletterTestRun,
 } from '@snap/api-client'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -9,6 +12,9 @@ import {
   CheckCircle2,
   Clock3,
   EllipsisVertical,
+  Eye,
+  FlaskConical,
+  History,
   Mail,
   PauseCircle,
   Pencil,
@@ -17,6 +23,7 @@ import {
   Trash2,
   ShieldCheck,
   Settings2,
+  Send,
   UserRoundX,
   UsersRound,
 } from 'lucide-react'
@@ -52,6 +59,7 @@ export function MailingListPage() {
     queryKey: ['newsletter-subscribers'],
     queryFn: () => client.newsletterSubscribers(),
   })
+  const tests = useQuery({ queryKey: ['newsletter-tests'], queryFn: () => client.newsletterTests() })
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState<NewsletterSubscriberStatus | 'all'>('all')
   const [addOpen, setAddOpen] = useState(false)
@@ -59,6 +67,10 @@ export function MailingListPage() {
   const [consentConfirmed, setConsentConfirmed] = useState(false)
   const [editing, setEditing] = useState<NewsletterSubscriber | null>(null)
   const [removing, setRemoving] = useState<NewsletterSubscriber | null>(null)
+  const [testWindow, setTestWindow] = useState<NewsletterTestInput['window_mode']>('latest_24h')
+  const [testEmail, setTestEmail] = useState('')
+  const [testName, setTestName] = useState('')
+  const [preview, setPreview] = useState<NewsletterTestResult | null>(null)
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['newsletter-subscribers'] })
   const create = useMutation({
@@ -94,6 +106,18 @@ export function MailingListPage() {
     },
     onError: () => toast.error('Could not remove recipient'),
   })
+  const runTest = useMutation({
+    mutationFn: (mode: NewsletterTestInput['mode']) => client.runNewsletterTest({ mode, window_mode: testWindow, recipient_email: testEmail, recipient_name: testName }),
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ['newsletter-tests'] })
+      if (result.mode === 'preview') setPreview(result)
+      toast.success(result.mode === 'send' ? `Test email sent to ${result.recipient_email}` : 'Newsletter preview generated')
+    },
+    onError: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['newsletter-tests'] })
+      toast.error('Newsletter test failed. Review the latest diagnostic result below.')
+    },
+  })
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase()
@@ -118,7 +142,7 @@ export function MailingListPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" render={<Link to="/workflows?workflow=newsletter_editorial" />}><Settings2 /> Configure newsletter</Button>
+          <Button variant="outline" nativeButton={false} render={<Link to="/workflows?workflow=newsletter_editorial" />}><Settings2 /> Configure newsletter</Button>
           <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger render={<Button />}><Plus data-icon="inline-start" />Add recipient</DialogTrigger>
           <DialogContent>
@@ -167,6 +191,21 @@ export function MailingListPage() {
           <WorkflowRule icon={CheckCircle2} title="4. Deliver safely">Render a mobile-friendly Sinhala email and send one copy per active recipient with idempotency and one-click unsubscribe.</WorkflowRule>
         </CardContent>
       </Card>
+
+      <NewsletterTestLab
+        tests={tests.data?.items ?? []}
+        loading={tests.isPending}
+        windowMode={testWindow}
+        onWindowMode={setTestWindow}
+        email={testEmail}
+        onEmail={setTestEmail}
+        name={testName}
+        onName={setTestName}
+        pending={runTest.isPending}
+        onRun={(mode) => runTest.mutate(mode)}
+        preview={preview}
+        onPreview={setPreview}
+      />
 
       <div className="grid gap-4 sm:grid-cols-3">
         <SummaryCard icon={UsersRound} label="All recipients" value={summary?.total ?? 0} />
@@ -238,6 +277,51 @@ export function MailingListPage() {
       </Dialog>
     </section>
   )
+}
+
+function NewsletterTestLab({ tests, loading, windowMode, onWindowMode, email, onEmail, name, onName, pending, onRun, preview, onPreview }: {
+  tests: NewsletterTestRun[]
+  loading: boolean
+  windowMode: NewsletterTestInput['window_mode']
+  onWindowMode: (value: NewsletterTestInput['window_mode']) => void
+  email: string
+  onEmail: (value: string) => void
+  name: string
+  onName: (value: string) => void
+  pending: boolean
+  onRun: (mode: NewsletterTestInput['mode']) => void
+  preview: NewsletterTestResult | null
+  onPreview: (value: NewsletterTestResult | null) => void
+}) {
+  return (
+    <Card id="newsletter-test-lab" className="gap-0 overflow-hidden py-0 shadow-sm">
+      <CardHeader className="border-b py-6"><CardTitle className="flex items-center gap-2"><FlaskConical className="size-5" />Newsletter test lab</CardTitle><CardDescription>Run the saved workflow against real eligible coverage before the next scheduled delivery. Preview does not send email; test send targets only the address entered here.</CardDescription></CardHeader>
+      <CardContent className="space-y-6 p-6">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,0.75fr)_minmax(0,1fr)_minmax(0,1fr)]">
+          <Field><FieldLabel htmlFor="test-window">Coverage window</FieldLabel><Select value={windowMode} onValueChange={(value) => value && onWindowMode(value as NewsletterTestInput['window_mode'])}><SelectTrigger id="test-window"><SelectValue>{() => windowMode === 'latest_24h' ? 'Latest rolling 24 hours' : 'Most recent scheduled window'}</SelectValue></SelectTrigger><SelectContent><SelectItem value="latest_24h">Latest rolling 24 hours</SelectItem><SelectItem value="scheduled">Most recent scheduled window</SelectItem></SelectContent></Select></Field>
+          <Field><FieldLabel htmlFor="test-name">Test greeting name</FieldLabel><Input id="test-name" value={name} maxLength={160} onChange={(event) => onName(event.target.value)} placeholder="Optional preview name" /></Field>
+          <Field><FieldLabel htmlFor="test-email">One test address</FieldLabel><Input id="test-email" type="email" value={email} onChange={(event) => onEmail(event.target.value)} placeholder="you@example.com" /><p className="text-xs text-muted-foreground">Never added to the mailing list.</p></Field>
+        </div>
+        <div className="flex flex-wrap gap-2"><Button disabled={pending} onClick={() => onRun('preview')}><Eye />{pending ? 'Running workflow…' : 'Generate preview'}</Button><Button variant="outline" disabled={pending || !email.includes('@')} onClick={() => onRun('send')}><Send />Send one test email</Button></div>
+        <div className="border-t pt-6">
+          <div className="mb-3 flex items-center justify-between"><div><h3 className="flex items-center gap-2 font-heading font-semibold"><History className="size-4" />Recent test performance</h3><p className="mt-1 text-xs text-muted-foreground">Compare model, duration, coverage, and outcomes from the latest 50 tests.</p></div><Badge variant="secondary">{tests.length} runs</Badge></div>
+          {loading ? <Skeleton className="h-28 w-full" /> : null}
+          {!loading && tests.length === 0 ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No newsletter tests have run yet.</p> : null}
+          <div className="space-y-2">{tests.slice(0, 10).map((run) => <TestHistoryRow key={run.id} run={run} />)}</div>
+        </div>
+      </CardContent>
+      <Dialog open={Boolean(preview)} onOpenChange={(open) => { if (!open) onPreview(null) }}>
+        <DialogContent className="max-h-[92vh] overflow-hidden sm:max-w-5xl">
+          <DialogHeader><DialogTitle>Newsletter preview</DialogTitle><DialogDescription>{preview?.subject} · {preview?.story_count} stories · {preview?.duration_ms.toLocaleString()} ms · {preview?.model || 'No AI call required'}</DialogDescription></DialogHeader>
+          {preview ? <iframe title="Generated newsletter preview" sandbox="" srcDoc={preview.html} className="h-[70vh] w-full rounded-xl border bg-white" /> : null}
+        </DialogContent>
+      </Dialog>
+    </Card>
+  )
+}
+
+function TestHistoryRow({ run }: { run: NewsletterTestRun }) {
+  return <div className="grid gap-3 rounded-xl border p-4 text-sm md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_auto] md:items-center"><div><div className="flex flex-wrap items-center gap-2"><Badge variant={run.status === 'succeeded' ? 'secondary' : 'destructive'}>{run.status}</Badge><span className="font-medium">{run.mode === 'send' ? 'One-address send' : 'Preview'}</span></div><p className="mt-1 truncate text-xs text-muted-foreground">{run.subject || run.error_detail || 'No subject generated'}</p></div><div><p className="truncate text-xs font-medium">{run.model || 'No model response'}</p><p className="mt-1 text-xs text-muted-foreground">{run.story_count} stories · {run.article_count} articles · {run.source_count} sources</p></div><div className="text-left md:text-right"><p className="font-medium tabular-nums">{run.duration_ms.toLocaleString()} ms</p><p className="mt-1 text-xs text-muted-foreground">{formatDateTime(run.created_at)}</p></div></div>
 }
 
 function SummaryCard({ icon: Icon, label, value }: { icon: typeof UsersRound; label: string; value: number }) {

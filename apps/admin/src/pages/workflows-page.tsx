@@ -3,6 +3,7 @@ import {
   type AgentFeedback,
   type AgentWorkflow,
   type AgentWorkflowInput,
+  type LlmModel,
   type NewsletterSettings,
 } from '@snap/api-client'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -10,10 +11,11 @@ import {
   Bot,
   BrainCircuit,
   CheckCircle2,
+  CircleAlert,
   Clock3,
   MessageSquareText,
-  Route,
   Save,
+  Search,
   ShieldCheck,
   Sparkles,
   ThumbsDown,
@@ -29,6 +31,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
@@ -46,6 +49,8 @@ export function WorkflowsPage() {
   const workflows = useQuery({ queryKey: ['agent-workflows'], queryFn: () => client.agentWorkflows() })
   const feedback = useQuery({ queryKey: ['agent-feedback'], queryFn: () => client.agentFeedback() })
   const newsletter = useQuery({ queryKey: ['newsletter-settings'], queryFn: () => client.newsletterSettings() })
+  const provider = useQuery({ queryKey: ['llm-provider'], queryFn: () => client.llmProvider(), staleTime: 60_000 })
+  const models = useQuery({ queryKey: ['llm-models'], queryFn: () => client.llmModels(), staleTime: 60_000 })
   const [view, setView] = useState<View>('configuration')
   const requestedTask = searchParams.get('workflow')
   const selected = useMemo(() => {
@@ -54,6 +59,8 @@ export function WorkflowsPage() {
   }, [requestedTask, workflows.data?.items])
   const [draft, setDraft] = useState<WorkflowDraft | null>(null)
   const [newsletterDraft, setNewsletterDraft] = useState<NewsletterSettings | null>(null)
+  const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const [modelSearch, setModelSearch] = useState('')
 
   useEffect(() => {
     if (!selected) return
@@ -64,6 +71,8 @@ export function WorkflowsPage() {
       response_language: selected.response_language,
       audience: selected.audience,
       enabled: selected.enabled,
+      provider_id: selected.provider_id,
+      model: selected.model,
     })
   }, [selected])
 
@@ -85,6 +94,7 @@ export function WorkflowsPage() {
         queryClient.invalidateQueries({ queryKey: ['agent-workflows'] }),
         queryClient.invalidateQueries({ queryKey: ['newsletter-settings'] }),
         queryClient.invalidateQueries({ queryKey: ['newsletter-subscribers'] }),
+        queryClient.invalidateQueries({ queryKey: ['llm-profiles'] }),
       ])
       toast.success('Workflow configuration saved and versioned')
     },
@@ -106,7 +116,6 @@ export function WorkflowsPage() {
             Control system behavior, editorial personality, newsletter delivery, model routing, and reviewed learning feedback.
           </p>
         </div>
-        <Button variant="outline" render={<Link to="/routing" />}><Route /> Models &amp; routing</Button>
       </div>
 
       <div className="grid min-w-0 gap-5 xl:grid-cols-[19rem_minmax(0,1fr)]">
@@ -173,10 +182,24 @@ export function WorkflowsPage() {
                 {view === 'configuration' ? (
                   <CardContent className="space-y-7 p-6">
                     <div className="grid gap-5 md:grid-cols-3">
-                      <ReadOnlyMetric label="Current model" value={selected.model || 'Deterministic / not routed'} />
+                      <ReadOnlyMetric label="AI provider" value={(provider.data?.name ?? selected.provider_id) || 'Not routed'} />
                       <ReadOnlyMetric label="Configuration revision" value={String(selected.revision)} />
                       <ReadOnlyMetric label="Last updated" value={new Date(selected.updated_at).toLocaleString()} />
                     </div>
+
+                    <AIConfiguration
+                      task={selected.task}
+                      draft={draft}
+                      onChange={setDraft}
+                      provider={provider.data}
+                      models={models.data?.items ?? []}
+                      loading={provider.isPending || models.isPending}
+                      error={provider.isError || models.isError}
+                      pickerOpen={modelPickerOpen}
+                      onPickerOpen={setModelPickerOpen}
+                      search={modelSearch}
+                      onSearch={setModelSearch}
+                    />
 
                     <FieldGroup>
                       <Field>
@@ -242,6 +265,59 @@ export function WorkflowsPage() {
   )
 }
 
+function AIConfiguration({ task, draft, onChange, provider, models, loading, error, pickerOpen, onPickerOpen, search, onSearch }: {
+  task: string
+  draft: WorkflowDraft
+  onChange: (value: WorkflowDraft) => void
+  provider: Awaited<ReturnType<typeof client.llmProvider>> | undefined
+  models: LlmModel[]
+  loading: boolean
+  error: boolean
+  pickerOpen: boolean
+  onPickerOpen: (open: boolean) => void
+  search: string
+  onSearch: (value: string) => void
+}) {
+  const selectedModel = models.find((item) => item.id === draft.model)
+  const term = search.trim().toLowerCase()
+  const compatible = models.filter((model) => model.compatible_tasks.includes(task) && (!term || model.name.toLowerCase().includes(term) || model.id.toLowerCase().includes(term)))
+  return (
+    <div className="space-y-4 rounded-2xl border bg-muted/20 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><h3 className="font-heading font-semibold">AI provider and model</h3><p className="mt-1 text-xs text-muted-foreground">The assignment is versioned with this workflow and used by its next autonomous run.</p></div>
+        {provider ? <Badge variant="outline" className={cn(provider.available ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'border-destructive/30 bg-destructive/10 text-destructive')}>{provider.available ? <CheckCircle2 /> : <CircleAlert />}{provider.status}</Badge> : null}
+      </div>
+      {error ? <p className="text-sm text-destructive">The live model catalog is temporarily unavailable. The current assignment remains unchanged.</p> : null}
+      <div className="grid gap-4 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.6fr)]">
+        <Field>
+          <FieldLabel htmlFor="workflow-provider">Provider</FieldLabel>
+          <Select value={draft.provider_id} disabled={loading || error} onValueChange={(value) => value && onChange({ ...draft, provider_id: value })}>
+            <SelectTrigger id="workflow-provider"><SelectValue>{() => provider?.name ?? 'OpenRouter'}</SelectValue></SelectTrigger>
+            <SelectContent><SelectItem value="openrouter">OpenRouter</SelectItem></SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">{provider?.key_set ? 'API key configured' : 'API key missing'}</p>
+        </Field>
+        <Field>
+          <FieldLabel>Model</FieldLabel>
+          <div className="flex min-h-10 flex-col justify-center rounded-md border bg-background px-3 py-2"><p className="text-sm font-medium">{(selectedModel?.name ?? draft.model) || 'No model assigned'}</p>{draft.model ? <p className="break-all text-xs text-muted-foreground">{draft.model}</p> : null}</div>
+          <Button type="button" variant="outline" className="w-fit" disabled={loading || error || !provider?.available} onClick={() => { onSearch(''); onPickerOpen(true) }}>Change model</Button>
+        </Field>
+      </div>
+      <Sheet open={pickerOpen} onOpenChange={onPickerOpen}>
+        <SheetContent side="right" style={{ width: '100%', maxWidth: '36rem' }}>
+          <SheetHeader className="border-b"><SheetTitle>Choose a workflow model</SheetTitle><SheetDescription>Only models compatible with this autonomous task are shown.</SheetDescription></SheetHeader>
+          <div className="border-b px-6 pb-4"><div className="relative"><Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" /><Input className="pl-9" type="search" placeholder="Search models…" value={search} onChange={(event) => onSearch(event.target.value)} /></div><p className="mt-2 text-xs text-muted-foreground">{compatible.length} compatible models</p></div>
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4" role="radiogroup" aria-label="Compatible AI models">
+            {compatible.slice(0, 75).map((model) => <button key={model.id} type="button" role="radio" aria-checked={draft.model === model.id} onClick={() => { onChange({ ...draft, provider_id: 'openrouter', model: model.id }); onPickerOpen(false) }} className={cn('w-full rounded-xl border p-4 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring', draft.model === model.id && 'border-primary bg-primary/5 ring-1 ring-primary')}><p className="font-medium">{model.name}</p><p className="mt-1 break-all text-xs text-muted-foreground">{model.id}</p><p className="mt-3 text-xs text-muted-foreground">{model.context_length.toLocaleString()} context · ${model.input_price_per_million.toLocaleString()}/1M input</p></button>)}
+            {compatible.length === 0 ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No compatible model matches this search.</p> : null}
+          </div>
+          <SheetFooter className="border-t"><Button variant="outline" onClick={() => onPickerOpen(false)}>Cancel</Button></SheetFooter>
+        </SheetContent>
+      </Sheet>
+    </div>
+  )
+}
+
 function NewsletterConfiguration({ value, onChange, loading }: { value: NewsletterSettings | null; onChange: (value: NewsletterSettings) => void; loading: boolean }) {
   if (loading || !value) return <Skeleton className="h-80 w-full" />
   return (
@@ -262,6 +338,10 @@ function NewsletterConfiguration({ value, onChange, loading }: { value: Newslett
         <Field><FieldLabel htmlFor="newsletter-intro">Fallback introduction</FieldLabel><Textarea id="newsletter-intro" value={value.intro_text} onChange={(event) => onChange({ ...value, intro_text: event.target.value })} /></Field>
         <Field><FieldLabel htmlFor="newsletter-footer">Footer disclosure</FieldLabel><Textarea id="newsletter-footer" value={value.footer_text} onChange={(event) => onChange({ ...value, footer_text: event.target.value })} /></Field>
       </FieldGroup>
+      <div className="flex flex-col gap-3 rounded-xl border bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div><p className="text-sm font-medium">Validate before the next delivery</p><p className="mt-1 text-xs text-muted-foreground">Generate a real preview with the saved workflow or send one isolated test email.</p></div>
+        <Button variant="outline" nativeButton={false} render={<Link to="/mailing-list?test=1" />}>Open newsletter test lab</Button>
+      </div>
     </div>
   )
 }

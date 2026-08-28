@@ -104,6 +104,17 @@ func run(logger *slog.Logger) error {
 	if err := newsletterStore.ImportConfiguredRecipient(processContext, loaded.Newsletter.ConfiguredRecipient); err != nil {
 		return err
 	}
+	newsletterTester := newsletter.NewService(
+		newsletterStore,
+		newsletter.NewResendSender(loaded.Newsletter.ResendAPIKey, nil),
+		model,
+		newsletter.RuntimeConfig{
+			BaseURL:       loaded.Newsletter.BaseURL,
+			From:          loaded.Newsletter.From,
+			TestSendReady: loaded.Newsletter.ResendAPIKey != "" && loaded.Newsletter.From != "",
+		},
+		time.Now,
+	)
 	deskStore := desk.NewStore(pool)
 	monitorBroker := desk.NewMonitorBroker(processContext, pool, logger)
 	mediaStore, err := media.New(processContext, media.Config{
@@ -121,19 +132,20 @@ func run(logger *slog.Logger) error {
 	server := &http.Server{
 		Addr: loaded.Address,
 		Handler: httpapi.NewRouter(httpapi.Dependencies{
-			AdminAnalysis:  adminAnalysis,
-			AllowedOrigins: loaded.AllowedOrigins,
-			CookieSecure:   loaded.SessionCookieSecure,
-			Database:       pool,
-			Desk:           deskStore,
-			IAM:            users,
-			LLM:            gateway,
-			Media:          mediaStore,
-			Monitor:        monitorBroker,
-			News:           news,
-			Newsletter:     newsletterStore,
-			Poller:         poller,
-			Registry:       registry.NewStore(pool),
+			AdminAnalysis:    adminAnalysis,
+			AllowedOrigins:   loaded.AllowedOrigins,
+			CookieSecure:     loaded.SessionCookieSecure,
+			Database:         pool,
+			Desk:             deskStore,
+			IAM:              users,
+			LLM:              gateway,
+			Media:            mediaStore,
+			Monitor:          monitorBroker,
+			News:             news,
+			Newsletter:       newsletterStore,
+			NewsletterTester: newsletterTester,
+			Poller:           poller,
+			Registry:         registry.NewStore(pool),
 			RunContentBackfill: func(ctx context.Context) error {
 				return jobs.EnqueueContentBackfill(ctx, producer)
 			},

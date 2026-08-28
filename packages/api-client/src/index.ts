@@ -829,6 +829,39 @@ export type NewsletterSubscriberList = {
   settings: NewsletterSettings;
 };
 
+export type NewsletterTestInput = {
+  mode: "preview" | "send";
+  window_mode: "latest_24h" | "scheduled";
+  recipient_email?: string;
+  recipient_name?: string;
+};
+
+export type NewsletterTestRun = {
+  id: string;
+  mode: "preview" | "send";
+  window_mode: "latest_24h" | "scheduled";
+  status: "succeeded" | "failed";
+  recipient_email?: string;
+  provider_id: string;
+  model: string;
+  subject: string;
+  preheader: string;
+  story_count: number;
+  article_count: number;
+  event_count: number;
+  source_count: number;
+  duration_ms: number;
+  provider_message_id?: string;
+  error_detail?: string;
+  created_at: string;
+  completed_at: string;
+};
+
+export type NewsletterTestResult = NewsletterTestRun & {
+  html: string;
+  text: string;
+};
+
 export type AgentWorkflow = {
   task: string;
   name: string;
@@ -842,12 +875,13 @@ export type AgentWorkflow = {
   audience: string;
   enabled: boolean;
   revision: number;
+  provider_id: string;
   model: string;
   updated_at: string;
 };
 
 export type AgentWorkflowInput = Pick<AgentWorkflow,
-  "custom_instructions" | "personality" | "tone" | "response_language" | "audience" | "enabled"
+  "custom_instructions" | "personality" | "tone" | "response_language" | "audience" | "enabled" | "provider_id" | "model"
 >;
 
 export type AgentFeedback = {
@@ -1254,6 +1288,13 @@ export function createClient(baseUrl = "") {
       request<NewsletterSettings>(url("/api/admin/newsletter/settings")),
     updateNewsletterSettings: (body: NewsletterSettings) =>
       request<NewsletterSettings>(url("/api/admin/newsletter/settings"), {
+        method: "POST",
+        body: JSON.stringify(body)
+      }),
+    newsletterTests: () =>
+      request<{ items: NewsletterTestRun[] }>(url("/api/admin/newsletter/tests")),
+    runNewsletterTest: (body: NewsletterTestInput) =>
+      request<NewsletterTestResult>(url("/api/admin/newsletter/tests"), {
         method: "POST",
         body: JSON.stringify(body)
       }),

@@ -142,7 +142,7 @@ var newsletterHTML = htmltemplate.Must(htmltemplate.New("newsletter").Funcs(html
 {{end}}{{end}}
 <tr><td class="pad" style="padding:28px 42px;background:#f8f7f4;color:#68645d;font-size:12px;line-height:1.7">
 <p style="margin:0 0 8px">{{.FooterText}}</p>
-<p style="margin:0"><a href="{{.UnsubscribeURL}}" style="color:#52504b">පුවත් සංග්‍රහයෙන් ඉවත් වන්න</a></p>
+{{if .UnsubscribeURL}}<p style="margin:0"><a href="{{.UnsubscribeURL}}" style="color:#52504b">පුවත් සංග්‍රහයෙන් ඉවත් වන්න</a></p>{{end}}
 </td></tr></table></td></tr></table></body></html>`))
 
 var newsletterText = texttemplate.Must(texttemplate.New("newsletter-text").Funcs(texttemplate.FuncMap{
@@ -170,5 +170,5 @@ var newsletterText = texttemplate.Must(texttemplate.New("newsletter-text").Funcs
 {{coverage .}}
 {{.URL}}
 {{end}}{{end}}
-පුවත් සංග්‍රහයෙන් ඉවත් වන්න: {{.UnsubscribeURL}}
+{{if .UnsubscribeURL}}පුවත් සංග්‍රහයෙන් ඉවත් වන්න: {{.UnsubscribeURL}}{{end}}
 `))

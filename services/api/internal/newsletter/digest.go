@@ -75,9 +75,6 @@ func (store *Store) BuildDigest(ctx context.Context, editionDate string, start, 
 		}
 		return a.LatestAt.After(b.LatestAt)
 	})
-	if len(digest.Stories) > 30 {
-		digest.Stories = digest.Stories[:30]
-	}
 	return digest, nil
 }
 

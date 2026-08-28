@@ -3,11 +3,18 @@ package newsletter
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
 )
+
+type editorialOutcome struct {
+	Provider string
+	Model    string
+}
 
 const editorialSystemPrompt = `Prepare the editorial shape of a Sinhala morning news email from a rights-approved 24-hour digest.
 Return a short, natural Sinhala introduction and the story IDs in the order readers should see them.
@@ -32,23 +39,34 @@ var editorialSchema = map[string]any{
 }
 
 func applyEditorialPlan(ctx context.Context, model llm.Completer, digest Digest, settings Settings) (Digest, Settings) {
-	if model == nil || len(digest.Stories) == 0 {
+	plannedDigest, plannedSettings, _, err := applyEditorialPlanStrict(ctx, model, digest, settings)
+	if err != nil {
 		return digest, settings
+	}
+	return plannedDigest, plannedSettings
+}
+
+func applyEditorialPlanStrict(ctx context.Context, model llm.Completer, digest Digest, settings Settings) (Digest, Settings, editorialOutcome, error) {
+	if model == nil || len(digest.Stories) == 0 {
+		return digest, settings, editorialOutcome{}, nil
 	}
 	payload, err := json.Marshal(digest)
 	if err != nil {
-		return digest, settings
+		return digest, settings, editorialOutcome{}, fmt.Errorf("encode newsletter editorial input: %w", err)
 	}
 	response, err := model.Complete(ctx, llm.Request{
 		Task: "newsletter_editorial", System: editorialSystemPrompt, Input: string(payload),
 		JSONSchema: editorialSchema, DisableReasoning: true, MaxTokens: 1800,
 	})
-	if err != nil || strings.TrimSpace(response.Text) == "" {
-		return digest, settings
+	if err != nil {
+		return digest, settings, editorialOutcome{}, fmt.Errorf("generate newsletter editorial plan: %w", err)
+	}
+	if strings.TrimSpace(response.Text) == "" {
+		return digest, settings, editorialOutcome{}, errors.New("generate newsletter editorial plan: model returned an empty response")
 	}
 	var plan editorialPlan
 	if err := json.Unmarshal([]byte(response.Text), &plan); err != nil {
-		return digest, settings
+		return digest, settings, editorialOutcome{}, fmt.Errorf("decode newsletter editorial plan: %w", err)
 	}
 	plan.Intro = strings.TrimSpace(plan.Intro)
 	if plan.Intro != "" && utf8.RuneCountInString(plan.Intro) <= 1200 {
@@ -73,5 +91,5 @@ func applyEditorialPlan(ctx context.Context, model llm.Completer, digest Digest,
 		}
 	}
 	digest.Stories = ordered
-	return digest, settings
+	return digest, settings, editorialOutcome{Provider: response.Provider, Model: response.Model}, nil
 }

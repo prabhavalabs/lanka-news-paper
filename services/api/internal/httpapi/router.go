@@ -29,6 +29,7 @@ type Dependencies struct {
 	Monitor                     *desk.MonitorBroker
 	News                        *publish.Store
 	Newsletter                  newsletter.Repository
+	NewsletterTester            newsletter.Tester
 	Poller                      *ingest.Poller
 	Registry                    *registry.Store
 	RunPipeline                 func(context.Context, string, string) error
@@ -48,7 +49,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	auth := newAuthHandler(dependencies.IAM, dependencies.SessionTTL, dependencies.CookieSecure)
 	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk, monitor: newMonitorService(dependencies.Desk, dependencies.Monitor), media: dependencies.Media, adminAnalysis: dependencies.AdminAnalysis, runPipeline: dependencies.RunPipeline, runContentBackfill: dependencies.RunContentBackfill, runAdminAnalysisBackfill: dependencies.RunAdminAnalysisBackfill, pauseAdminAnalysisBackfill: dependencies.PauseAdminAnalysisBackfill, resumeAdminAnalysisBackfill: dependencies.ResumeAdminAnalysisBackfill, cancelAdminAnalysisBackfill: dependencies.CancelAdminAnalysisBackfill}
 	watchTower := watchTowerHandler{service: dependencies.WatchTower}
-	newsletterAdmin := newsletterAdminHandler{repository: dependencies.Newsletter}
+	newsletterAdmin := newsletterAdminHandler{repository: dependencies.Newsletter, tester: dependencies.NewsletterTester}
 	newsletterPublic := newsletterUnsubscribeHandler{repository: dependencies.Newsletter}
 	workflowAdmin := workflowAdminHandler{gateway: dependencies.LLM}
 
@@ -145,6 +146,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("DELETE /api/admin/newsletter/subscribers/{id}", newsletterAdmin.subscriber)
 	protected.HandleFunc("GET /api/admin/newsletter/settings", newsletterAdmin.settings)
 	protected.HandleFunc("POST /api/admin/newsletter/settings", newsletterAdmin.settings)
+	protected.HandleFunc("GET /api/admin/newsletter/tests", newsletterAdmin.tests)
+	protected.HandleFunc("POST /api/admin/newsletter/tests", newsletterAdmin.tests)
 	protected.HandleFunc("GET /api/admin/workflows", workflowAdmin.workflows)
 	protected.HandleFunc("POST /api/admin/workflows/{task}", workflowAdmin.workflow)
 	protected.HandleFunc("GET /api/admin/workflows/feedback", workflowAdmin.feedback)

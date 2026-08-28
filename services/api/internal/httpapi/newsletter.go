@@ -12,6 +12,44 @@ import (
 
 type newsletterAdminHandler struct {
 	repository newsletter.Repository
+	tester     newsletter.Tester
+}
+
+func (handler newsletterAdminHandler) tests(w http.ResponseWriter, request *http.Request) {
+	if !requireAdministrator(w, request) {
+		return
+	}
+	if handler.tester == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Newsletter testing unavailable", "Newsletter testing is not configured.")
+		return
+	}
+	if request.Method == http.MethodGet {
+		items, err := handler.tester.ListTests(request.Context())
+		if err != nil {
+			writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not load newsletter test history.")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+		return
+	}
+	var input newsletter.TestInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
+		return
+	}
+	result, err := handler.tester.RunTest(request.Context(), input, currentUser(request).ID)
+	if err == nil {
+		writeJSON(w, http.StatusCreated, result)
+		return
+	}
+	switch {
+	case errors.Is(err, newsletter.ErrInvalidTest), errors.Is(err, newsletter.ErrInvalidEmail):
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid newsletter test", err.Error())
+	case errors.Is(err, newsletter.ErrTestSendDisabled):
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Test sending unavailable", "Configure a valid Resend API key and sender address to send a test email. Preview remains available.")
+	default:
+		writeProblem(w, http.StatusBadGateway, "https://snap.local/problems/newsletter-test", "Newsletter test failed", "The test run failed. Its diagnostic result was saved in test history.")
+	}
 }
 
 func (handler newsletterAdminHandler) settings(w http.ResponseWriter, request *http.Request) {
