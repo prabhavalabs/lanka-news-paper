@@ -21,13 +21,14 @@ import {
   ThumbsDown,
   ThumbsUp,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { Link, useSearchParams } from 'react-router'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, type BlockerFunction, useBeforeUnload, useBlocker, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -40,8 +41,30 @@ const client = createClient()
 
 type View = 'configuration' | 'feedback'
 type WorkflowDraft = AgentWorkflowInput
+type SaveSnapshot = {
+  task: string
+  workflow: WorkflowDraft
+  newsletter: NewsletterSettings | null
+}
 
 const feedbackCategories: Array<AgentFeedback['category']> = ['accuracy', 'tone', 'relevance', 'formatting', 'safety', 'other']
+
+function workflowDraftFrom(workflow: AgentWorkflow): WorkflowDraft {
+  return {
+    custom_instructions: workflow.custom_instructions,
+    personality: workflow.personality,
+    tone: workflow.tone,
+    response_language: workflow.response_language,
+    audience: workflow.audience,
+    enabled: workflow.enabled,
+    provider_id: workflow.provider_id,
+    model: workflow.model,
+  }
+}
+
+function draftsMatch(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
 
 export function WorkflowsPage() {
   const queryClient = useQueryClient()
@@ -58,38 +81,58 @@ export function WorkflowsPage() {
     return items.find((item) => item.task === requestedTask) ?? items[0] ?? null
   }, [requestedTask, workflows.data?.items])
   const [draft, setDraft] = useState<WorkflowDraft | null>(null)
+  const [savedDraft, setSavedDraft] = useState<WorkflowDraft | null>(null)
   const [newsletterDraft, setNewsletterDraft] = useState<NewsletterSettings | null>(null)
+  const [savedNewsletterDraft, setSavedNewsletterDraft] = useState<NewsletterSettings | null>(null)
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const [modelSearch, setModelSearch] = useState('')
 
   useEffect(() => {
     if (!selected) return
-    setDraft({
-      custom_instructions: selected.custom_instructions,
-      personality: selected.personality,
-      tone: selected.tone,
-      response_language: selected.response_language,
-      audience: selected.audience,
-      enabled: selected.enabled,
-      provider_id: selected.provider_id,
-      model: selected.model,
-    })
+    const nextDraft = workflowDraftFrom(selected)
+    setDraft(nextDraft)
+    setSavedDraft(nextDraft)
   }, [selected])
 
   useEffect(() => {
-    if (newsletter.data) setNewsletterDraft(newsletter.data)
+    if (!newsletter.data) return
+    setNewsletterDraft(newsletter.data)
+    setSavedNewsletterDraft(newsletter.data)
   }, [newsletter.data])
 
+  const hasWorkflowChanges = Boolean(draft && savedDraft && !draftsMatch(draft, savedDraft))
+  const hasNewsletterChanges = Boolean(
+    selected?.task === 'newsletter_editorial'
+    && newsletterDraft
+    && savedNewsletterDraft
+    && !draftsMatch(newsletterDraft, savedNewsletterDraft),
+  )
+  const hasUnsavedChanges = hasWorkflowChanges || hasNewsletterChanges
+
+  const blocker = useBlocker(useCallback<BlockerFunction>(
+    ({ currentLocation, nextLocation }) => hasUnsavedChanges
+      && `${currentLocation.pathname}${currentLocation.search}${currentLocation.hash}`
+        !== `${nextLocation.pathname}${nextLocation.search}${nextLocation.hash}`,
+    [hasUnsavedChanges],
+  ))
+
+  useBeforeUnload(useCallback((event) => {
+    if (!hasUnsavedChanges) return
+    event.preventDefault()
+    event.returnValue = ''
+  }, [hasUnsavedChanges]), { capture: true })
+
   const save = useMutation({
-    mutationFn: async () => {
-      if (!selected || !draft) throw new Error('No workflow selected')
-      const operations: Array<Promise<unknown>> = [client.updateAgentWorkflow(selected.task, draft)]
-      if (selected.task === 'newsletter_editorial' && newsletterDraft) {
-        operations.push(client.updateNewsletterSettings(newsletterDraft))
+    mutationFn: async (snapshot: SaveSnapshot) => {
+      const operations: Array<Promise<unknown>> = [client.updateAgentWorkflow(snapshot.task, snapshot.workflow)]
+      if (snapshot.task === 'newsletter_editorial' && snapshot.newsletter) {
+        operations.push(client.updateNewsletterSettings(snapshot.newsletter))
       }
       return Promise.all(operations)
     },
-    onSuccess: async () => {
+    onSuccess: async (_, snapshot) => {
+      setSavedDraft(snapshot.workflow)
+      if (snapshot.newsletter) setSavedNewsletterDraft(snapshot.newsletter)
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['agent-workflows'] }),
         queryClient.invalidateQueries({ queryKey: ['newsletter-settings'] }),
@@ -100,6 +143,43 @@ export function WorkflowsPage() {
     },
     onError: () => toast.error('Could not save workflow configuration'),
   })
+
+  const saveSnapshot = () => {
+    if (!selected || !draft) return null
+    return {
+      task: selected.task,
+      workflow: draft,
+      newsletter: selected.task === 'newsletter_editorial' ? newsletterDraft : null,
+    } satisfies SaveSnapshot
+  }
+
+  const saveCurrent = () => {
+    const snapshot = saveSnapshot()
+    if (snapshot) save.mutate(snapshot)
+  }
+
+  const keepEditing = () => {
+    if (blocker.state === 'blocked') blocker.reset()
+  }
+
+  const discardAndContinue = () => {
+    if (blocker.state !== 'blocked') return
+    setDraft(savedDraft)
+    setNewsletterDraft(savedNewsletterDraft)
+    blocker.proceed()
+  }
+
+  const saveAndContinue = async () => {
+    if (blocker.state !== 'blocked') return
+    const snapshot = saveSnapshot()
+    if (!snapshot) return
+    try {
+      await save.mutateAsync(snapshot)
+      blocker.proceed()
+    } catch {
+      // The mutation displays the error and keeps this dialog open for retrying.
+    }
+  }
 
   const chooseWorkflow = (task: string) => {
     setSearchParams({ workflow: task })
@@ -251,8 +331,9 @@ export function WorkflowsPage() {
               </Card>
 
               {view === 'configuration' ? (
-                <div className="flex justify-end">
-                  <Button size="lg" disabled={save.isPending || newsletter.isError} onClick={() => save.mutate()}>
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                  {hasUnsavedChanges ? <Badge variant="secondary"><CircleAlert /> Unsaved changes</Badge> : null}
+                  <Button size="lg" disabled={save.isPending || newsletter.isError} onClick={saveCurrent}>
                     <Save /> {save.isPending ? 'Saving…' : 'Save and create revision'}
                   </Button>
                 </div>
@@ -261,6 +342,24 @@ export function WorkflowsPage() {
           ) : workflows.isPending ? <Skeleton className="h-[640px] w-full" /> : null}
         </div>
       </div>
+
+      <Dialog open={blocker.state === 'blocked'} onOpenChange={(open) => { if (!open && !save.isPending) keepEditing() }}>
+        <DialogContent showCloseButton={!save.isPending}>
+          <DialogHeader>
+            <DialogTitle>You have unsaved changes</DialogTitle>
+            <DialogDescription>
+              Save your changes to {selected?.name ?? 'this workflow'} before leaving, or discard them and continue.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" disabled={save.isPending} onClick={keepEditing}>Keep editing</Button>
+            <Button variant="destructive" disabled={save.isPending} onClick={discardAndContinue}>Discard and continue</Button>
+            <Button disabled={save.isPending || newsletter.isError} onClick={saveAndContinue}>
+              <Save /> {save.isPending ? 'Saving…' : 'Save and continue'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   )
 }
