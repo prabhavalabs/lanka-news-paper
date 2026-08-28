@@ -48,7 +48,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	news := newsHandler{reader: dependencies.News}
 	auth := newAuthHandler(dependencies.IAM, dependencies.SessionTTL, dependencies.CookieSecure)
 	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk, monitor: newMonitorService(dependencies.Desk, dependencies.Monitor), media: dependencies.Media, adminAnalysis: dependencies.AdminAnalysis, runPipeline: dependencies.RunPipeline, runContentBackfill: dependencies.RunContentBackfill, runAdminAnalysisBackfill: dependencies.RunAdminAnalysisBackfill, pauseAdminAnalysisBackfill: dependencies.PauseAdminAnalysisBackfill, resumeAdminAnalysisBackfill: dependencies.ResumeAdminAnalysisBackfill, cancelAdminAnalysisBackfill: dependencies.CancelAdminAnalysisBackfill}
-	watchTower := watchTowerHandler{service: dependencies.WatchTower}
+	watchTower := watchTowerHandler{service: dependencies.WatchTower, llm: dependencies.LLM}
 	newsletterAdmin := newsletterAdminHandler{repository: dependencies.Newsletter, tester: dependencies.NewsletterTester}
 	newsletterPublic := newsletterUnsubscribeHandler{repository: dependencies.Newsletter}
 	workflowAdmin := workflowAdminHandler{gateway: dependencies.LLM}
@@ -140,6 +140,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("POST /api/admin/watch-tower/threads/{id}/messages", watchTower.messages)
 	protected.HandleFunc("GET /api/admin/settings/watch-tower", watchTower.settings)
 	protected.HandleFunc("POST /api/admin/settings/watch-tower", watchTower.settings)
+	protected.HandleFunc("POST /api/admin/settings/watch-tower/model", watchTower.model)
 	protected.HandleFunc("GET /api/admin/newsletter/subscribers", newsletterAdmin.subscribers)
 	protected.HandleFunc("POST /api/admin/newsletter/subscribers", newsletterAdmin.subscribers)
 	protected.HandleFunc("POST /api/admin/newsletter/subscribers/{id}", newsletterAdmin.subscriber)

@@ -218,8 +218,7 @@ export function SettingsPage() {
     mutationFn: async () => {
       if (!activeWatchTowerModel) throw new Error('A Watch Tower model is required')
       await Promise.all([
-        client.updateLlmProfile({ task: 'watch_tower_retrieval', model: activeWatchTowerModel }),
-        client.updateLlmProfile({ task: 'watch_tower_answer', model: activeWatchTowerModel }),
+        client.updateWatchTowerModel({ provider_id: 'openrouter', model: activeWatchTowerModel }),
         client.updateWatchTowerSettings({ response_language: activeWatchTowerLanguage }),
       ])
     },

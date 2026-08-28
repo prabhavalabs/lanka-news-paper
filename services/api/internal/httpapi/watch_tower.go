@@ -7,11 +7,13 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/watchtower"
 )
 
 type watchTowerHandler struct {
 	service *watchtower.Service
+	llm     *llm.Gateway
 }
 
 func (handler watchTowerHandler) threads(w http.ResponseWriter, request *http.Request) {
@@ -130,6 +132,37 @@ func (handler watchTowerHandler) settings(w http.ResponseWriter, request *http.R
 		return
 	}
 	writeJSON(w, http.StatusOK, settings)
+}
+
+func (handler watchTowerHandler) model(w http.ResponseWriter, request *http.Request) {
+	if handler.llm == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Model routing unavailable", "The Watch Tower model router is not configured.")
+		return
+	}
+	if !requireAdministrator(w, request) {
+		return
+	}
+	var body struct {
+		ProviderID string `json:"provider_id"`
+		Model      string `json:"model"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "A provider and model are required.")
+		return
+	}
+	if err := handler.llm.UpdateWatchTowerModel(request.Context(), currentUser(request).ID, body.ProviderID, body.Model); err != nil {
+		switch {
+		case errors.Is(err, llm.ErrWatchTowerModelInvalid):
+			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid model", err.Error())
+		case errors.Is(err, llm.ErrWatchTowerModelMissing):
+			writeProblem(w, http.StatusConflict, "https://snap.local/problems/conflict", "Watch Tower profiles missing", "Both Watch Tower model profiles must exist before they can be updated.")
+		default:
+			slog.Error("Watch Tower model update failed", "error", err)
+			writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Could not update model", "Watch Tower could not update its model. Try again.")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (handler watchTowerHandler) writeError(w http.ResponseWriter, err error) {

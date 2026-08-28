@@ -1267,6 +1267,11 @@ export function createClient(baseUrl = "") {
         method: "POST",
         body: JSON.stringify(body)
       }),
+    updateWatchTowerModel: (body: { provider_id: "openrouter"; model: string }) =>
+      request<{ ok: boolean }>(url("/api/admin/settings/watch-tower/model"), {
+        method: "POST",
+        body: JSON.stringify(body)
+      }),
     newsletterSubscribers: () =>
       request<NewsletterSubscriberList>(url("/api/admin/newsletter/subscribers")),
     createNewsletterSubscriber: (body: NewsletterSubscriberInput) =>

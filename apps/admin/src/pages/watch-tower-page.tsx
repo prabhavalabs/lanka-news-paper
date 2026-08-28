@@ -1,5 +1,6 @@
 import {
   createClient,
+  type LlmModel,
   type WatchTowerConversation,
   type WatchTowerMessage,
   type WatchTowerThread,
@@ -7,7 +8,12 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowUp,
+  Bot,
   BookOpenText,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  CircleAlert,
   Clock3,
   Database,
   ExternalLink,
@@ -16,11 +22,12 @@ import {
   MessageSquareText,
   Plus,
   Radar,
+  Search,
   Sparkles,
   Telescope,
   Trash2,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
 
@@ -36,11 +43,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Sheet,
   SheetContent,
   SheetDescription,
+  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
@@ -65,8 +74,12 @@ export function WatchTowerPage() {
   const [prompt, setPrompt] = useState('')
   const [pendingQuestion, setPendingQuestion] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const [modelSearch, setModelSearch] = useState('')
+  const [selectedModel, setSelectedModel] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<WatchTowerThread | null>(null)
   const messageEnd = useRef<HTMLDivElement>(null)
+  const user = queryClient.getQueryData<{ role: string }>(['me'])
 
   const threads = useQuery({
     queryKey: ['watch-tower-threads'],
@@ -79,6 +92,39 @@ export function WatchTowerPage() {
     enabled: Boolean(selectedThreadID),
     staleTime: 10_000,
   })
+  const provider = useQuery({
+    queryKey: ['llm-provider'],
+    queryFn: () => client.llmProvider(),
+    staleTime: 60_000,
+    enabled: user?.role === 'administrator',
+  })
+  const models = useQuery({
+    queryKey: ['llm-models'],
+    queryFn: () => client.llmModels(),
+    staleTime: 60_000,
+    enabled: user?.role === 'administrator',
+  })
+  const profiles = useQuery({
+    queryKey: ['llm-profiles'],
+    queryFn: () => client.llmProfiles(),
+    staleTime: 60_000,
+    enabled: user?.role === 'administrator',
+  })
+
+  const watchTowerProfiles = (profiles.data?.items ?? []).filter((profile) =>
+    profile.task === 'watch_tower_retrieval' || profile.task === 'watch_tower_answer')
+  const retrievalModel = watchTowerProfiles.find((profile) => profile.task === 'watch_tower_retrieval')?.model ?? ''
+  const answerModel = watchTowerProfiles.find((profile) => profile.task === 'watch_tower_answer')?.model ?? ''
+  const configuredModel = answerModel || retrievalModel
+  const profilesDiffer = Boolean(retrievalModel && answerModel && retrievalModel !== answerModel)
+  const compatibleModels = useMemo(() => (models.data?.items ?? []).filter((model) =>
+    model.compatible_tasks.includes('watch_tower_retrieval') && model.compatible_tasks.includes('watch_tower_answer')),
+  [models.data?.items])
+  const currentModel = compatibleModels.find((model) => model.id === configuredModel)
+  const searchTerm = modelSearch.trim().toLowerCase()
+  const visibleModels = useMemo(() => compatibleModels.filter((model) =>
+    !searchTerm || model.name.toLowerCase().includes(searchTerm) || model.id.toLowerCase().includes(searchTerm)),
+  [compatibleModels, searchTerm])
 
   const ask = useMutation({
     mutationFn: async (question: string) => {
@@ -124,6 +170,20 @@ export function WatchTowerPage() {
     onError: () => toast.error('Could not delete this conversation'),
   })
 
+  const updateModel = useMutation({
+    mutationFn: (model: string) => client.updateWatchTowerModel({ provider_id: 'openrouter', model }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['llm-profiles'] }),
+        queryClient.invalidateQueries({ queryKey: ['agent-workflows'] }),
+      ])
+      setModelPickerOpen(false)
+      setModelSearch('')
+      toast.success('Watch Tower model updated for retrieval and answers')
+    },
+    onError: () => toast.error('Could not update the Watch Tower model'),
+  })
+
   useEffect(() => {
     if (!pendingQuestion && !(conversation.data?.messages.length)) return
     messageEnd.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
@@ -146,9 +206,15 @@ export function WatchTowerPage() {
     setHistoryOpen(false)
   }
 
+  const openModelPicker = () => {
+    setSelectedModel(configuredModel)
+    setModelSearch('')
+    setModelPickerOpen(true)
+  }
+
   return (
     <section className="watch-tower-page flex min-h-[34rem] min-w-0 flex-col gap-4">
-      <div className="flex shrink-0 items-end justify-between gap-3">
+      <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <Badge variant="outline" className="mb-2"><Radar /> Newsroom intelligence</Badge>
           <h1 className="font-heading text-2xl font-semibold tracking-tight">Watch Tower</h1>
@@ -156,10 +222,26 @@ export function WatchTowerPage() {
             Ask what is happening in Sri Lanka and inspect the newsroom evidence behind every answer.
           </p>
         </div>
-        <div className="watch-tower-mobile-history">
-          <Button variant="outline" onClick={() => setHistoryOpen(true)}>
-            <History /> History
-          </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {user?.role === 'administrator' ? (
+            <Button
+              variant="outline"
+              className="max-w-[17rem] justify-between"
+              onClick={openModelPicker}
+              disabled={ask.isPending}
+              aria-label={`Change Watch Tower model. Current model: ${currentModel?.name ?? configuredModel ?? 'not configured'}`}
+            >
+              <Bot />
+              <span className="hidden text-muted-foreground sm:inline">Model</span>
+              <span className="truncate font-medium">{currentModel?.name ?? configuredModel ?? 'Choose model'}</span>
+              <ChevronDown />
+            </Button>
+          ) : null}
+          <div className="watch-tower-mobile-history">
+            <Button variant="outline" onClick={() => setHistoryOpen(true)}>
+              <History /> History
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -270,6 +352,89 @@ export function WatchTowerPage() {
         </SheetContent>
       </Sheet>
 
+      <Sheet open={modelPickerOpen} onOpenChange={setModelPickerOpen}>
+        <SheetContent side="right" style={{ width: '100%', maxWidth: '38rem' }}>
+          <SheetHeader className="border-b pr-14">
+            <SheetTitle>Watch Tower model</SheetTitle>
+            <SheetDescription>
+              One model powers both evidence retrieval and cited answer generation. Changes apply to the next question.
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="space-y-4 border-b px-6 pb-5">
+            <div className="flex items-center justify-between gap-3 rounded-xl border bg-muted/20 p-4">
+              <div className="min-w-0">
+                <p className="font-medium">OpenRouter</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {provider.data?.key_set ? 'API key configured' : 'API key not configured'}
+                </p>
+              </div>
+              {provider.data ? (
+                <Badge variant="outline" className={cn(
+                  provider.data.available
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                    : 'border-destructive/30 bg-destructive/10 text-destructive',
+                )}>
+                  {provider.data.available ? <CheckCircle2 /> : <CircleAlert />}
+                  {provider.data.status}
+                </Badge>
+              ) : <Skeleton className="h-6 w-20" />}
+            </div>
+            {profilesDiffer ? (
+              <div className="flex gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300">
+                <CircleAlert className="mt-0.5 size-4 shrink-0" />
+                The two Watch Tower stages currently use different models. Applying a model here will synchronize them.
+              </div>
+            ) : null}
+            {models.isError ? (
+              <p className="text-sm text-destructive">The live model catalog is unavailable. The current assignment remains unchanged.</p>
+            ) : (
+              <>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="pl-9"
+                    type="search"
+                    placeholder="Search compatible models…"
+                    value={modelSearch}
+                    onChange={(event) => setModelSearch(event.target.value)}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">{visibleModels.length} compatible models</p>
+              </>
+            )}
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4" role="radiogroup" aria-label="Compatible Watch Tower models">
+            {models.isPending ? [0, 1, 2, 3].map((item) => <Skeleton key={item} className="h-24 rounded-xl" />) : null}
+            {visibleModels.slice(0, 75).map((model) => (
+              <ModelOption
+                key={model.id}
+                model={model}
+                selected={selectedModel === model.id}
+                onSelect={setSelectedModel}
+              />
+            ))}
+            {!models.isPending && !models.isError && visibleModels.length === 0 ? (
+              <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+                No compatible model matches this search.
+              </p>
+            ) : null}
+          </div>
+
+          <SheetFooter className="border-t sm:flex-row sm:justify-end">
+            <Button variant="outline" onClick={() => setModelPickerOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => updateModel.mutate(selectedModel)}
+              disabled={!selectedModel || updateModel.isPending || (!profilesDiffer && selectedModel === configuredModel)}
+            >
+              {updateModel.isPending ? <LoaderCircle className="animate-spin" /> : <Bot />}
+              Apply to Watch Tower
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent>
           <DialogHeader>
@@ -292,6 +457,35 @@ export function WatchTowerPage() {
         </DialogContent>
       </Dialog>
     </section>
+  )
+}
+
+function ModelOption({ model, selected, onSelect }: { model: LlmModel; selected: boolean; onSelect: (model: string) => void }) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={() => onSelect(model.id)}
+      className={cn(
+        'flex w-full items-start gap-3 rounded-xl border p-4 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring',
+        selected && 'border-primary bg-primary/5 ring-1 ring-primary',
+      )}
+    >
+      <span className={cn(
+        'mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border',
+        selected && 'border-primary bg-primary text-primary-foreground',
+      )}>
+        {selected ? <Check className="size-3" /> : null}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block font-medium">{model.name}</span>
+        <span className="mt-1 block break-all text-xs text-muted-foreground">{model.id}</span>
+        <span className="mt-3 block text-xs text-muted-foreground">
+          {model.context_length.toLocaleString()} context · ${model.input_price_per_million.toLocaleString()}/1M input · ${model.output_price_per_million.toLocaleString()}/1M output
+        </span>
+      </span>
+    </button>
   )
 }
 
