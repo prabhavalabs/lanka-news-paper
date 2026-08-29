@@ -52,6 +52,13 @@ func testWindow(now time.Time, location *time.Location, sendHour int, mode strin
 	return end.Format("2006-01-02"), end.Add(-24 * time.Hour), end
 }
 
+func validateTestRecipientStatus(status string, exists bool) error {
+	if exists && status != StatusActive {
+		return ErrInactiveTestEmail
+	}
+	return nil
+}
+
 func (service *Service) RunTest(ctx context.Context, raw TestInput, actor uuid.UUID) (TestResult, error) {
 	if service == nil || service.store == nil || service.model == nil {
 		return TestResult{}, ErrTestSendDisabled
@@ -63,6 +70,15 @@ func (service *Service) RunTest(ctx context.Context, raw TestInput, actor uuid.U
 	}
 	if input.Mode == "send" && (!service.config.TestSendReady || service.sender == nil || strings.TrimSpace(service.config.From) == "") {
 		return TestResult{}, ErrTestSendDisabled
+	}
+	if input.Mode == "send" {
+		status, exists, statusErr := service.store.SubscriberStatusByEmail(ctx, input.RecipientEmail)
+		if statusErr != nil {
+			return TestResult{}, statusErr
+		}
+		if statusErr = validateTestRecipientStatus(status, exists); statusErr != nil {
+			return TestResult{}, statusErr
+		}
 	}
 	settings, err := service.store.GetSettings(ctx)
 	if err != nil {

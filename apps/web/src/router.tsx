@@ -1,31 +1,44 @@
+import type { ComponentType } from 'react'
 import { createBrowserRouter } from 'react-router'
 
-import { ArticlePage } from './pages/article-page'
-import { BriefPage } from './pages/brief-page'
-import { EventPage } from './pages/event-page'
-import { FeedPage } from './pages/feed-page'
-import { FrontPage } from './pages/front-page'
-import { KnowledgeAnalysisPage } from './pages/knowledge-analysis-page'
 import { RootLayout } from './pages/root-layout'
 import { NotFoundPage, RouteErrorPage } from './pages/route-error-page'
-import { SourcesPage } from './pages/sources-page'
 import { StaticPage } from './pages/static-page'
+
+function RouteLoading() {
+  return (
+    <main className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">
+      <p role="status">පිටුව පූරණය වෙමින්…</p>
+    </main>
+  )
+}
+
+const lazyPage = <T extends Record<string, unknown>, K extends keyof T>(loader: () => Promise<T>, exportName: K) => async () => {
+  const module = await loader()
+  return { Component: module[exportName] as ComponentType }
+}
+
+const lazyFeedPage = (mode: 'category' | 'source' | 'search') => async () => {
+  const { FeedPage } = await import('./pages/feed-page')
+  return { Component: () => <FeedPage mode={mode} /> }
+}
 
 export const router = createBrowserRouter([
   {
     path: '/',
     element: <RootLayout />,
+    HydrateFallback: RouteLoading,
     errorElement: <RouteErrorPage />,
     children: [
-      { index: true, element: <FrontPage /> },
-      { path: 'c/:slug', element: <FeedPage mode="category" /> },
-      { path: 'sources', element: <SourcesPage /> },
-      { path: 'sources/:id', element: <FeedPage mode="source" /> },
-      { path: 'search', element: <FeedPage mode="search" /> },
-      { path: 'a/:id', element: <ArticlePage /> },
-      { path: 'e/:id', element: <EventPage /> },
-      { path: 'analysis/knowledge', element: <KnowledgeAnalysisPage /> },
-      { path: 'brief', element: <BriefPage /> },
+      { index: true, lazy: lazyPage(() => import('./pages/front-page'), 'FrontPage') },
+      { path: 'c/:slug', lazy: lazyFeedPage('category') },
+      { path: 'sources', lazy: lazyPage(() => import('./pages/sources-page'), 'SourcesPage') },
+      { path: 'sources/:id', lazy: lazyFeedPage('source') },
+      { path: 'search', lazy: lazyFeedPage('search') },
+      { path: 'a/:id', lazy: lazyPage(() => import('./pages/article-page'), 'ArticlePage') },
+      { path: 'e/:id', lazy: lazyPage(() => import('./pages/event-page'), 'EventPage') },
+      { path: 'analysis/knowledge', lazy: lazyPage(() => import('./pages/knowledge-analysis-page'), 'KnowledgeAnalysisPage') },
+      { path: 'brief', lazy: lazyPage(() => import('./pages/brief-page'), 'BriefPage') },
       {
         path: 'about',
         element: (

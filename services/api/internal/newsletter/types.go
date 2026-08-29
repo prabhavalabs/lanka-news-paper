@@ -16,6 +16,7 @@ var (
 	ErrInvalidStatus     = errors.New("newsletter recipient status is invalid")
 	ErrInvalidSettings   = errors.New("newsletter settings are invalid")
 	ErrInvalidTest       = errors.New("newsletter test settings are invalid")
+	ErrInactiveTestEmail = errors.New("paused or unsubscribed recipients cannot receive test emails")
 	ErrTestSendDisabled  = errors.New("newsletter test sending is not configured")
 	ErrSubscriberMissing = errors.New("newsletter recipient was not found")
 )

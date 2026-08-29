@@ -201,6 +201,22 @@ func (store *Store) ListSubscribers(ctx context.Context) (SubscriberList, error)
 	return result, nil
 }
 
+func (store *Store) SubscriberStatusByEmail(ctx context.Context, email string) (string, bool, error) {
+	var status string
+	err := store.pool.QueryRow(ctx, `
+		SELECT status
+		FROM newsletter_subscribers
+		WHERE email = $1::citext
+	`, email).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("load newsletter recipient status: %w", err)
+	}
+	return status, true, nil
+}
+
 func (store *Store) CreateSubscriber(ctx context.Context, input SubscriberInput, actor uuid.UUID) (Subscriber, error) {
 	input, err := normalizeSubscriberInput(input, true)
 	if err != nil {

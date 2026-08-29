@@ -65,6 +65,14 @@ func TestNormalizeTestInputRequiresValidAddressForSend(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidEmail)
 }
 
+func TestValidateTestRecipientStatusBlocksInactiveMailingListEntries(t *testing.T) {
+	t.Parallel()
+	require.NoError(t, validateTestRecipientStatus(StatusActive, true))
+	require.NoError(t, validateTestRecipientStatus("", false))
+	require.ErrorIs(t, validateTestRecipientStatus(StatusPaused, true), ErrInactiveTestEmail)
+	require.ErrorIs(t, validateTestRecipientStatus(StatusUnsubscribed, true), ErrInactiveTestEmail)
+}
+
 func TestScheduledTestWindowUsesMostRecentConfiguredHour(t *testing.T) {
 	t.Parallel()
 	location, err := time.LoadLocation("Asia/Colombo")

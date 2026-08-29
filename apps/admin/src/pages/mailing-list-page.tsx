@@ -34,14 +34,22 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from '@/components/ui/combobox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { formatDateTime } from '@/lib/date-time'
+import {
+  filterNewsletterRecipientSuggestions,
+  isValidTestEmail,
+  normalizeTestEmail,
+  testEmailValidationMessage,
+} from '@/lib/newsletter-recipient-search'
 
 const client = createClient()
 
@@ -107,7 +115,12 @@ export function MailingListPage() {
     onError: () => toast.error('Could not remove recipient'),
   })
   const runTest = useMutation({
-    mutationFn: (mode: NewsletterTestInput['mode']) => client.runNewsletterTest({ mode, window_mode: testWindow, recipient_email: testEmail, recipient_name: testName }),
+    mutationFn: (mode: NewsletterTestInput['mode']) => client.runNewsletterTest({
+      mode,
+      window_mode: testWindow,
+      recipient_email: normalizeTestEmail(testEmail),
+      recipient_name: testName,
+    }),
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ['newsletter-tests'] })
       if (result.mode === 'preview') setPreview(result)
@@ -195,6 +208,9 @@ export function MailingListPage() {
       <NewsletterTestLab
         tests={tests.data?.items ?? []}
         loading={tests.isPending}
+        recipients={recipients.data?.items ?? []}
+        recipientsLoading={recipients.isPending}
+        recipientsError={recipients.isError}
         windowMode={testWindow}
         onWindowMode={setTestWindow}
         email={testEmail}
@@ -279,9 +295,12 @@ export function MailingListPage() {
   )
 }
 
-function NewsletterTestLab({ tests, loading, windowMode, onWindowMode, email, onEmail, name, onName, pending, onRun, preview, onPreview }: {
+function NewsletterTestLab({ tests, loading, recipients, recipientsLoading, recipientsError, windowMode, onWindowMode, email, onEmail, name, onName, pending, onRun, preview, onPreview }: {
   tests: NewsletterTestRun[]
   loading: boolean
+  recipients: NewsletterSubscriber[]
+  recipientsLoading: boolean
+  recipientsError: boolean
   windowMode: NewsletterTestInput['window_mode']
   onWindowMode: (value: NewsletterTestInput['window_mode']) => void
   email: string
@@ -293,16 +312,29 @@ function NewsletterTestLab({ tests, loading, windowMode, onWindowMode, email, on
   preview: NewsletterTestResult | null
   onPreview: (value: NewsletterTestResult | null) => void
 }) {
+  const emailValidation = testEmailValidationMessage(recipients, email)
+  const canSend = !recipientsLoading && !recipientsError && isValidTestEmail(email) && !emailValidation
+
   return (
     <Card id="newsletter-test-lab" className="gap-0 overflow-hidden py-0 shadow-sm">
       <CardHeader className="border-b py-6"><CardTitle className="flex items-center gap-2"><FlaskConical className="size-5" />Newsletter test lab</CardTitle><CardDescription>Run the saved workflow against real eligible coverage before the next scheduled delivery. Preview does not send email; test send targets only the address entered here.</CardDescription></CardHeader>
-      <CardContent className="space-y-6 p-6">
+      <CardContent className="flex flex-col gap-6 p-6">
         <div className="grid gap-4 lg:grid-cols-[minmax(0,0.75fr)_minmax(0,1fr)_minmax(0,1fr)]">
           <Field><FieldLabel htmlFor="test-window">Coverage window</FieldLabel><Select value={windowMode} onValueChange={(value) => value && onWindowMode(value as NewsletterTestInput['window_mode'])}><SelectTrigger id="test-window"><SelectValue>{() => windowMode === 'latest_24h' ? 'Latest rolling 24 hours' : 'Most recent scheduled window'}</SelectValue></SelectTrigger><SelectContent><SelectItem value="latest_24h">Latest rolling 24 hours</SelectItem><SelectItem value="scheduled">Most recent scheduled window</SelectItem></SelectContent></Select></Field>
           <Field><FieldLabel htmlFor="test-name">Test greeting name</FieldLabel><Input id="test-name" value={name} maxLength={160} onChange={(event) => onName(event.target.value)} placeholder="Optional preview name" /></Field>
-          <Field><FieldLabel htmlFor="test-email">One test address</FieldLabel><Input id="test-email" type="email" value={email} onChange={(event) => onEmail(event.target.value)} placeholder="you@example.com" /><p className="text-xs text-muted-foreground">Never added to the mailing list.</p></Field>
+          <TestRecipientCombobox
+            recipients={recipients}
+            loading={recipientsLoading}
+            error={recipientsError}
+            email={email}
+            onEmail={onEmail}
+            name={name}
+            onName={onName}
+            validationMessage={emailValidation}
+            disabled={pending}
+          />
         </div>
-        <div className="flex flex-wrap gap-2"><Button disabled={pending} onClick={() => onRun('preview')}><Eye />{pending ? 'Running workflow…' : 'Generate preview'}</Button><Button variant="outline" disabled={pending || !email.includes('@')} onClick={() => onRun('send')}><Send />Send one test email</Button></div>
+        <div className="flex flex-wrap gap-2"><Button disabled={pending} onClick={() => onRun('preview')}><Eye data-icon="inline-start" />{pending ? 'Running workflow…' : 'Generate preview'}</Button><Button variant="outline" disabled={pending || !canSend} onClick={() => onRun('send')}><Send data-icon="inline-start" />Send one test email</Button></div>
         <div className="border-t pt-6">
           <div className="mb-3 flex items-center justify-between"><div><h3 className="flex items-center gap-2 font-heading font-semibold"><History className="size-4" />Recent test performance</h3><p className="mt-1 text-xs text-muted-foreground">Compare model, duration, coverage, and outcomes from the latest 50 tests.</p></div><Badge variant="secondary">{tests.length} runs</Badge></div>
           {loading ? <Skeleton className="h-28 w-full" /> : null}
@@ -317,6 +349,95 @@ function NewsletterTestLab({ tests, loading, windowMode, onWindowMode, email, on
         </DialogContent>
       </Dialog>
     </Card>
+  )
+}
+
+function TestRecipientCombobox({ recipients, loading, error, email, onEmail, name, onName, validationMessage, disabled }: {
+  recipients: NewsletterSubscriber[]
+  loading: boolean
+  error: boolean
+  email: string
+  onEmail: (value: string) => void
+  name: string
+  onName: (value: string) => void
+  validationMessage: string | null
+  disabled: boolean
+}) {
+  const [selectedRecipientID, setSelectedRecipientID] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+  const debouncedEmail = useDebouncedValue(email, 200)
+  const suggestions = useMemo(
+    () => filterNewsletterRecipientSuggestions(recipients, debouncedEmail),
+    [debouncedEmail, recipients],
+  )
+  const selectedRecipient = recipients.find((recipient) => recipient.id === selectedRecipientID) ?? null
+  const showValidation = Boolean(validationMessage) && !open
+
+  const updateInput = (value: string) => {
+    if (selectedRecipient && normalizeTestEmail(value) !== normalizeTestEmail(selectedRecipient.email)) {
+      setSelectedRecipientID(null)
+      if (name === selectedRecipient.name) onName('')
+    }
+    onEmail(value)
+  }
+
+  return (
+    <Field data-invalid={showValidation}>
+      <FieldLabel htmlFor="test-email">One test address</FieldLabel>
+      <Combobox
+        open={open}
+        onOpenChange={setOpen}
+        items={recipients}
+        filteredItems={suggestions}
+        filter={null}
+        value={selectedRecipient}
+        inputValue={email}
+        onInputValueChange={updateInput}
+        onValueChange={(recipient) => {
+          if (!recipient) return
+          setSelectedRecipientID(recipient.id)
+          onEmail(recipient.email)
+          onName(recipient.name)
+        }}
+        itemToStringLabel={(recipient) => recipient.email}
+        itemToStringValue={(recipient) => recipient.email}
+        isItemEqualToValue={(recipient, value) => recipient.id === value.id}
+        autoHighlight
+        disabled={disabled}
+      >
+        <ComboboxInput
+          id="test-email"
+          type="email"
+          autoComplete="email"
+          placeholder="Search recipients or enter an email…"
+          aria-invalid={showValidation}
+          aria-describedby="test-email-description"
+        />
+        <ComboboxContent className="w-[min(32rem,var(--available-width))]">
+          <ComboboxEmpty>
+            {loading
+              ? 'Loading mailing-list recipients…'
+              : error
+                ? 'Recipient lookup is unavailable. Try again before sending a test.'
+                : isValidTestEmail(email)
+                  ? 'No matching recipient. This address can still be used for a one-time test.'
+                  : 'Search by name or email, or finish typing a new address.'}
+          </ComboboxEmpty>
+          <ComboboxList>
+            {(recipient: NewsletterSubscriber) => (
+              <ComboboxItem key={recipient.id} value={recipient} disabled={recipient.status !== 'active'}>
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate">{recipient.name || 'Unnamed recipient'}</span>
+                  <span className="truncate text-xs font-normal text-muted-foreground">{recipient.email} · {recipient.status}</span>
+                </span>
+              </ComboboxItem>
+            )}
+          </ComboboxList>
+        </ComboboxContent>
+      </Combobox>
+      <FieldDescription id="test-email-description">Choose an active recipient or enter a valid one-time address. This never changes the mailing list.</FieldDescription>
+      {showValidation ? <FieldError>{validationMessage}</FieldError> : null}
+    </Field>
   )
 }
 

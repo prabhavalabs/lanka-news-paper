@@ -45,6 +45,8 @@ func (handler newsletterAdminHandler) tests(w http.ResponseWriter, request *http
 	switch {
 	case errors.Is(err, newsletter.ErrInvalidTest), errors.Is(err, newsletter.ErrInvalidEmail):
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid newsletter test", err.Error())
+	case errors.Is(err, newsletter.ErrInactiveTestEmail):
+		writeProblem(w, http.StatusConflict, "https://snap.local/problems/recipient-status", "Recipient cannot receive test email", err.Error())
 	case errors.Is(err, newsletter.ErrTestSendDisabled):
 		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Test sending unavailable", "Configure a valid Resend API key and sender address to send a test email. Preview remains available.")
 	default:

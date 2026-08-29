@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Lanka News">
+  <rect width="64" height="64" rx="16" fill="#14243b"/>
+  <path d="M18 16h28v32H18z" fill="#f7f3eb"/>
+  <path d="M24 23h16M24 29h16M24 35h10M24 41h16" fill="none" stroke="#c84f32" stroke-linecap="round" stroke-width="3"/>
+</svg>
