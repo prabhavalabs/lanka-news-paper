@@ -34,7 +34,8 @@ func TestArticleAnalysisPromptSchema(t *testing.T) {
 		require.Contains(t, prompt, existing, "existing editorial instructions must remain verbatim")
 	}
 	require.Contains(t, prompt, "first 16000 characters of that cleaned text")
-	require.Contains(t, prompt, "without economic-policy signals")
+	require.Contains(t, prompt, "political_relevance=0")
+	require.NotContains(t, prompt, "economic-policy signals")
 	require.Equal(t, false, schema["additionalProperties"])
 	require.ElementsMatch(t, []string{"cleaned", "summary", "category", "narration"}, schema["required"])
 	properties := schema["properties"].(map[string]any)

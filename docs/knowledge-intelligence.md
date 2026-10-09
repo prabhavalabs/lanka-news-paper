@@ -10,10 +10,10 @@ A newsroom receives several accounts of the same real-world event. The system th
 2. The article is normalized and assigned a semantic category.
 3. Similar reports are clustered into one event.
 4. Events become nodes in the knowledge graph and timeline.
-5. A multilingual model evaluates how each article narrates economic policy.
+5. A multilingual model evaluates each article's editorial and political narration.
 6. Only repeated, confident, relevant results contribute to an outlet tendency.
 
-Reporting about a left-wing party is not automatically left-wing reporting. Party identity is not an input to the narration score. An article can criticize a left-wing party using left-economic arguments, support a right-wing party using state-led arguments, or mention either party without expressing any economic framing.
+Reporting about a left-wing party is not automatically left-wing reporting. Party identity alone is not directional evidence: the model evaluates the journalist's framing, selection, emphasis, and attribution.
 
 ```mermaid
 flowchart LR
@@ -65,61 +65,38 @@ Initial evidence includes the [Election Commission party register](https://elect
 
 ### Machine-scored article narration
 
-The analyzer is `political-narration-ml-v7`. Combined `article_analysis` supplies narration results from the configured Codex model, with `narration_framing` as the per-step fallback. A conservative multilingual signal gate records clearly non-economic stories as irrelevant; crime, weather, sport, and routine state activity should not acquire a political-economic direction without meaningful policy signals. Model and reasoning effort assignments can be changed from the AI routing page.
+The analyzer is `editorial-stance-ml-v8`. Combined `article_analysis` supplies narration from the configured Codex model, with `narration_framing` as the per-step fallback. Both paths use the same prompt and schema. The model applies `political_relevance`: reports without meaningful political or public-policy framing return left=0, center=1, right=0. There is no keyword gate before inference.
 
-The score means:
-
-| Score | Label | Interpretation |
-| ---: | --- | --- |
-| `-1.00` to `-0.60` | Left | Strongly state-led, redistributive, labour-oriented, universal-welfare, or anti-privatization narration |
-| `-0.59` to `-0.16` | Center-left | Moderately left-economic narration |
-| `-0.15` to `+0.15` | Neutral / mixed | Balanced, descriptive, mixed, or non-directional narration |
-| `+0.16` to `+0.59` | Center-right | Moderately market-oriented narration |
-| `+0.60` to `+1.00` | Right | Strongly private-enterprise, deregulatory, market-allocation, privatization, or lower-tax narration |
-
-The axis measures economic narration only. It does not currently score nationalism, minority rights, institutional liberalism, religion, or social values. Those require separate named axes rather than one overloaded number.
+Relevant reports return a left/center/right probability distribution totaling 1. Left includes redistribution, labour power, state provision, progressive social policy, and criticism of entrenched hierarchies. Right includes market allocation, private enterprise, lower regulation or taxation, traditional social order, and nationalist/conservative framing. Center includes neutral attribution, balanced or mixed treatment, descriptive reporting, and weak directional evidence. The label follows the dominant probability; ties resolve to neutral. A compatibility score is derived as right minus left.
 
 ## Article algorithm
 
 ### 1. Prepare untrusted text
 
-The worker takes the RSS headline and description, removes HTML plus script/style content, decodes entities, collapses whitespace, and caps the excerpt at 6,000 Unicode characters. Article text is explicitly delimited as untrusted data so instructions embedded in a feed cannot override the analysis prompt.
-
-This release analyzes the feed excerpt, not a scraped full article. Full-text extraction should be added only after publisher-specific extraction quality and rights are validated.
+The worker uses the headline and rights-permitted captured article text, falling back to the feed description. Cleaning removes scraper debris and preserves faithful Markdown. Standalone narration receives up to 1,800 characters of summary and 9,000 characters of cleaned text; the combined prompt evaluates the headline, the first 1,800 summary characters, and the first 6,000 cleaned characters. Article text is untrusted data and must never override the prompt.
 
 ### 2. Request structured ML inference
 
-The model must return this typed contract:
-
 ```json
 {
-  "narration_score": -0.42,
+  "political_relevance": 1,
+  "left_probability": 0.7,
+  "center_probability": 0.2,
+  "right_probability": 0.1,
   "confidence": 0.78,
-  "rationale": "The report presents public provision as necessary for universal access.",
+  "rationale": "The journalist endorses public provision for universal access.",
   "evidence": ["essential services must remain publicly owned"]
 }
 ```
 
-The prompt requires the model to:
-
-- judge reporter/editorial narration rather than the identity of a speaker;
-- distinguish attributed quotations from the article's own framing;
-- score neutral reporting as zero even when the policy being reported is itself left- or right-wing;
-- require narrator-authored endorsement, criticism, loaded wording, causal judgment, or a recommendation before assigning a directional score;
-- treat a party or politician name as no evidence by itself;
-- return economic-policy relevance separately from the narration score, so an irrelevant article cannot be confused with neutral narration;
-- reject incidental language such as Sinhala “පෞද්ගලික හේතු” or Tamil “தனிப்பட்ட காரணங்கள்” (personal reasons), which does not mean private-enterprise framing;
-- return short evidence phrases from the supplied text;
-- avoid inferring a permanent publisher label from one article.
-
-The sentinel is an inference-transport value only; it is never displayed or stored as an article score. It avoids inconsistent auxiliary boolean and enum fields observed during integration testing. The API accepts only `2` or a value in `-1..+1`, rejects unknown or trailing JSON, derives relevance and the display label in deterministic code, limits evidence length, and stores irrelevant results as score `0` with label `unclear`.
+The prompt requires journalist-authored directional evidence, distinguishes quotations from editorial framing, and forbids inferring a permanent publisher label from one article. Parsing validates relevance, probability ranges and total, confidence, evidence limits, unknown fields, and trailing JSON. Irrelevant results are normalized to score 0, label `unclear`, and distribution 0/1/0. Historical economic-axis responses remain readable for compatibility.
 
 ### 3. Persist provenance
 
 Every result stores:
 
 - algorithm version;
-- relevance, score, label, and confidence;
+- relevance, left/center/right probabilities, derived score, label, and confidence;
 - rationale and evidence phrases;
 - provider ID and provider model;
 - analysis timestamp.
@@ -148,8 +125,8 @@ The result always describes the selected time and category window. It is a recen
 
 | Metric | Grain | Definition | Guardrail |
 | --- | --- | --- | --- |
-| Relevant narration | Article | Meaningful economic-policy framing is present | Irrelevant stories abstain and score zero |
-| Narration score | Article | ML estimate on the named `-1..+1` economic axis | Direction is visually uncertain below `0.60` confidence |
+| Relevant narration | Article | Meaningful political or public-policy framing is present | Irrelevant stories abstain and score zero |
+| Narration score | Article | Right probability minus left probability (`-1..+1`) | Direction is visually uncertain below `0.60` confidence |
 | Evidence | Article | Up to three short phrases supporting the result | Must come from supplied article text |
 | Scored events | Source × window | Distinct relevant events at or above `0.60` confidence | Avoids duplicate-event weighting |
 | Outlet tendency | Source × window | Confidence-weighted, neutral-shrunk mean | Minimum sample and URL-scoped recomputation |
@@ -175,7 +152,7 @@ Every new article creates one persisted run immediately after insertion. The com
 2. `summarization` — validates the combined summary/key points, with standalone summary as fallback;
 3. `categorization` — uses deterministic rules and the combined category, with individual Codex classification when needed;
 4. `event_clustering` — attaches published reports to a cross-source event or creates one;
-5. `stance_evaluation` — applies the economic-policy relevance gate and combined narration, with individual Codex narration when needed;
+5. `stance_evaluation` — persists the combined model-applied political relevance and narration, with individual Codex narration when needed;
 6. `event_synthesis` — refreshes the cross-source event analysis from approved reports.
 
 River retries transient failures at most five times. A retry starts the same run, skips steps already marked `succeeded` or `skipped`, and resumes the failed step. The dispatcher recreates runs missing after an interrupted insertion and recovers runs left `running` for more than 20 minutes. An editor can retry the failed step from the article detail page; resetting an earlier step also resets its dependent later steps.
@@ -208,7 +185,7 @@ The routing model is a zero-shot ML baseline, not a scientifically calibrated Sr
 3. Ask at least two Sri Lankan political-context annotators to label relevance, narration direction, confidence, evidence, and whether language is quotation or reporter framing.
 4. Measure inter-annotator agreement and adjudicate disagreements.
 5. Report macro F1 per language, relevance precision/recall, mean absolute score error, calibration error, and confident-score coverage.
-6. Inspect counterfactual tests where party names are swapped but the economic argument is unchanged; the score should remain stable.
+6. Inspect counterfactual tests where party names are swapped but the editorial framing is unchanged; the score should remain stable.
 7. Run prompt/model candidates in shadow mode and store disagreements for editorial review.
 8. Promote a new version only when it improves calibrated precision across languages, not just majority-class accuracy.
 

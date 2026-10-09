@@ -135,7 +135,7 @@ func (store *Store) AnalyzeArticleWithModel(ctx context.Context, articleID, runI
 	return result, err
 }
 
-// AnalyzeArticleWithCombined applies the same signal gate, parser and persistence
+// AnalyzeArticleWithCombined applies the same parser and persistence
 // to a cached narration and a standalone model response.
 func (store *Store) AnalyzeArticleWithCombined(ctx context.Context, articleID, runID, stepID, provider, model string, combined *llm.Response) (Result, bool, error) {
 	var headline, description, cleaned, summary string
@@ -149,14 +149,6 @@ func (store *Store) AnalyzeArticleWithCombined(ctx context.Context, articleID, r
 		return Result{}, false, fmt.Errorf("load article %s for narration: %w", articleID, err)
 	}
 
-	if !hasEconomicPolicySignal(headline + " " + description + " " + cleaned + " " + summary) {
-		result, err := store.PersistAnalysis(ctx, articleID, Result{
-			Analysis: Analysis{Label: "unclear", CenterProbability: 1, Confidence: 1,
-				Rationale: "No economic-policy signal in the article.", Evidence: []string{}},
-			ProviderID: "signal-gate", ProviderModel: Model,
-		})
-		return result, false, err
-	}
 	if combined != nil && combined.Provider != "none" {
 		if analysis, err := parseAnalysis(combined.Text); err == nil {
 			result, err := store.PersistAnalysis(ctx, articleID, Result{

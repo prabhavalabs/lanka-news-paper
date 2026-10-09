@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -106,7 +105,7 @@ func TestCombinedAnalysisFullRunIntegration(t *testing.T) {
 		{"keyword category wins", "The budget allocation will support more families following the announced decision.", "", false, false, []string{"article_analysis"}},
 		{"pinned model", "The welfare allocation will support more families following the announced decision.", "", false, true, []string{"article_analysis"}},
 		{"failed combined economic", "The welfare allocation will support more families following the announced decision.", "", true, false, []string{"article_analysis", "content_cleaning", "article_summary", "classify", "narration_framing"}},
-		{"failed combined non economic", "A community gathering concluded peacefully with participants returning home.", "", true, false, []string{"article_analysis", "content_cleaning", "article_summary", "classify"}},
+		{"failed combined non economic", "A community gathering concluded peacefully with participants returning home.", "", true, false, []string{"article_analysis", "content_cleaning", "article_summary", "classify", "narration_framing"}},
 		{"invalid summary", "The welfare allocation will support more families following the announced decision.", "summary", false, false, []string{"article_analysis", "article_summary"}},
 		{"invalid category", "The welfare allocation will support more families following the announced decision.", "category", false, false, []string{"article_analysis", "classify"}},
 		{"invalid narration", "The welfare allocation will support more families following the announced decision.", "narration", false, false, []string{"article_analysis", "narration_framing"}},
@@ -150,10 +149,8 @@ func TestCombinedAnalysisFullRunIntegration(t *testing.T) {
 			require.Equal(t, test.article, cleaned)
 			require.Equal(t, test.article, summary)
 			require.NoError(t, pool.QueryRow(ctx, `SELECT relevant,provider_id FROM article_political_analysis WHERE article_id=$1`, articleID).Scan(&relevant, &provider))
-			require.Equal(t, strings.Contains(test.article, "welfare") || strings.Contains(test.article, "budget"), relevant)
-			if !relevant {
-				require.Equal(t, "signal-gate", provider)
-			}
+			require.True(t, relevant, "persist the model result even without economic keywords")
+			require.Equal(t, "codex_cli", provider)
 			require.NoError(t, pool.QueryRow(ctx, `SELECT c.slug FROM articles a JOIN categories c ON c.id=a.category_id WHERE a.id=$1`, articleID).Scan(&category))
 			keyword := classify.From(nil, "Community update", test.article)
 			if keyword.Confidence >= 0.55 {

@@ -32,7 +32,7 @@ func classificationSlugs() []string {
 func articleAnalysisPromptSchema() (string, map[string]any) {
 	narrationPrompt, narrationSchema := politics.PromptSchema()
 	prompt := `Analyze one article in a single pass. Return one JSON object with cleaned, summary, category, and narration sub-objects. The rules below apply to their named sub-object; the combined JSON format supersedes any section's standalone output format.
-First produce cleaned.markdown from the supplied article. Summarize only the first 16000 characters of that cleaned text. Categorize its meaning. Evaluate narration using the headline, the first 1800 characters of your summary, and the first 6000 characters of the cleaned text. Do not use removed scraper debris as evidence. A report without economic-policy signals must have political_relevance=0, left_probability=0, center_probability=1, right_probability=0. Category must contain slug and confidence (0 to 1).
+First produce cleaned.markdown from the supplied article. Summarize only the first 16000 characters of that cleaned text. Categorize its meaning. Evaluate narration using the headline, the first 1800 characters of your summary, and the first 6000 characters of the cleaned text. Do not use removed scraper debris as evidence. Apply the NARRATION section's model relevance gate to political and public-policy framing. Category must contain slug and confidence (0 to 1).
 
 CLEANED:
 ` + cleanedArticlePrompt + "\n\nSUMMARY:\n" + articleSummaryPrompt + "\n\nCATEGORY:\n" + classificationPrompt + "\n\nNARRATION:\n" + narrationPrompt
