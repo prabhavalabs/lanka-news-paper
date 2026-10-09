@@ -1,6 +1,7 @@
 package adminanalysis
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -91,4 +92,11 @@ func TestBuildArticleInputPrefersFullContentAndLimitsSize(t *testing.T) {
 	require.Contains(t, input, `"headline":"Headline"`)
 	require.NotContains(t, input, "Excerpt")
 	require.LessOrEqual(t, len([]rune(input)), maxArticleCharacters+200)
+}
+
+func TestStoreCreateRejectsUnconfiguredModelBeforeDatabaseAccess(t *testing.T) {
+	_, err := NewStore(nil).Create(context.Background(), CreateRequest{
+		Scope: "article", Provider: "codex_cli", Model: "--config", ArticleID: "4dc5d133-073d-40a8-95ac-7d9871991b4a",
+	}, "test")
+	require.ErrorContains(t, err, "configured Codex allowlist")
 }

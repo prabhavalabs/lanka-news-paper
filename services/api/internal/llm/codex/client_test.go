@@ -79,6 +79,7 @@ func TestCompletionArgumentsAndIsolatedFiles(t *testing.T) {
 			require.Contains(t, strings.Join(args, "\n"), strings.Join(pair[:], "\n"))
 		}
 		require.Contains(t, args, `web_search="disabled"`)
+		require.Contains(t, args, `forced_login_method="chatgpt"`)
 		require.Contains(t, args, `model_reasoning_effort="medium"`)
 		require.Contains(t, args, "model_instructions_file="+strconv.Quote(filepath.Join(directory, "instructions.txt")))
 		data, err := os.ReadFile(filepath.Join(directory, "instructions.txt"))
@@ -178,11 +179,11 @@ func TestCompletionDoesNotClassifyModelOrRunnerText(t *testing.T) {
 }
 
 func TestCompletionClassifiesStderrAndUnavailable(t *testing.T) {
-	_, err := NewClient(fakeRunner{missing: true}).Complete(context.Background(), CallOptions{Model: "model"})
+	_, err := NewClient(fakeRunner{missing: true}).Complete(context.Background(), CallOptions{Model: "gpt-6-luna"})
 	require.ErrorIs(t, err, ErrUnavailable)
 	_, err = NewClient(fakeRunner{run: func(context.Context, []string, string, string) (string, string, error) {
 		return "", "401 Unauthorized", errors.New("exit status 1")
-	}}).Complete(context.Background(), CallOptions{Model: "model"})
+	}}).Complete(context.Background(), CallOptions{Model: "gpt-6-luna"})
 	require.ErrorIs(t, err, ErrAuth)
 }
 
@@ -214,15 +215,15 @@ func TestConcurrencyWaitRespectsContext(t *testing.T) {
 	}})
 	client.slots = make(chan struct{}, 1)
 	done := make(chan error, 1)
-	go func() { _, err := client.Complete(context.Background(), CallOptions{Model: "model"}); done <- err }()
+	go func() { _, err := client.Complete(context.Background(), CallOptions{Model: "gpt-6-luna"}); done <- err }()
 	<-firstStarted
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := client.Complete(ctx, CallOptions{Model: "model"})
+	_, err := client.Complete(ctx, CallOptions{Model: "gpt-6-luna"})
 	require.ErrorIs(t, err, context.Canceled)
 	timeoutCtx, cancelTimeout := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancelTimeout()
-	_, err = client.Complete(timeoutCtx, CallOptions{Model: "model"})
+	_, err = client.Complete(timeoutCtx, CallOptions{Model: "gpt-6-luna"})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Len(t, calls, 1)
 	close(release)
@@ -236,7 +237,7 @@ func TestRecheckAfterConcurrencyWaitDoesNotSpawn(t *testing.T) {
 		t.Fatal("must not spawn")
 		return "", "", nil
 	}})
-	_, err := client.Complete(context.Background(), CallOptions{Model: "model", BeforeRun: func(context.Context) error { return ErrQuota }})
+	_, err := client.Complete(context.Background(), CallOptions{Model: "gpt-6-luna", BeforeRun: func(context.Context) error { return ErrQuota }})
 	require.ErrorIs(t, err, ErrQuota)
 }
 
@@ -357,4 +358,19 @@ func TestCompletionTimeoutStartsAfterSlotAcquisition(t *testing.T) {
 	<-timer.C
 	<-client.slots
 	require.NoError(t, <-done)
+}
+
+func TestCompletionRejectsUnconfiguredModelsBeforeSpawning(t *testing.T) {
+	t.Setenv("SNAP_CODEX_MODELS", "model-a,--config,model\nname,model with spaces")
+	require.Equal(t, []string{"model-a"}, Models())
+	client := NewClient(fakeRunner{run: func(context.Context, []string, string, string) (string, string, error) {
+		t.Fatal("invalid configuration must not spawn")
+		return "", "", nil
+	}})
+	for _, name := range []string{"gpt-6-luna", "--config", "model\nname", "model with spaces", ""} {
+		_, err := client.Complete(context.Background(), CallOptions{Model: name})
+		require.Error(t, err)
+	}
+	_, err := client.Complete(context.Background(), CallOptions{Model: "model-a", ReasoningEffort: `high" --config malicious`})
+	require.Error(t, err)
 }

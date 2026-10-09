@@ -13,6 +13,7 @@ import (
 )
 
 func TestStoreCreatesSingleArticleRunFromEligibleFullContent(t *testing.T) {
+	t.Setenv("SNAP_CODEX_MODELS", "test-model")
 	databaseURL := os.Getenv("SNAP_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("SNAP_TEST_DATABASE_URL is not configured")
@@ -49,6 +50,7 @@ func TestStoreCreatesSingleArticleRunFromEligibleFullContent(t *testing.T) {
 }
 
 func TestStorePausesResumesCancelsAndDeletesBackfill(t *testing.T) {
+	t.Setenv("SNAP_CODEX_MODELS", "test-model")
 	databaseURL := os.Getenv("SNAP_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("SNAP_TEST_DATABASE_URL is not configured")

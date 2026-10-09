@@ -477,7 +477,7 @@ func validateProfile(task, providerID, modelID, effort string) error {
 	if providerID != "codex_cli" {
 		return fmt.Errorf("unsupported provider %q", providerID)
 	}
-	if !contains(codex.Models(), modelID) {
+	if !codex.ValidModel(modelID) {
 		return fmt.Errorf("model %q is unavailable", modelID)
 	}
 	if !codex.ValidReasoningEffort(effort) {

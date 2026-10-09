@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm/codex"
 )
 
 type Store struct {
@@ -92,6 +93,9 @@ func scopePredicate(request CreateRequest, firstParameter int) (string, []any) {
 func (store *Store) Create(ctx context.Context, request CreateRequest, createdBy string) (Run, error) {
 	if err := ValidateCreateRequest(request); err != nil {
 		return Run{}, err
+	}
+	if !codex.ValidModel(request.Model) {
+		return Run{}, fmt.Errorf("model %q is not in the configured Codex allowlist", request.Model)
 	}
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {

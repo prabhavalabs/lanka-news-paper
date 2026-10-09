@@ -199,8 +199,8 @@ func (client *Client) Complete(ctx context.Context, options CallOptions) (result
 			client.invalidateLogin()
 		}
 	}()
-	if strings.TrimSpace(options.Model) == "" {
-		return Result{}, fmt.Errorf("model is required")
+	if !ValidModel(options.Model) {
+		return Result{}, fmt.Errorf("model %q is not in the configured Codex allowlist", options.Model)
 	}
 	if !ValidReasoningEffort(options.ReasoningEffort) {
 		return Result{}, fmt.Errorf("invalid reasoning effort %q", options.ReasoningEffort)
@@ -243,6 +243,7 @@ func (client *Client) Complete(ctx context.Context, options CallOptions) (result
 		"--skip-git-repo-check", "--sandbox", "read-only", "--color", "never", "--json",
 		"--config", "model_instructions_file=" + strconv.Quote(instructionsPath),
 		"--config", `web_search="disabled"`,
+		"--config", `forced_login_method="chatgpt"`,
 		"--disable", "shell_tool", "--disable", "unified_exec", "--disable", "browser_use",
 		"--disable", "computer_use", "--disable", "apps", "--disable", "multi_agent",
 		"--model", options.Model,
@@ -399,6 +400,17 @@ func parseVersion(value string) string {
 	return strings.TrimSpace(value)
 }
 
+var modelNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$`)
+
+func ValidModel(value string) bool {
+	for _, model := range Models() {
+		if model == value {
+			return true
+		}
+	}
+	return false
+}
+
 func Models() []string {
 	value := strings.TrimSpace(os.Getenv("SNAP_CODEX_MODELS"))
 	if value == "" {
@@ -406,7 +418,7 @@ func Models() []string {
 	}
 	items := make([]string, 0)
 	for _, item := range strings.Split(value, ",") {
-		if item = strings.TrimSpace(item); item != "" {
+		if item = strings.TrimSpace(item); modelNamePattern.MatchString(item) {
 			items = append(items, item)
 		}
 	}
