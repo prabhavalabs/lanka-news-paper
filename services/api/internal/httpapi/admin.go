@@ -402,7 +402,7 @@ func (handler adminHandler) runNow(w http.ResponseWriter, request *http.Request)
 func (handler adminHandler) providers(w http.ResponseWriter, request *http.Request) {
 	item, err := handler.llm.ProviderStatus(request.Context())
 	if err != nil {
-		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not check OpenRouter.")
+		writeProblem(w, http.StatusInternalServerError, "https://snap.local/problems/internal", "Internal server error", "Could not check Codex CLI.")
 		return
 	}
 	writeJSON(w, http.StatusOK, item)
@@ -411,7 +411,7 @@ func (handler adminHandler) providers(w http.ResponseWriter, request *http.Reque
 func (handler adminHandler) models(w http.ResponseWriter, request *http.Request) {
 	items, err := handler.llm.ListModels(request.Context())
 	if err != nil {
-		writeProblem(w, http.StatusBadGateway, "https://snap.local/problems/upstream", "OpenRouter unavailable", "Could not load the OpenRouter model catalog.")
+		writeProblem(w, http.StatusBadGateway, "https://snap.local/problems/upstream", "Codex unavailable", "Could not load the configured Codex models.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -945,14 +945,16 @@ func (handler adminHandler) profiles(w http.ResponseWriter, request *http.Reques
 			return
 		}
 		var body struct {
-			Task  string `json:"task"`
-			Model string `json:"model"`
+			Task            string `json:"task"`
+			Model           string `json:"model"`
+			Provider        string `json:"provider_id"`
+			ReasoningEffort string `json:"reasoning_effort"`
 		}
 		if err := decodeJSON(request, &body); err != nil {
 			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
 			return
 		}
-		if err := handler.llm.UpdateProfile(request.Context(), body.Task, body.Model); err != nil {
+		if err := handler.llm.UpdateProfile(request.Context(), body.Task, body.Provider, body.Model, body.ReasoningEffort); err != nil {
 			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", err.Error())
 			return
 		}

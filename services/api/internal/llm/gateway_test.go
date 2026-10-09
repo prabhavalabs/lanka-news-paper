@@ -2,188 +2,72 @@ package llm
 
 import (
 	"context"
-	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
+	"time"
 
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm/codex"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCallProviderSupportsStructuredOpenAIResponses(t *testing.T) {
-	t.Setenv("TEST_LLM_API_KEY", "test-secret")
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		require.Equal(t, "Bearer test-secret", request.Header.Get("Authorization"))
-		var payload map[string]any
-		require.NoError(t, json.NewDecoder(request.Body).Decode(&payload))
-		require.Equal(t, "json_schema", payload["response_format"].(map[string]any)["type"])
-		require.Equal(t, "none", payload["reasoning_effort"])
-		require.Equal(t, float64(1024), payload["max_tokens"])
-		require.Equal(t, true, payload["stream"])
-		require.Equal(t, true, payload["stream_options"].(map[string]any)["include_usage"])
-		writer.Header().Set("Content-Type", "text/event-stream")
-		_, err := writer.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"score\\\":\"},\"finish_reason\":null}]}\n\n"))
-		require.NoError(t, err)
-		_, err = writer.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"0}\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":4}}\n\n"))
-		require.NoError(t, err)
-		_, err = writer.Write([]byte("data: [DONE]\n\n"))
-		require.NoError(t, err)
-	}))
-	defer server.Close()
-
-	gateway := &Gateway{client: server.Client()}
-	firstTokenObserved := false
-	response, err := gateway.callProvider(context.Background(), "openai_api", server.URL, "TEST_LLM_API_KEY", "test-model", Request{
-		Task:             "narration_framing",
-		JSONSchema:       map[string]any{"type": "object"},
-		DisableReasoning: true,
-		MaxTokens:        1024,
-	}, func(int) { firstTokenObserved = true })
-
-	require.NoError(t, err)
-	require.JSONEq(t, `{"score":0}`, response.Text)
-	require.True(t, firstTokenObserved)
-	require.Equal(t, 12, *response.InputTokens)
-	require.Equal(t, 4, *response.OutputTokens)
-	require.Equal(t, "stop", response.FinishReason)
+type fakeCodexClient struct {
+	options codex.CallOptions
+	result  codex.Result
+	err     error
 }
 
-func TestCallProviderSendsConfiguredBearerToken(t *testing.T) {
-	t.Setenv("TEST_LLM_API_KEY", "test-secret")
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		require.Equal(t, "Bearer test-secret", request.Header.Get("Authorization"))
-		writer.Header().Set("Content-Type", "text/event-stream")
-		_, err := writer.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
-		require.NoError(t, err)
-	}))
-	defer server.Close()
-
-	gateway := &Gateway{client: server.Client()}
-	response, err := gateway.callProvider(
-		context.Background(), "openai_api", server.URL,
-		"TEST_LLM_API_KEY", "remote-model", Request{}, nil,
-	)
-
-	require.NoError(t, err)
-	require.Equal(t, "ok", response.Text)
+func (client *fakeCodexClient) Complete(_ context.Context, options codex.CallOptions) (codex.Result, error) {
+	client.options = options
+	return client.result, client.err
+}
+func (*fakeCodexClient) Probe(context.Context) codex.Status {
+	return codex.Status{Ready: true, AuthMethod: "chatgpt"}
 }
 
-func TestCheckOpenRouterReportsHealthyAuthenticatedKey(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		require.Equal(t, "/key", request.URL.Path)
-		require.Equal(t, "Bearer test-secret", request.Header.Get("Authorization"))
-		writer.Header().Set("Content-Type", "application/json")
-		_, err := writer.Write([]byte(`{"data":{"is_free_tier":false,"limit":25,"limit_remaining":19.5,"expires_at":null}}`))
-		require.NoError(t, err)
-	}))
-	defer server.Close()
-
-	gateway := &Gateway{client: server.Client()}
-	status, err := gateway.checkOpenRouter(context.Background(), server.URL, "test-secret")
-
+func TestCodexDispatchUsesProfileEffortBeforeDisableReasoning(t *testing.T) {
+	client := &fakeCodexClient{result: codex.Result{Text: `{"score":0}`, InputTokens: 12, OutputTokens: 4}}
+	gateway := NewGateway(nil, client)
+	profile := providerProfile{kind: "codex_cli", model: "gpt-6-luna", timeout: 180, reasoningEffort: "medium"}
+	request := Request{System: "system", Input: "input", DisableReasoning: true, JSONSchema: map[string]any{"type": "object"}}
+	result, err := gateway.callProvider(context.Background(), profile, request)
 	require.NoError(t, err)
-	require.False(t, status.FreeTier)
-	require.Equal(t, 25.0, *status.LimitUSD)
-	require.Equal(t, 19.5, *status.LimitRemainingUSD)
-	require.GreaterOrEqual(t, status.LatencyMS, int64(0))
+	require.Equal(t, "medium", client.options.ReasoningEffort)
+	require.Equal(t, 180*time.Second, client.options.Timeout)
+	require.Equal(t, request.System, client.options.System)
+	require.Equal(t, request.Input, client.options.Input)
+	require.Equal(t, request.JSONSchema, client.options.JSONSchema)
+	require.Equal(t, 12, *result.InputTokens)
+	require.Equal(t, 4, *result.OutputTokens)
+	require.Equal(t, "stop", result.FinishReason)
+	profile.reasoningEffort = ""
+	_, err = gateway.callProvider(context.Background(), profile, request)
+	require.NoError(t, err)
+	require.Equal(t, "low", client.options.ReasoningEffort)
 }
 
-func TestDecodeOpenRouterModelsPreservesPricingContextAndCapabilities(t *testing.T) {
-	models, err := decodeOpenRouterModels(strings.NewReader(`{"data":[{
-		"id":"deepseek/deepseek-v4-flash-0731",
-		"name":"DeepSeek: DeepSeek V4 Flash 0731",
-		"context_length":1310720,
-		"pricing":{"prompt":"0.00000014","completion":"0.00000028"},
-		"architecture":{"input_modalities":["text"],"output_modalities":["text"]},
-		"supported_parameters":["max_tokens","reasoning","structured_outputs"]
-	}]}`))
-
+func TestFallbackAndConfiguredCatalog(t *testing.T) {
+	gateway := NewGateway(nil)
+	require.Equal(t, "keyword-rules", gateway.fallback(Request{Task: "classify", Input: "politics"}).Provider)
+	require.Equal(t, "none", gateway.fallback(Request{Task: "article_summary"}).Provider)
+	t.Setenv("SNAP_CODEX_MODELS", "model-a, model-b")
+	models, err := gateway.ListModels(context.Background())
 	require.NoError(t, err)
-	require.Len(t, models, 1)
-	require.Equal(t, 0.14, models[0].InputPricePerMillion)
-	require.Equal(t, 0.28, models[0].OutputPricePerMillion)
-	require.Equal(t, 1310720, models[0].ContextLength)
-	require.NotNil(t, models[0].CompatibleTasks)
+	require.Len(t, models, 2)
+	require.Equal(t, "model-a", models[0].ID)
 	require.ElementsMatch(t, orderedTasks, models[0].CompatibleTasks)
+	require.Equal(t, []string{"low", "medium", "high"}, models[0].ReasoningEfforts)
+	require.NoError(t, validateProfile("classify", "codex_cli", "model-a", "low"))
+	require.Error(t, validateProfile("classify", "retired", "model-a", "low"))
+	require.Error(t, validateProfile("classify", "codex_cli", "unknown", "low"))
+	require.Error(t, validateProfile("classify", "codex_cli", "model-a", "extreme"))
 }
 
-func TestNarrationRejectsModelWithoutStructuredOutput(t *testing.T) {
-	model := Model{
-		OutputModalities:    []string{"text"},
-		SupportedParameters: []string{"max_tokens", "reasoning"},
+func TestBlockedStatusExpiresWithoutExtendingCooldown(t *testing.T) {
+	now := time.Now()
+	recent, expired := now.Add(-time.Minute), now.Add(-16*time.Minute)
+	for _, status := range []string{"auth_expired", "quota_exhausted"} {
+		require.True(t, blockedStatus(status, &recent, now, 15*time.Minute))
+		require.False(t, blockedStatus(status, &expired, now, 15*time.Minute))
+		require.False(t, blockedStatus(status, nil, now, 15*time.Minute))
 	}
-
-	require.True(t, modelSupportsTask(model, "classify"))
-	require.False(t, modelSupportsTask(model, "narration_framing"))
-	require.False(t, modelSupportsTask(model, "watch_tower_answer"))
-}
-
-func TestWatchTowerAcceptsModelWithStructuredOutput(t *testing.T) {
-	model := Model{
-		OutputModalities:    []string{"text"},
-		SupportedParameters: []string{"max_tokens", "structured_outputs"},
-	}
-
-	require.True(t, modelSupportsTask(model, "watch_tower_retrieval"))
-	require.True(t, modelSupportsTask(model, "watch_tower_answer"))
-}
-
-func TestCallProviderUsesOpenRouterReasoningAndRoutingParameters(t *testing.T) {
-	t.Setenv("TEST_OPENROUTER_KEY", "test-secret")
-	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		var payload map[string]any
-		require.NoError(t, json.NewDecoder(request.Body).Decode(&payload))
-		require.Nil(t, payload["reasoning_effort"])
-		require.Equal(t, "none", payload["reasoning"].(map[string]any)["effort"])
-		require.Equal(t, true, payload["provider"].(map[string]any)["require_parameters"])
-		require.Equal(t, "throughput", payload["provider"].(map[string]any)["sort"])
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-			Body:       io.NopCloser(strings.NewReader("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")),
-			Request:    request,
-		}, nil
-	})
-	gateway := &Gateway{client: &http.Client{Transport: transport}}
-
-	response, err := gateway.callProvider(context.Background(), "openai_api", "https://openrouter.ai/api/v1", "TEST_OPENROUTER_KEY", "deepseek/deepseek-v4-flash-0731", Request{
-		JSONSchema: map[string]any{"type": "object"}, DisableReasoning: true, ProviderSort: "throughput",
-	}, nil)
-
-	require.NoError(t, err)
-	require.Equal(t, "ok", response.Text)
-}
-
-func TestCallProviderUsesOpenRouterProviderSortWithoutStructuredOutput(t *testing.T) {
-	t.Setenv("TEST_OPENROUTER_KEY", "test-secret")
-	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		var payload map[string]any
-		require.NoError(t, json.NewDecoder(request.Body).Decode(&payload))
-		require.Equal(t, "throughput", payload["provider"].(map[string]any)["sort"])
-		require.Nil(t, payload["response_format"])
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-			Body:       io.NopCloser(strings.NewReader("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")),
-			Request:    request,
-		}, nil
-	})
-	gateway := &Gateway{client: &http.Client{Transport: transport}}
-
-	response, err := gateway.callProvider(
-		context.Background(), "openai_api", "https://openrouter.ai/api/v1",
-		"TEST_OPENROUTER_KEY", "deepseek/deepseek-v4-flash-0731",
-		Request{ProviderSort: "throughput"}, nil,
-	)
-
-	require.NoError(t, err)
-	require.Equal(t, "ok", response.Text)
-}
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
-	return function(request)
+	require.False(t, blockedStatus("operational", &recent, now, 15*time.Minute))
 }

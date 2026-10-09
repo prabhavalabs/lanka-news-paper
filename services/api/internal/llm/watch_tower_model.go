@@ -16,31 +16,15 @@ var (
 
 var watchTowerTasks = []string{"watch_tower_retrieval", "watch_tower_answer"}
 
-// UpdateWatchTowerModel assigns one compatible OpenRouter model to both Watch Tower
+// UpdateWatchTowerModel assigns one compatible Codex model to both Watch Tower
 // stages in a transaction so retrieval and answer generation cannot drift apart.
-func (gateway *Gateway) UpdateWatchTowerModel(ctx context.Context, actor uuid.UUID, providerID, modelID string) error {
+func (gateway *Gateway) UpdateWatchTowerModel(ctx context.Context, actor uuid.UUID, providerID, modelID, effort string) error {
 	providerID = strings.TrimSpace(providerID)
 	modelID = strings.TrimSpace(modelID)
-	if providerID != "openrouter" {
-		return fmt.Errorf("%w: provider %q is not supported", ErrWatchTowerModelInvalid, providerID)
-	}
-	if modelID == "" {
-		return fmt.Errorf("%w: model is required", ErrWatchTowerModelInvalid)
-	}
-
-	models, err := gateway.ListModels(ctx)
-	if err != nil {
-		return fmt.Errorf("load models for Watch Tower assignment: %w", err)
-	}
-	compatible := false
-	for _, model := range models {
-		if model.ID == modelID && modelSupportsTasks(model, watchTowerTasks) {
-			compatible = true
-			break
+	for _, task := range watchTowerTasks {
+		if err := validateProfile(task, providerID, modelID, effort); err != nil {
+			return fmt.Errorf("%w: %v", ErrWatchTowerModelInvalid, err)
 		}
-	}
-	if !compatible {
-		return fmt.Errorf("%w: model %q must support retrieval and answer generation", ErrWatchTowerModelInvalid, modelID)
 	}
 
 	transaction, err := gateway.pool.Begin(ctx)
@@ -56,9 +40,9 @@ func (gateway *Gateway) UpdateWatchTowerModel(ctx context.Context, actor uuid.UU
 
 	command, err := transaction.Exec(ctx, `
 		UPDATE llm_task_profiles
-		SET provider_id = $1, model = $2, enabled = true
+		SET provider_id = $1, model = $2, reasoning_effort = NULLIF($4, ''), enabled = true
 		WHERE task = ANY($3::text[])
-	`, providerID, modelID, watchTowerTasks)
+	`, providerID, modelID, watchTowerTasks, effort)
 	if err != nil {
 		return rollback(fmt.Errorf("update Watch Tower model profiles: %w", err))
 	}
@@ -75,13 +59,4 @@ func (gateway *Gateway) UpdateWatchTowerModel(ctx context.Context, actor uuid.UU
 		return fmt.Errorf("commit Watch Tower model update: %w", err)
 	}
 	return nil
-}
-
-func modelSupportsTasks(model Model, tasks []string) bool {
-	for _, task := range tasks {
-		if !contains(model.CompatibleTasks, task) {
-			return false
-		}
-	}
-	return true
 }

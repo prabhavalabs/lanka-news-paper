@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -8,7 +9,9 @@ import (
 	"github.com/riverqueue/river/rivertype"
 	"github.com/stretchr/testify/require"
 
-	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/adminanalysis"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm/codex"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
 )
 
 func TestQueueHistoryCutoff(t *testing.T) {
@@ -107,7 +110,7 @@ func TestAdminAnalysisJobsSeparateDispatchFromArticleExecution(t *testing.T) {
 }
 
 func TestMissingCodexFailsAdministrativeAnalysisWithoutRetryBackoff(t *testing.T) {
-	err := errors.Join(errors.New("clean article"), adminanalysis.ErrCodexUnavailable)
+	err := errors.Join(errors.New("clean article"), codex.ErrUnavailable)
 
 	require.True(t, adminAnalysisFailureIsTerminal(err, 1, 5))
 	require.False(t, adminAnalysisFailureIsTerminal(errors.New("temporary provider error"), 1, 5))
@@ -123,4 +126,22 @@ func TestArticleContentBackfillIsUnique(t *testing.T) {
 func TestArticleContentBackfillUsesBoundedLowPriorityBatches(t *testing.T) {
 	require.Equal(t, 25, articleContentBackfillBatchSize)
 	require.Equal(t, 4, articleContentBackfillInsertOpts().Priority)
+}
+
+type blockedCompleter struct{ err error }
+
+func (*blockedCompleter) Complete(context.Context, llm.Request) (llm.Response, error) {
+	return llm.Response{}, nil
+}
+func (*blockedCompleter) CompleteWithModel(context.Context, llm.Request, string, string) (llm.Response, error) {
+	return llm.Response{}, nil
+}
+func (model *blockedCompleter) ProviderBlocked(context.Context) (bool, error) { return true, model.err }
+
+func TestPipelineDispatchDoesNotReadBacklogOrEnqueueWhenBlocked(t *testing.T) {
+	model := &blockedCompleter{}
+	worker := &PipelineDispatchWorker{Pipeline: pipeline.NewStore(nil, model, nil, nil)}
+	require.NoError(t, worker.Work(context.Background(), nil))
+	model.err = errors.New("provider status unavailable")
+	require.ErrorIs(t, worker.Work(context.Background(), nil), model.err)
 }

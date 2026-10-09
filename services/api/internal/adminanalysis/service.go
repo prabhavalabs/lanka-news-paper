@@ -5,21 +5,22 @@ import (
 	"fmt"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm/codex"
 )
 
 type Service struct {
 	store *Store
 	model llm.Completer
-	codex *CodexClient
+	codex *codex.Client
 }
 
-func NewService(store *Store, model llm.Completer, codex *CodexClient) *Service {
+func NewService(store *Store, model llm.Completer, codex *codex.Client) *Service {
 	return &Service{store: store, model: model, codex: codex}
 }
 
 func (service *Service) Store() *Store { return service.store }
 
-func (service *Service) CodexStatus(ctx context.Context) CodexStatus {
+func (service *Service) CodexStatus(ctx context.Context) codex.Status {
 	return service.codex.Probe(ctx)
 }
 

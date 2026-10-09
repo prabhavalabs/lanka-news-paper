@@ -29,13 +29,13 @@ func TestStoreCreatesSingleArticleRunFromEligibleFullContent(t *testing.T) {
 
 	store := NewStore(pool)
 	preview, err := store.Preview(ctx, CreateRequest{
-		Scope: "article", Provider: "openrouter", Model: "test-model", ArticleID: articleID,
+		Scope: "article", Provider: "codex_cli", Model: "test-model", ArticleID: articleID,
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, preview.Articles)
 
 	run, err := store.Create(ctx, CreateRequest{
-		Scope: "article", Provider: "openrouter", Model: "test-model", ArticleID: articleID,
+		Scope: "article", Provider: "codex_cli", Model: "test-model", ArticleID: articleID,
 	}, "integration-test")
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -64,7 +64,7 @@ func TestStorePausesResumesCancelsAndDeletesBackfill(t *testing.T) {
 	require.NoError(t, err)
 	store := NewStore(pool)
 	run, err := store.Create(ctx, CreateRequest{
-		Scope: "article", Provider: "openrouter", Model: "test-model", ArticleID: articleID,
+		Scope: "article", Provider: "codex_cli", Model: "test-model", ArticleID: articleID,
 	}, "integration-test")
 	require.NoError(t, err)
 	t.Cleanup(func() {

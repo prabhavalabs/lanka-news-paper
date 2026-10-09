@@ -137,7 +137,6 @@ func (service *Service) Ask(ctx context.Context, userID, threadID uuid.UUID, que
 			Input:            buildPrompt(question, conversation.Messages, scope, articles),
 			JSONSchema:       watchTowerSchema,
 			MaxTokens:        3200,
-			ProviderSort:     "throughput",
 			DisableReasoning: true,
 		}
 		response, completeErr := service.model.Complete(ctx, answerRequest)
@@ -208,7 +207,7 @@ func (service *Service) expandRetrieval(ctx context.Context, question string, me
 	}
 	response, err := service.model.Complete(ctx, llm.Request{
 		Task: "watch_tower_retrieval", System: retrievalSystemPrompt, Input: input.String(),
-		JSONSchema: retrievalSchema, DisableReasoning: true, MaxTokens: 300, ProviderSort: "throughput",
+		JSONSchema: retrievalSchema, DisableReasoning: true, MaxTokens: 300,
 	})
 	if err != nil || strings.TrimSpace(response.Text) == "" {
 		return scope

@@ -143,14 +143,15 @@ func (handler watchTowerHandler) model(w http.ResponseWriter, request *http.Requ
 		return
 	}
 	var body struct {
-		ProviderID string `json:"provider_id"`
-		Model      string `json:"model"`
+		ProviderID      string `json:"provider_id"`
+		Model           string `json:"model"`
+		ReasoningEffort string `json:"reasoning_effort"`
 	}
 	if err := decodeJSON(request, &body); err != nil {
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "A provider and model are required.")
 		return
 	}
-	if err := handler.llm.UpdateWatchTowerModel(request.Context(), currentUser(request).ID, body.ProviderID, body.Model); err != nil {
+	if err := handler.llm.UpdateWatchTowerModel(request.Context(), currentUser(request).ID, body.ProviderID, body.Model, body.ReasoningEffort); err != nil {
 		switch {
 		case errors.Is(err, llm.ErrWatchTowerModelInvalid):
 			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid model", err.Error())

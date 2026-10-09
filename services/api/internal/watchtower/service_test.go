@@ -53,7 +53,7 @@ func TestServiceAskPersistsAGroundedAnswer(t *testing.T) {
 	}
 	model := &fakeCompleter{response: llm.Response{
 		Text:     `{"answer_markdown":"## Economy\n\nThe central bank held policy rates steady [1].","cited_indices":[1],"follow_up_questions":["How did markets respond?"]}`,
-		Provider: "openrouter",
+		Provider: "codex_cli",
 		Model:    "test-model",
 	}}
 	service := NewService(repository, model, func() time.Time {
@@ -88,7 +88,7 @@ func TestServiceAskRetriesATruncatedAnswerWithACompactBrief(t *testing.T) {
 	}
 	model := &fakeCompleter{responses: []llm.Response{
 		{Text: `{"answer_markdown":"An unfinished`, FinishReason: "length"},
-		{Text: `{"answer_markdown":"## කෙටි සාරාංශය\n\nප්‍රතිපත්ති පොලී අනුපාත නොවෙනස්ව පවතී [1].","cited_indices":[1],"follow_up_questions":[]}`, Provider: "openrouter", Model: "test-model", FinishReason: "stop"},
+		{Text: `{"answer_markdown":"## කෙටි සාරාංශය\n\nප්‍රතිපත්ති පොලී අනුපාත නොවෙනස්ව පවතී [1].","cited_indices":[1],"follow_up_questions":[]}`, Provider: "codex_cli", Model: "test-model", FinishReason: "stop"},
 	}}
 	service := NewService(repository, model, time.Now)
 
@@ -100,7 +100,7 @@ func TestServiceAskRetriesATruncatedAnswerWithACompactBrief(t *testing.T) {
 	require.Equal(t, 4000, model.requests[1].MaxTokens)
 	require.Contains(t, model.requests[1].System, "COMPACT RETRY")
 	require.Contains(t, result.Assistant.Content, "කෙටි සාරාංශය")
-	require.Equal(t, "openrouter", repository.savedAssistant.Provider)
+	require.Equal(t, "codex_cli", repository.savedAssistant.Provider)
 }
 
 func TestServiceAskRejectsBlankQuestions(t *testing.T) {

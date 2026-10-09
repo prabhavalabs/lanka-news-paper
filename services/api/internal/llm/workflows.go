@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm/codex"
 )
 
 var (
@@ -38,6 +39,7 @@ type Workflow struct {
 	Revision           int       `json:"revision"`
 	Provider           string    `json:"provider_id"`
 	Model              string    `json:"model"`
+	ReasoningEffort    string    `json:"reasoning_effort"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
@@ -50,6 +52,7 @@ type WorkflowInput struct {
 	Enabled            bool   `json:"enabled"`
 	Provider           string `json:"provider_id"`
 	Model              string `json:"model"`
+	ReasoningEffort    string `json:"reasoning_effort"`
 }
 
 type WorkflowFeedback struct {
@@ -79,6 +82,7 @@ func validateWorkflowInput(input WorkflowInput) (WorkflowInput, error) {
 	input.Audience = strings.TrimSpace(input.Audience)
 	input.Provider = strings.TrimSpace(input.Provider)
 	input.Model = strings.TrimSpace(input.Model)
+	input.ReasoningEffort = strings.TrimSpace(input.ReasoningEffort)
 	if utf8.RuneCountInString(input.CustomInstructions) > 12000 ||
 		utf8.RuneCountInString(input.Personality) > 3000 ||
 		input.Tone == "" || utf8.RuneCountInString(input.Tone) > 80 ||
@@ -86,7 +90,7 @@ func validateWorkflowInput(input WorkflowInput) (WorkflowInput, error) {
 		input.Audience == "" || utf8.RuneCountInString(input.Audience) > 160 {
 		return WorkflowInput{}, ErrWorkflowInvalid
 	}
-	if (input.Provider == "") != (input.Model == "") {
+	if !codex.ValidReasoningEffort(input.ReasoningEffort) || (input.Provider == "" && input.ReasoningEffort != "") || (input.Provider == "") != (input.Model == "") {
 		return WorkflowInput{}, ErrWorkflowInvalid
 	}
 	return input, nil
@@ -98,7 +102,7 @@ func (gateway *Gateway) ListWorkflows(ctx context.Context) ([]Workflow, error) {
 		       workflow.custom_instructions, workflow.personality, workflow.learning_notes,
 		       workflow.tone, workflow.response_language, workflow.audience, workflow.enabled,
 		       workflow.revision, COALESCE(profile.provider_id, ''),
-		       COALESCE(profile.model, ''), workflow.updated_at
+		       COALESCE(profile.model, ''), COALESCE(profile.reasoning_effort, ''), workflow.updated_at
 		FROM agent_workflows workflow
 		LEFT JOIN llm_task_profiles profile ON profile.task = workflow.task
 		ORDER BY CASE workflow.category
@@ -116,7 +120,7 @@ func (gateway *Gateway) ListWorkflows(ctx context.Context) ([]Workflow, error) {
 			&item.Task, &item.Name, &item.Purpose, &item.Category,
 			&item.CustomInstructions, &item.Personality, &item.LearningNotes,
 			&item.Tone, &item.ResponseLanguage, &item.Audience, &item.Enabled,
-			&item.Revision, &item.Provider, &item.Model, &item.UpdatedAt,
+			&item.Revision, &item.Provider, &item.Model, &item.ReasoningEffort, &item.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan agent workflow: %w", err)
 		}
@@ -132,7 +136,7 @@ func (gateway *Gateway) UpdateWorkflow(ctx context.Context, task string, input W
 	}
 	task = strings.TrimSpace(task)
 	if input.Provider != "" {
-		if err := gateway.validateWorkflowProfile(ctx, task, input.Provider, input.Model); err != nil {
+		if err := gateway.validateWorkflowProfile(ctx, task, input.Provider, input.Model, input.ReasoningEffort); err != nil {
 			return Workflow{}, fmt.Errorf("%w: %v", ErrWorkflowInvalid, err)
 		}
 	}
@@ -165,9 +169,9 @@ func (gateway *Gateway) UpdateWorkflow(ctx context.Context, task string, input W
 	if input.Provider != "" {
 		command, updateErr := transaction.Exec(ctx, `
 			UPDATE llm_task_profiles
-			SET provider_id = $2, model = $3, enabled = true
+			SET provider_id = $2, model = $3, reasoning_effort = NULLIF($4, ''), enabled = true
 			WHERE task = $1
-		`, task, input.Provider, input.Model)
+		`, task, input.Provider, input.Model, input.ReasoningEffort)
 		if updateErr != nil {
 			return Workflow{}, fmt.Errorf("update workflow model assignment: %w", updateErr)
 		}
@@ -176,9 +180,9 @@ func (gateway *Gateway) UpdateWorkflow(ctx context.Context, task string, input W
 		}
 	}
 	if err := transaction.QueryRow(ctx, `
-		SELECT COALESCE(provider_id, ''), COALESCE(model, '')
+		SELECT COALESCE(provider_id, ''), COALESCE(model, ''), COALESCE(reasoning_effort, '')
 		FROM llm_task_profiles WHERE task = $1
-	`, task).Scan(&item.Provider, &item.Model); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	`, task).Scan(&item.Provider, &item.Model, &item.ReasoningEffort); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return Workflow{}, fmt.Errorf("load workflow model assignment: %w", err)
 	}
 	if err := insertWorkflowVersion(ctx, transaction, item, actor); err != nil {
@@ -196,33 +200,18 @@ func (gateway *Gateway) UpdateWorkflow(ctx context.Context, task string, input W
 	return item, nil
 }
 
-func (gateway *Gateway) validateWorkflowProfile(ctx context.Context, task, providerID, modelID string) error {
-	if providerID != "openrouter" {
-		return fmt.Errorf("provider %q is not available for autonomous workflows", providerID)
-	}
-	var currentProvider, currentModel string
-	err := gateway.pool.QueryRow(ctx, `
-		SELECT provider_id, model FROM llm_task_profiles WHERE task = $1
-	`, task).Scan(&currentProvider, &currentModel)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("task profile %q was not found", task)
-	}
-	if err != nil {
-		return fmt.Errorf("load task profile: %w", err)
-	}
-	if currentProvider == providerID && currentModel == modelID {
-		return nil
-	}
-	models, err := gateway.ListModels(ctx)
-	if err != nil {
+func (gateway *Gateway) validateWorkflowProfile(ctx context.Context, task, providerID, modelID, effort string) error {
+	if err := validateProfile(task, providerID, modelID, effort); err != nil {
 		return err
 	}
-	for _, model := range models {
-		if model.ID == modelID && contains(model.CompatibleTasks, task) {
-			return nil
-		}
+	var exists bool
+	if err := gateway.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM llm_task_profiles WHERE task = $1)`, task).Scan(&exists); err != nil {
+		return fmt.Errorf("load task profile: %w", err)
 	}
-	return fmt.Errorf("model %q is unavailable or incompatible with %s", modelID, task)
+	if !exists {
+		return fmt.Errorf("task profile %q was not found", task)
+	}
+	return nil
 }
 
 func insertWorkflowVersion(ctx context.Context, transaction pgx.Tx, item Workflow, actor uuid.UUID) error {
@@ -232,11 +221,11 @@ func insertWorkflowVersion(ctx context.Context, transaction pgx.Tx, item Workflo
 		  'custom_instructions', $3::text, 'personality', $4::text,
 		  'learning_notes', $5::text, 'tone', $6::text,
 		  'response_language', $7::text, 'audience', $8::text, 'enabled', $9::boolean,
-		  'provider_id', $10::text, 'model', $11::text
+		  'provider_id', $10::text, 'model', $11::text, 'reasoning_effort', $13::text
 		), $12)
 	`, item.Task, item.Revision, item.CustomInstructions, item.Personality,
 		item.LearningNotes, item.Tone, item.ResponseLanguage, item.Audience, item.Enabled,
-		item.Provider, item.Model, actor)
+		item.Provider, item.Model, actor, item.ReasoningEffort)
 	if err != nil {
 		return fmt.Errorf("version agent workflow: %w", err)
 	}
@@ -354,9 +343,9 @@ func (gateway *Gateway) ReviewWorkflowFeedback(ctx context.Context, id uuid.UUID
 			return WorkflowFeedback{}, fmt.Errorf("apply agent feedback: %w", err)
 		}
 		if err := transaction.QueryRow(ctx, `
-			SELECT COALESCE(provider_id, ''), COALESCE(model, '')
+			SELECT COALESCE(provider_id, ''), COALESCE(model, ''), COALESCE(reasoning_effort, '')
 			FROM llm_task_profiles WHERE task = $1
-		`, workflow.Task).Scan(&workflow.Provider, &workflow.Model); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		`, workflow.Task).Scan(&workflow.Provider, &workflow.Model, &workflow.ReasoningEffort); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return WorkflowFeedback{}, fmt.Errorf("load workflow model assignment: %w", err)
 		}
 		if err := insertWorkflowVersion(ctx, transaction, workflow, actor); err != nil {
