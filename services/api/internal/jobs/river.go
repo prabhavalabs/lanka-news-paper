@@ -263,7 +263,7 @@ func adminAnalysisFailureIsTerminal(err error, attempt, maxAttempts int) bool {
 }
 
 func (worker *AdminArticleAnalysisWorker) Timeout(*river.Job[AdminArticleAnalysisArgs]) time.Duration {
-	return 30 * time.Minute
+	return 45 * time.Minute
 }
 
 type ArticleContentBackfillArgs struct{}
@@ -322,7 +322,7 @@ func (worker *ArticlePipelineWorker) Work(ctx context.Context, job *river.Job[Ar
 }
 
 func (worker *ArticlePipelineWorker) Timeout(*river.Job[ArticlePipelineArgs]) time.Duration {
-	return 20 * time.Minute
+	return 45 * time.Minute
 }
 
 type PipelineDispatchArgs struct{}
@@ -403,7 +403,7 @@ func (worker *NewsletterWorker) Work(ctx context.Context, _ *river.Job[Newslette
 }
 
 func (worker *NewsletterWorker) Timeout(*river.Job[NewsletterArgs]) time.Duration {
-	return 10 * time.Minute
+	return 20 * time.Minute
 }
 
 func (worker *BriefWorker) Work(ctx context.Context, _ *river.Job[BriefArgs]) error {
@@ -604,10 +604,10 @@ type QueueMetadata struct {
 func QueueCatalog() []QueueMetadata {
 	return []QueueMetadata{
 		{Name: river.QueueDefault, MaxWorkers: 2},
-		{Name: "analysis", MaxWorkers: 5},
+		{Name: "analysis", MaxWorkers: codex.ConcurrencyLimit()},
 		{Name: "crawl", MaxWorkers: 1},
 		{Name: adminAnalysisDispatchQueue, MaxWorkers: 1},
-		{Name: adminAnalysisQueue, MaxWorkers: configuredAdminAnalysisWorkers(os.Getenv)},
+		{Name: adminAnalysisQueue, MaxWorkers: min(configuredAdminAnalysisWorkers(os.Getenv), codex.ConcurrencyLimit())},
 	}
 }
 

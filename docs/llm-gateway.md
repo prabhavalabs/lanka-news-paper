@@ -18,7 +18,11 @@ settings endpoints. Default: `gpt-6-luna,gpt-6.1-sol,gpt-6-sol,gpt-5.6-luna,gpt-
 It is configuration, not proof that the account can access each model.
 `SNAP_CODEX_CONCURRENCY` defaults to 2 and limits simultaneous CLI executions
 within each process; API and worker do not share a global semaphore. Waiting
-for a slot counts toward the task timeout.
+for a slot respects the parent context; the task timeout starts after acquisition.
+River analysis workers match this limit (bounded to 64), and administrative
+workers are capped at it. Pipeline and administrative jobs allow 45 minutes for
+queueing, a 240-second combined call, and standalone fallback steps. Stale-run
+recovery waits 50 minutes; newsletter jobs allow 20 minutes.
 
 ## Article processing and fallback
 
@@ -26,7 +30,7 @@ The `article_analysis` task combines content cleaning, category, summary/key poi
 analysis into one structured Codex call per article. Pipeline steps consume the
 combined result; when a required section is missing or invalid, the affected
 step uses its existing individual task/fallback. Deterministic category rules,
-relevance gating, and event clustering remain in the pipeline. Successful steps
+model-applied political relevance, and event clustering remain in the pipeline. Successful steps
 remain durable across retries. The admin renders profiles/workflows from their
 endpoints rather than assuming a fixed list of analysis tasks.
 

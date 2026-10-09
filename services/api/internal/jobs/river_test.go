@@ -65,6 +65,7 @@ func TestDailyScheduleAdvancesAfterEightInColombo(t *testing.T) {
 }
 
 func TestQueueCatalog(t *testing.T) {
+	t.Setenv("SNAP_CODEX_CONCURRENCY", "")
 	t.Setenv("SNAP_ADMIN_ANALYSIS_WORKERS", "")
 	catalog := QueueCatalog()
 
@@ -72,7 +73,7 @@ func TestQueueCatalog(t *testing.T) {
 	require.Equal(t, "default", catalog[0].Name)
 	require.Equal(t, 2, catalog[0].MaxWorkers)
 	require.Equal(t, "analysis", catalog[1].Name)
-	require.Equal(t, 5, catalog[1].MaxWorkers)
+	require.Equal(t, 2, catalog[1].MaxWorkers)
 	require.Equal(t, "crawl", catalog[2].Name)
 	require.Equal(t, 1, catalog[2].MaxWorkers)
 	require.Equal(t, "admin-analysis-dispatch", catalog[3].Name)
@@ -82,6 +83,7 @@ func TestQueueCatalog(t *testing.T) {
 }
 
 func TestQueueCatalogUsesConfiguredAdministrativeConcurrency(t *testing.T) {
+	t.Setenv("SNAP_CODEX_CONCURRENCY", "64")
 	t.Setenv("SNAP_ADMIN_ANALYSIS_WORKERS", "48")
 
 	catalog := QueueCatalog()
@@ -91,6 +93,7 @@ func TestQueueCatalogUsesConfiguredAdministrativeConcurrency(t *testing.T) {
 }
 
 func TestQueueCatalogBoundsAdministrativeConcurrency(t *testing.T) {
+	t.Setenv("SNAP_CODEX_CONCURRENCY", "64")
 	t.Setenv("SNAP_ADMIN_ANALYSIS_WORKERS", "999")
 
 	catalog := QueueCatalog()
@@ -144,4 +147,14 @@ func TestPipelineDispatchDoesNotReadBacklogOrEnqueueWhenBlocked(t *testing.T) {
 	require.NoError(t, worker.Work(context.Background(), nil))
 	model.err = errors.New("provider status unavailable")
 	require.ErrorIs(t, worker.Work(context.Background(), nil), model.err)
+}
+
+func TestCodexQueueCapacityAndTimeouts(t *testing.T) {
+	t.Setenv("SNAP_CODEX_CONCURRENCY", "1")
+	t.Setenv("SNAP_ADMIN_ANALYSIS_WORKERS", "16")
+	catalog := QueueCatalog()
+	require.Equal(t, 1, catalog[1].MaxWorkers)
+	require.Equal(t, 1, catalog[4].MaxWorkers)
+	require.Equal(t, 45*time.Minute, (&ArticlePipelineWorker{}).Timeout(nil))
+	require.Equal(t, 45*time.Minute, (&AdminArticleAnalysisWorker{}).Timeout(nil))
 }

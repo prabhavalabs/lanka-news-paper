@@ -33,13 +33,18 @@ var processLimiter struct {
 
 func concurrencySlots() chan struct{} {
 	processLimiter.Do(func() {
-		size, err := strconv.Atoi(os.Getenv("SNAP_CODEX_CONCURRENCY"))
-		if err != nil || size < 1 {
-			size = 2
-		}
-		processLimiter.slots = make(chan struct{}, size)
+		processLimiter.slots = make(chan struct{}, ConcurrencyLimit())
 	})
 	return processLimiter.slots
+}
+
+// ConcurrencyLimit is shared with River so jobs queue before occupying workers.
+func ConcurrencyLimit() int {
+	size, err := strconv.Atoi(os.Getenv("SNAP_CODEX_CONCURRENCY"))
+	if err != nil || size < 1 {
+		return 2
+	}
+	return min(size, 64)
 }
 
 func acquire(ctx context.Context, slots chan struct{}) error {
@@ -201,15 +206,15 @@ func (client *Client) Complete(ctx context.Context, options CallOptions) (result
 		return Result{}, fmt.Errorf("invalid reasoning effort %q", options.ReasoningEffort)
 	}
 
+	if err := acquire(ctx, client.slots); err != nil {
+		return Result{}, err
+	}
+	defer func() { <-client.slots }()
 	if options.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, options.Timeout)
 		defer cancel()
 	}
-	if err := acquire(ctx, client.slots); err != nil {
-		return Result{}, err
-	}
-	defer func() { <-client.slots }()
 	if options.BeforeRun != nil {
 		if err := options.BeforeRun(ctx); err != nil {
 			return Result{}, err

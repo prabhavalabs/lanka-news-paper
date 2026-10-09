@@ -155,7 +155,7 @@ Every new article creates one persisted run immediately after insertion. The com
 5. `stance_evaluation` — persists the combined model-applied political relevance and narration, with individual Codex narration when needed;
 6. `event_synthesis` — refreshes the cross-source event analysis from approved reports.
 
-River retries transient failures at most five times. A retry starts the same run, skips steps already marked `succeeded` or `skipped`, and resumes the failed step. The dispatcher recreates runs missing after an interrupted insertion and recovers runs left `running` for more than 20 minutes. An editor can retry the failed step from the article detail page; resetting an earlier step also resets its dependent later steps.
+River retries transient failures at most five times. A retry starts the same run, skips steps already marked `succeeded` or `skipped`, and resumes the failed step. The dispatcher recreates runs missing after an interrupted insertion and recovers runs left `running` for more than 50 minutes. An editor can retry the failed step from the article detail page; resetting an earlier step also resets its dependent later steps.
 
 Queue history is capped at seven days. A daily River maintenance job deletes terminal pipeline runs, their step logs, and their linked model-call telemetry after that window; active runs are preserved. Articles keep a compact `pipeline_enqueued_at` marker so deleting old telemetry never causes completed articles to enter the backfill queue again. The Queue Monitor API also enforces the seven-day window, and its UI defaults to article pipelines while exposing routine polling, dispatch, brief, narration, and cleanup jobs through the job-type filter.
 

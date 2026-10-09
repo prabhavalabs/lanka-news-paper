@@ -221,7 +221,7 @@ func (store *Store) QueuedRuns(ctx context.Context, limit int) ([]string, error)
 		WITH stale AS (
 		  UPDATE article_pipeline_runs
 		  SET status = 'queued', last_error = 'Recovered after an interrupted worker.', updated_at = clock_timestamp()
-		  WHERE status = 'running' AND updated_at < clock_timestamp() - interval '20 minutes'
+		  WHERE status = 'running' AND updated_at < clock_timestamp() - interval '50 minutes'
 		  RETURNING id
 		)
 		UPDATE article_pipeline_steps step

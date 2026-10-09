@@ -332,3 +332,29 @@ func TestLoginConfirmationCache(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 4, loginCalls)
 }
+
+func TestCompletionTimeoutStartsAfterSlotAcquisition(t *testing.T) {
+	client := NewClient(fakeRunner{run: func(ctx context.Context, args []string, _, _ string) (string, string, error) {
+		deadline, ok := ctx.Deadline()
+		require.True(t, ok)
+		require.Positive(t, time.Until(deadline))
+		if args[0] == "login" {
+			return "Logged in using ChatGPT", "", nil
+		}
+		return successfulEvents, "", nil
+	}})
+	client.slots = make(chan struct{}, 1)
+	client.slots <- struct{}{}
+	done := make(chan error, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	go func() {
+		_, err := client.Complete(ctx, CallOptions{Model: "gpt-6-luna", Timeout: 20 * time.Millisecond})
+		done <- err
+	}()
+	timer := time.NewTimer(40 * time.Millisecond)
+	defer timer.Stop()
+	<-timer.C
+	<-client.slots
+	require.NoError(t, <-done)
+}
