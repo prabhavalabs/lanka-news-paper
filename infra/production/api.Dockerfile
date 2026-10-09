@@ -11,7 +11,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api \
 
 FROM alpine:3.22
 
-ARG CODEX_CLI_VERSION=0.147.0
+ARG CODEX_CLI_VERSION=0.162.1
 
 RUN apk add --no-cache ca-certificates nodejs npm su-exec tzdata \
     && npm install --global "@openai/codex@${CODEX_CLI_VERSION}" \

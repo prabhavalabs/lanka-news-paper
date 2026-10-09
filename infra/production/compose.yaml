@@ -3,12 +3,12 @@ name: lanka-news-paper
 x-app-environment: &app-environment
   SNAP_DATABASE_URL: ${SNAP_DATABASE_URL:?set SNAP_DATABASE_URL}
   SNAP_ENV: production
-  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY}
   RESEND_API_KEY: ${RESEND_API_KEY:-}
-  SNAP_ADMIN_ANALYSIS_PROVIDER_SORT: ${SNAP_ADMIN_ANALYSIS_PROVIDER_SORT:-throughput}
   SNAP_ADMIN_ANALYSIS_WORKERS: ${SNAP_ADMIN_ANALYSIS_WORKERS:-16}
   CODEX_HOME: /data/codex
-  CODEX_BACKFILL_MODELS: ${CODEX_BACKFILL_MODELS:-gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol}
+  SNAP_CODEX_CONCURRENCY: ${SNAP_CODEX_CONCURRENCY:-2}
+  SNAP_CODEX_QUOTA_COOLDOWN: ${SNAP_CODEX_QUOTA_COOLDOWN:-15m}
+  SNAP_CODEX_MODELS: ${SNAP_CODEX_MODELS:-gpt-6-luna,gpt-6.1-sol,gpt-6-sol,gpt-5.6-luna,gpt-5.6-terra}
   SNAP_MEDIA_LOCAL_DIR: /data/media
   SNAP_NEWSLETTER_BASE_URL: ${SNAP_NEWSLETTER_BASE_URL:-https://lankanewspaper.prabhavalabs.com}
   SNAP_NEWSLETTER_ENABLED: ${SNAP_NEWSLETTER_ENABLED:-false}
@@ -78,7 +78,7 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
-    mem_limit: 512m
+    mem_limit: 1g
     cpus: 0.75
 
   worker:

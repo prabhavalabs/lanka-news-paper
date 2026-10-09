@@ -31,9 +31,10 @@ services:
     environment:
       SNAP_DATABASE_URL: postgres://snap:snap@postgres:5432/snap?sslmode=disable
       SNAP_ENV: local
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       CODEX_HOME: /data/codex
-      CODEX_BACKFILL_MODELS: ${CODEX_BACKFILL_MODELS:-gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol}
+      SNAP_CODEX_CONCURRENCY: ${SNAP_CODEX_CONCURRENCY:-2}
+      SNAP_CODEX_QUOTA_COOLDOWN: ${SNAP_CODEX_QUOTA_COOLDOWN:-15m}
+      SNAP_CODEX_MODELS: ${SNAP_CODEX_MODELS:-gpt-6-luna,gpt-6.1-sol,gpt-6-sol,gpt-5.6-luna,gpt-5.6-terra}
     volumes:
       - ../..:/workspace
       - snap-go-mod:/go/pkg/mod
