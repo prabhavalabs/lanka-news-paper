@@ -25,7 +25,9 @@ func main() {
 }
 
 func run() error {
-	config.LoadOptionalDotEnv(".env", "../../.env")
+	if os.Getenv("SNAP_DATABASE_URL") == "" {
+		config.LoadOptionalDotEnv(".env", "../../.env")
+	}
 	loaded, err := config.FromEnvironment()
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
