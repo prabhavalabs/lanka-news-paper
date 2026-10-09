@@ -29,6 +29,7 @@ type Request struct {
 }
 
 type Response struct {
+	CallID       int64
 	Text         string
 	Provider     string
 	Model        string
@@ -137,7 +138,9 @@ func (gateway *Gateway) completeWithProfile(ctx context.Context, request Request
 			"call_id": callID, "provider": profile.id, "model": profile.model, "latency_ms": latencyMS, "error": callErr.Error(),
 		}, time.Now())
 		if allowFallback {
-			return gateway.fallback(request), nil
+			response := gateway.fallback(request)
+			response.CallID = callID
+			return response, nil
 		}
 		return Response{}, callErr
 	}
@@ -149,7 +152,7 @@ func (gateway *Gateway) completeWithProfile(ctx context.Context, request Request
 		"cached_input_tokens": result.CachedInputTokens, "reasoning_tokens": result.ReasoningTokens,
 		"finish_reason": result.FinishReason,
 	}, time.Now())
-	return Response{Text: result.Text, Provider: profile.id, Model: profile.model, FinishReason: result.FinishReason}, nil
+	return Response{CallID: callID, Text: result.Text, Provider: profile.id, Model: profile.model, FinishReason: result.FinishReason}, nil
 }
 
 func (gateway *Gateway) callProvider(ctx context.Context, profile providerProfile, request Request) (providerResult, error) {
@@ -369,6 +372,10 @@ type TaskProfile struct {
 }
 
 var taskDefinitions = map[string]struct{ name, purpose string }{
+	"article_analysis": {
+		name:    "Article analysis",
+		purpose: "Cleans, summarizes, categorizes and evaluates narration for one article in a single call.",
+	},
 	"content_cleaning": {
 		name:    "Content cleaning",
 		purpose: "Turns captured publisher pages into faithful, readable Markdown.",
@@ -408,7 +415,7 @@ var taskDefinitions = map[string]struct{ name, purpose string }{
 }
 
 var orderedTasks = []string{
-	"content_cleaning", "article_summary", "classify", "event_synthesis",
+	"article_analysis", "content_cleaning", "article_summary", "classify", "event_synthesis",
 	"narration_framing", "admin_article_analysis", "watch_tower_retrieval",
 	"watch_tower_answer", "newsletter_editorial",
 }
@@ -418,7 +425,7 @@ func (gateway *Gateway) ListProfiles(ctx context.Context) ([]TaskProfile, error)
 		SELECT task, provider_id, model, timeout_seconds, enabled, COALESCE(reasoning_effort, '')
 		FROM llm_task_profiles
 		WHERE task IN (
-		  'content_cleaning', 'article_summary', 'classify', 'event_synthesis',
+		  'article_analysis', 'content_cleaning', 'article_summary', 'classify', 'event_synthesis',
 		  'narration_framing', 'admin_article_analysis', 'watch_tower_retrieval',
 		  'watch_tower_answer', 'newsletter_editorial'
 		)

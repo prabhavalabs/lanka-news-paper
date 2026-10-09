@@ -11,9 +11,9 @@ import (
 
 func (store *Store) cleanContent(ctx context.Context, articleID, runID, stepID string, selection modelSelection) (stepResult, error) {
 	var sourceContentID *string
-	var original string
+	var original, headline string
 	if err := store.pool.QueryRow(ctx, `
-		SELECT content.id::text,
+		SELECT content.id::text, article.headline,
 		       COALESCE(content.body_text, NULLIF(article.description, ''), article.headline)
 		FROM articles article
 		LEFT JOIN LATERAL (
@@ -22,7 +22,7 @@ func (store *Store) cleanContent(ctx context.Context, articleID, runID, stepID s
 		  ORDER BY version DESC LIMIT 1
 		) content ON true
 		WHERE article.id = $1
-	`, articleID).Scan(&sourceContentID, &original); err != nil {
+	`, articleID).Scan(&sourceContentID, &headline, &original); err != nil {
 		return stepResult{}, fmt.Errorf("load article content for cleaning: %w", err)
 	}
 	cleaned := cleanArticleText(original)
@@ -34,7 +34,37 @@ func (store *Store) cleanContent(ctx context.Context, articleID, runID, stepID s
 	if err != nil {
 		return stepResult{}, err
 	}
-	response, err := store.complete(ctx, llm.Request{
+	combined, err := store.loadCombinedAnalysis(ctx, runID)
+	if err != nil {
+		return stepResult{}, err
+	}
+	if combined == nil {
+		prompt, schema := articleAnalysisPromptSchema()
+		input, err := articleAnalysisInput(headline, cleaned)
+		if err != nil {
+			return stepResult{}, err
+		}
+		response, callErr := store.complete(ctx, llm.Request{
+			Task: "article_analysis", System: prompt, Input: input, JSONSchema: schema,
+			MaxTokens: 16000, ArticleID: articleID, PipelineRunID: runID, PipelineStepID: stepID,
+		}, selection)
+		parsed, parseErr := parseCombinedAnalysis(response)
+		if callErr != nil || response.Provider == "none" || parseErr != nil {
+			parsed = combinedAnalysis{Provider: "none"}
+			store.appendLog(ctx, runID, stepID, "warning", "combined_analysis_fallback", "Article analysis unavailable; using standalone tasks", nil)
+		} else if _, valid := parsed.response("cleaned"); !valid {
+			// Dependent results describe text that could not be validated. Run
+			// standalone tasks on the actual persisted cleaned document instead.
+			parsed.Parts = nil
+			store.appendLog(ctx, runID, stepID, "warning", "combined_analysis_fallback", "Invalid cleaned analysis; using standalone tasks", nil)
+		}
+		if err := store.saveCombinedAnalysis(ctx, runID, parsed, response.CallID); err != nil {
+			return stepResult{}, fmt.Errorf("save combined analysis: %w", err)
+		}
+		parsed.CallID = response.CallID
+		combined = &parsed
+	}
+	response, err := store.partResponse(ctx, combined, "cleaned", llm.Request{
 		Task: "content_cleaning", System: cleanedArticlePrompt, Input: string(payload),
 		JSONSchema: cleanedArticleSchema, DisableReasoning: true, MaxTokens: 12000,
 		ArticleID: articleID, PipelineRunID: runID, PipelineStepID: stepID,
@@ -108,7 +138,11 @@ func (store *Store) summarize(ctx context.Context, articleID, runID, stepID stri
 	if err != nil {
 		return stepResult{}, err
 	}
-	response, err := store.complete(ctx, llm.Request{
+	combined, err := store.loadCombinedAnalysis(ctx, runID)
+	if err != nil {
+		return stepResult{}, err
+	}
+	response, err := store.partResponse(ctx, combined, "summary", llm.Request{
 		Task: "article_summary", System: articleSummaryPrompt, Input: string(input),
 		JSONSchema: articleSummarySchema, DisableReasoning: true, MaxTokens: 1800,
 		ArticleID: articleID, PipelineRunID: runID, PipelineStepID: stepID,

@@ -131,6 +131,13 @@ func (store *Store) AnalyzeArticle(ctx context.Context, articleID, runID, stepID
 }
 
 func (store *Store) AnalyzeArticleWithModel(ctx context.Context, articleID, runID, stepID, provider, model string) (Result, error) {
+	result, _, err := store.AnalyzeArticleWithCombined(ctx, articleID, runID, stepID, provider, model, nil)
+	return result, err
+}
+
+// AnalyzeArticleWithCombined applies the same signal gate, parser and persistence
+// to a cached narration and a standalone model response.
+func (store *Store) AnalyzeArticleWithCombined(ctx context.Context, articleID, runID, stepID, provider, model string, combined *llm.Response) (Result, bool, error) {
 	var headline, description, cleaned, summary string
 	if err := store.pool.QueryRow(ctx, `
 		SELECT article.headline, COALESCE(article.description, ''),
@@ -139,7 +146,24 @@ func (store *Store) AnalyzeArticleWithModel(ctx context.Context, articleID, runI
 		LEFT JOIN article_analysis_documents document ON document.article_id = article.id
 		WHERE article.id = $1
 	`, articleID).Scan(&headline, &description, &cleaned, &summary); err != nil {
-		return Result{}, fmt.Errorf("load article %s for narration: %w", articleID, err)
+		return Result{}, false, fmt.Errorf("load article %s for narration: %w", articleID, err)
+	}
+
+	if !hasEconomicPolicySignal(headline + " " + description + " " + cleaned + " " + summary) {
+		result, err := store.PersistAnalysis(ctx, articleID, Result{
+			Analysis: Analysis{Label: "unclear", CenterProbability: 1, Confidence: 1,
+				Rationale: "No economic-policy signal in the article.", Evidence: []string{}},
+			ProviderID: "signal-gate", ProviderModel: Model,
+		})
+		return result, false, err
+	}
+	if combined != nil && combined.Provider != "none" {
+		if analysis, err := parseAnalysis(combined.Text); err == nil {
+			result, err := store.PersistAnalysis(ctx, articleID, Result{
+				Analysis: analysis, ProviderID: combined.Provider, ProviderModel: combined.Model,
+			})
+			return result, true, err
+		}
 	}
 
 	input, err := json.Marshal(map[string]string{
@@ -148,7 +172,7 @@ func (store *Store) AnalyzeArticleWithModel(ctx context.Context, articleID, runI
 		"article":  truncate(cleanText(firstNonBlank(cleaned, description)), 9000),
 	})
 	if err != nil {
-		return Result{}, err
+		return Result{}, false, err
 	}
 	request := llm.Request{
 		Task: task, System: systemPrompt, Input: string(input), JSONSchema: schema,
@@ -162,17 +186,23 @@ func (store *Store) AnalyzeArticleWithModel(ctx context.Context, articleID, runI
 		response, err = store.model.Complete(ctx, request)
 	}
 	if err != nil {
-		return Result{}, fmt.Errorf("analyze article %s: %w", articleID, err)
+		return Result{}, false, fmt.Errorf("analyze article %s: %w", articleID, err)
 	}
 	if response.Provider == "none" {
-		return Result{}, fmt.Errorf("analyze article %s: no model provider responded", articleID)
+		return Result{}, false, fmt.Errorf("analyze article %s: no model provider responded", articleID)
 	}
 	analysis, err := parseAnalysis(response.Text)
 	if err != nil {
-		return Result{}, fmt.Errorf("decode narration analysis for %s: %w", articleID, err)
+		return Result{}, false, fmt.Errorf("decode narration analysis for %s: %w", articleID, err)
 	}
 	result := Result{Analysis: analysis, ProviderID: response.Provider, ProviderModel: response.Model}
 
+	result, err = store.PersistAnalysis(ctx, articleID, result)
+	return result, false, err
+}
+
+// PersistAnalysis retains the historical article analysis storage and model axis.
+func (store *Store) PersistAnalysis(ctx context.Context, articleID string, result Result) (Result, error) {
 	evidence, err := json.Marshal(result.Evidence)
 	if err != nil {
 		return Result{}, err
@@ -207,6 +237,12 @@ func (store *Store) AnalyzeArticleWithModel(ctx context.Context, articleID, runI
 	}
 	return result, nil
 }
+
+// PromptSchema exposes the standalone editorial rules without duplicating them.
+func PromptSchema() (string, map[string]any) { return systemPrompt, schema }
+
+// ParseAnalysis validates and normalizes narration for both inference paths.
+func ParseAnalysis(value string) (Analysis, error) { return parseAnalysis(value) }
 
 func hasEconomicPolicySignal(value string) bool {
 	value = strings.ToLower(cleanText(value))

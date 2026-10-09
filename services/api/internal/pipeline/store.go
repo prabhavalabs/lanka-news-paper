@@ -500,9 +500,22 @@ func (store *Store) execute(ctx context.Context, articleID, runID string, item s
 	case "event_clustering":
 		return store.cluster(ctx, articleID)
 	case "stance_evaluation", "narration_analysis":
-		result, err := store.politics.AnalyzeArticleWithModel(
-			ctx, articleID, runID, item.id, selection.provider, selection.model,
+		combined, err := store.loadCombinedAnalysis(ctx, runID)
+		if err != nil {
+			return stepResult{}, err
+		}
+		var narration *llm.Response
+		if combined != nil {
+			if response, valid := combined.response("narration"); valid {
+				narration = &response
+			}
+		}
+		result, reused, err := store.politics.AnalyzeArticleWithCombined(
+			ctx, articleID, runID, item.id, selection.provider, selection.model, narration,
 		)
+		if reused {
+			store.logCombinedReuse(ctx, runID, item.id, "narration", *narration)
+		}
 		return stepResult{output: result}, err
 	case "event_synthesis":
 		return store.synthesizeEvent(ctx, articleID, runID, item.id, selection)
@@ -529,19 +542,33 @@ func (store *Store) categorize(ctx context.Context, articleID, runID, stepID str
 	result := classify.From(categories, headline, description)
 	provider, model := "keyword-rules", result.Model
 	if result.Confidence < 0.55 && store.model != nil {
-		response, err := store.complete(ctx, llm.Request{
-			Task: "classify", System: classificationPrompt,
-			Input:            headline + "\n\n" + truncate(description, 3000),
-			DisableReasoning: true, MaxTokens: 64, ArticleID: articleID,
-			PipelineRunID: runID, PipelineStepID: stepID,
-		}, selection)
+		combined, err := store.loadCombinedAnalysis(ctx, runID)
 		if err != nil {
 			return stepResult{}, err
 		}
-		slug, valid := completionSlug(response.Text)
-		if response.Provider != "none" && valid {
-			result.Slug, result.Confidence = slug, 0.7
-			provider, model = response.Provider, response.Model
+		if combined != nil {
+			if response, valid := combined.response("category"); valid {
+				category, _ := parseArticleCategory(response.Text)
+				result.Slug, result.Confidence = category.Slug, *category.Confidence
+				provider, model = response.Provider, response.Model
+				store.logCombinedReuse(ctx, runID, stepID, "category", response)
+			}
+		}
+		if provider == "keyword-rules" {
+			response, err := store.complete(ctx, llm.Request{
+				Task: "classify", System: classificationPrompt,
+				Input:            headline + "\n\n" + truncate(description, 3000),
+				DisableReasoning: true, MaxTokens: 64, ArticleID: articleID,
+				PipelineRunID: runID, PipelineStepID: stepID,
+			}, selection)
+			if err != nil {
+				return stepResult{}, err
+			}
+			slug, valid := completionSlug(response.Text)
+			if response.Provider != "none" && valid {
+				result.Slug, result.Confidence = slug, 0.7
+				provider, model = response.Provider, response.Model
+			}
 		}
 	}
 	tag, err := store.pool.Exec(ctx, `
