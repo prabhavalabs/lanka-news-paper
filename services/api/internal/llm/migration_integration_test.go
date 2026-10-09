@@ -33,8 +33,25 @@ func TestCodexMigrationRoundTrip(t *testing.T) {
 	defer runner.Close()
 	version, dirty, err := runner.Version()
 	require.NoError(t, err)
+	require.Equal(t, uint(53), version)
+	require.False(t, dirty)
+	defer func() {
+		if err := runner.Up(); err != nil && err != migrate.ErrNoChange {
+			t.Errorf("restore scratch migrations: %v", err)
+		}
+	}()
+	require.NoError(t, runner.Steps(-1))
+	version, dirty, err = runner.Version()
+	require.NoError(t, err)
 	require.Equal(t, uint(52), version)
 	require.False(t, dirty)
+	var removed int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM llm_task_profiles WHERE task='article_analysis'`).Scan(&removed))
+	require.Zero(t, removed)
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM agent_workflows WHERE task='article_analysis'`).Scan(&removed))
+	require.Zero(t, removed)
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_name='article_pipeline_runs' AND column_name IN ('combined_analysis','combined_analysis_call_id')`).Scan(&removed))
+	require.Zero(t, removed)
 	require.NoError(t, runner.Steps(-1))
 	version, dirty, err = runner.Version()
 	require.NoError(t, err)
@@ -53,7 +70,7 @@ func TestCodexMigrationRoundTrip(t *testing.T) {
 	require.NoError(t, runner.Up())
 	version, dirty, err = runner.Version()
 	require.NoError(t, err)
-	require.Equal(t, uint(52), version)
+	require.Equal(t, uint(53), version)
 	require.False(t, dirty)
 	var preservedProvider string
 	require.NoError(t, pool.QueryRow(ctx, `SELECT provider_id FROM llm_calls WHERE id=$1`, historicCallID).Scan(&preservedProvider))
@@ -67,6 +84,9 @@ func TestCodexMigrationRoundTrip(t *testing.T) {
 		if contains([]string{"newsletter_editorial", "watch_tower_answer", "admin_article_analysis"}, task) {
 			expectedModel, expectedTimeout = "gpt-6.1-sol", 300
 		}
+		if task == "article_analysis" {
+			expectedTimeout = 240
+		}
 		require.Equal(t, expectedModel, model)
 		require.Equal(t, expectedTimeout, timeout)
 		expectedEffort := "medium"
@@ -75,5 +95,12 @@ func TestCodexMigrationRoundTrip(t *testing.T) {
 		}
 		require.Equal(t, expectedEffort, effort)
 	}
-	t.Log("migration 52 -> 51 -> 52 clean; prior provider history preserved; all task defaults verified")
+	var name, category string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT name,category FROM agent_workflows WHERE task='article_analysis'`).Scan(&name, &category))
+	require.Equal(t, "Article analysis", name)
+	require.Equal(t, "Editorial pipeline", category)
+	var versions int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM agent_workflow_versions WHERE task='article_analysis'`).Scan(&versions))
+	require.Equal(t, 1, versions)
+	t.Log("migration 53 -> 52 -> 51 -> 53 clean; prior provider history preserved; all task defaults verified")
 }
