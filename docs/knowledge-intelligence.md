@@ -65,7 +65,7 @@ Initial evidence includes the [Election Commission party register](https://elect
 
 ### Machine-scored article narration
 
-The production analyzer is `political-narration-ml-v7`. A conservative multilingual signal gate first records clearly non-economic stories as irrelevant; plausible policy stories then use the OpenRouter model assigned to the `narration_framing` task. This cascade keeps crime, weather, sport, and routine state activity out of the political spectrum while reserving model inference for semantic narration analysis. The assignment is currently `deepseek/deepseek-v4-flash-0731` and can be changed from the AI routing page.
+The analyzer is `political-narration-ml-v7`. Combined `article_analysis` supplies narration results from the configured Codex model, with `narration_framing` as the per-step fallback. A conservative multilingual signal gate records clearly non-economic stories as irrelevant; crime, weather, sport, and routine state activity should not acquire a political-economic direction without meaningful policy signals. Model and reasoning effort assignments can be changed from the AI routing page.
 
 The score means:
 
@@ -161,21 +161,22 @@ None of these metrics determines truth, factual accuracy, intent, party support,
 
 Migration `000017_political_framing` introduced party references and article analysis. Migration `000019_narration_framing` adds relevance, label, rationale, evidence, and model provenance. Migration `000022_article_pipeline` adds durable article runs, step telemetry, and article-linked model calls.
 
-The LLM gateway uses database-configured provider and task profiles. Migration
-`000026_openrouter_deepseek_v4_flash` routes classification and narration to the
-`openrouter` provider at `https://openrouter.ai/api/v1`, using the pinned
-`deepseek/deepseek-v4-flash-0731` model and `OPENROUTER_API_KEY`. Migration
-`000028_openrouter_routing` removes retired provider records and enforces one
-OpenRouter assignment per task; administrators can choose compatible catalog
-models from the AI routing page.
+The LLM gateway uses database-configured Codex task profiles. Migration
+`000052_codex_cli_provider` replaces the historical OpenRouter assignments
+from migrations `000026` and `000028`. Active inference uses only `codex_cli`;
+model and reasoning effort are editable from AI routing. Historical provenance
+is retained. See [the gateway architecture](llm-gateway.md).
 
 ### Durable per-article workflow
 
-Every new article creates one persisted run immediately after insertion. River executes three ordered steps with up to five concurrent analysis workers:
+Every new article creates one persisted run immediately after insertion. The combined `article_analysis` call supplies cleaning, category, summary, and narration results; individual tasks remain per-step fallbacks. River executes the durable ordered steps:
 
-1. `categorization` — publisher metadata and deterministic multilingual rules, with DeepSeek used only when confidence is below `0.55`;
-2. `event_clustering` — attaches published reports to a cross-source event or creates one;
-3. `narration_analysis` — applies the economic-policy relevance gate and calls DeepSeek when semantic narration scoring is required.
+1. `content_cleaning` — captures the combined result and validates faithful Markdown, with standalone cleaning as fallback;
+2. `summarization` — validates the combined summary/key points, with standalone summary as fallback;
+3. `categorization` — uses deterministic rules and the combined category, with individual Codex classification when needed;
+4. `event_clustering` — attaches published reports to a cross-source event or creates one;
+5. `stance_evaluation` — applies the economic-policy relevance gate and combined narration, with individual Codex narration when needed;
+6. `event_synthesis` — refreshes the cross-source event analysis from approved reports.
 
 River retries transient failures at most five times. A retry starts the same run, skips steps already marked `succeeded` or `skipped`, and resumes the failed step. The dispatcher recreates runs missing after an interrupted insertion and recovers runs left `running` for more than 20 minutes. An editor can retry the failed step from the article detail page; resetting an earlier step also resets its dependent later steps.
 

@@ -29,8 +29,9 @@ Keep `SNAP_BOOTSTRAP_ADMIN_PASSWORD_HASH` inside single quotes in that file.
 Bcrypt hashes contain `$`, which Docker Compose otherwise treats as environment
 variable interpolation.
 
-`OPENROUTER_API_KEY` must be present in that file. Both API and worker containers
-receive it; the database stores only the environment-variable reference.
+For migration, delete `OPENROUTER_API_KEY` from `/opt/lanka-news-paper/.env`
+and revoke the retired key in the OpenRouter dashboard. Remove the obsolete
+`CODEX_BACKFILL_MODELS` and `SNAP_ADMIN_ANALYSIS_PROVIDER_SORT` settings too.
 
 ### Morning newsletter
 
@@ -68,26 +69,49 @@ The DNS value must contain a literal `@`, without a backslash. Ensure
 aggregate reports are received. Begin with `p=none`; move to quarantine or
 reject only after the reports show that all legitimate senders align.
 
-## Codex CLI administrative backfills
+## Codex CLI authentication and capacity
 
-The API image contains a pinned Codex CLI, but Codex is not used by regular
-workflows. Its authentication is stored in a dedicated Docker volume shared by
-the API readiness check and the isolated administrative-analysis worker.
+Codex CLI is the only LLM provider. The pinned API image contains the CLI;
+API (Watch Tower) and worker both mount `codex-data` at `CODEX_HOME=/data/codex`.
+Treat `auth.json` and volume backups as secrets: never log, commit, or copy them
+into images. Use one owner-controlled ChatGPT account on this trusted private server.
 
-After the first deployment (and whenever authentication expires), authenticate
-the volume interactively on the VPS:
+After first deployment, authentication expiry, or account rotation, run on the VPS:
 
 ```sh
 cd /opt/lanka-news-paper
 docker compose --profile tools run --rm codex-login
 ```
 
-Follow the device-login URL shown by the command, then confirm the Settings page
-reports Codex CLI as ready. The application runs Codex in an empty temporary
-workspace, disables interactive tools, strips database and provider secrets from
-the child environment, enforces structured output, and processes only one
-administrative article at a time. `CODEX_BACKFILL_MODELS` in `.env` can restrict
-the model choices exposed to administrators.
+Follow the device-login URL and authenticate as the intended owner. For rotation,
+first revoke the old account session using its account security controls, then
+repeat this login with the replacement owner account. The CLI manages credential
+refresh; expired or revoked credentials require this interactive login again.
+Never print the credential file to diagnose readiness.
+
+Check **AI routing** for provider status, version, authentication method, and
+cooldown, or **Settings** for CLI readiness. Authenticated administrators can
+also request `GET /api/admin/llm/providers` and
+`GET /api/admin/settings/codex` using their existing authenticated session.
+The latter is a login probe; provider status also includes quota/auth cooldown.
+A successful login probe cannot establish that quota has recovered.
+
+```dotenv
+SNAP_CODEX_CONCURRENCY=2
+SNAP_CODEX_QUOTA_COOLDOWN=15m
+SNAP_CODEX_MODELS=gpt-6-luna,gpt-6.1-sol,gpt-6-sol,gpt-5.6-luna,gpt-5.6-terra
+```
+
+Concurrency limits CLI executions per process (API and worker have independent
+limits). Auth or quota failures pause pipeline dispatch during the cooldown;
+blocked retries do not renew the cooldown. After it expires, a new request can
+retry; this does not guarantee restored quota. Reauthenticate on `auth_expired`.
+Configure models actually available to the owner account; the catalog is a
+configured allowlist, not an account entitlement check.
+
+The worker retains its 2 GB ceiling. API memory is 1 GB to accommodate up to two
+Watch Tower Node CLI processes (roughly 150–250 MB each) plus the Go service and
+request buffers. Measure real usage before increasing concurrency.
 
 ## DNS and TLS
 
