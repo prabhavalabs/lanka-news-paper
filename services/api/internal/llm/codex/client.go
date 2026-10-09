@@ -71,8 +71,11 @@ type Status struct {
 }
 
 type Client struct {
-	runner ProcessRunner
-	slots  chan struct{}
+	runner             ProcessRunner
+	slots              chan struct{}
+	authMu             sync.Mutex
+	authConfirmedUntil time.Time
+	authIdentity       string
 }
 
 func NewClient(runner ProcessRunner) *Client {
@@ -106,6 +109,7 @@ func (client *Client) Probe(ctx context.Context) Status {
 	cancelLogin()
 	loginOutput := strings.TrimSpace(stdout + "\n" + stderr)
 	if loginErr != nil {
+		client.invalidateLogin()
 		status.Detail = "Codex CLI is installed but is not authenticated."
 		return status
 	}
@@ -117,6 +121,12 @@ func (client *Client) Probe(ctx context.Context) Status {
 	} else if strings.Contains(lower, "logged in") {
 		status.Authenticated, status.AuthMethod = true, "authenticated"
 	}
+	client.authMu.Lock()
+	client.authConfirmedUntil = time.Time{}
+	if status.AuthMethod == "chatgpt" {
+		client.authIdentity, client.authConfirmedUntil = loginIdentity(path), time.Now().Add(loginConfirmationTTL)
+	}
+	client.authMu.Unlock()
 	status.Ready = status.Installed && status.Authenticated && status.AuthMethod == "chatgpt"
 	if status.Ready {
 		status.Detail = "Codex CLI is installed and authenticated for news processing."
@@ -145,7 +155,45 @@ type Result struct {
 	FirstTokenMS      *int
 }
 
-func (client *Client) Complete(ctx context.Context, options CallOptions) (Result, error) {
+const loginConfirmationTTL = 5 * time.Minute
+
+func loginIdentity(path string) string {
+	return path + "\x00" + os.Getenv("CODEX_HOME") + "\x00" + os.Getenv("HOME")
+}
+
+func (client *Client) invalidateLogin() {
+	client.authMu.Lock()
+	defer client.authMu.Unlock()
+	client.authConfirmedUntil = time.Time{}
+}
+
+func (client *Client) confirmLogin(ctx context.Context, path string) error {
+	client.authMu.Lock()
+	defer client.authMu.Unlock()
+	identity := loginIdentity(path)
+	if client.authIdentity == identity && time.Now().Before(client.authConfirmedUntil) {
+		return ctx.Err()
+	}
+	client.authConfirmedUntil = time.Time{}
+	loginCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	stdout, stderr, err := client.runner.Run(loginCtx, path, []string{"login", "status"}, "", os.TempDir())
+	if loginCtx.Err() != nil {
+		return fmt.Errorf("confirm Codex login: %w", loginCtx.Err())
+	}
+	if err != nil || !strings.Contains(strings.ToLower(stdout+"\n"+stderr), "logged in using chatgpt") {
+		return fmt.Errorf("%w: ChatGPT-account login is required", ErrAuth)
+	}
+	client.authIdentity, client.authConfirmedUntil = identity, time.Now().Add(loginConfirmationTTL)
+	return nil
+}
+
+func (client *Client) Complete(ctx context.Context, options CallOptions) (result Result, callErr error) {
+	defer func() {
+		if errors.Is(callErr, ErrAuth) {
+			client.invalidateLogin()
+		}
+	}()
 	if strings.TrimSpace(options.Model) == "" {
 		return Result{}, fmt.Errorf("model is required")
 	}
@@ -171,17 +219,9 @@ func (client *Client) Complete(ctx context.Context, options CallOptions) (Result
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: locate executable: %v", ErrUnavailable, err)
 	}
-	// Check the CLI's own login status; never read its credential file. This
-	// also refuses stored API-key authentication even when no key is inherited.
-	loginOutput, loginStderr, loginErr := client.runner.Run(ctx, path, []string{"login", "status"}, "", os.TempDir())
-	if loginErr != nil {
-		if ctx.Err() != nil {
-			return Result{}, fmt.Errorf("confirm Codex login: %w", ctx.Err())
-		}
-		return Result{}, fmt.Errorf("%w: confirm ChatGPT login: %v", ErrAuth, classifyError(loginOutput+"\n"+loginStderr))
-	}
-	if !strings.Contains(strings.ToLower(loginOutput+"\n"+loginStderr), "logged in using chatgpt") {
-		return Result{}, fmt.Errorf("%w: ChatGPT-account login is required", ErrAuth)
+	// Cache only CLI-confirmed ChatGPT login; API-key authentication is refused.
+	if err := client.confirmLogin(ctx, path); err != nil {
+		return Result{}, err
 	}
 	directory, err := os.MkdirTemp("", "snap-codex-")
 	if err != nil {

@@ -252,3 +252,43 @@ func TestCompletionRejectsStoredAPIKeyLogin(t *testing.T) {
 	_, err := NewClient(runner).Complete(context.Background(), CallOptions{Model: "gpt-6-luna"})
 	require.ErrorIs(t, err, ErrAuth)
 }
+
+func TestLoginConfirmationCache(t *testing.T) {
+	loginCalls, execCalls := 0, 0
+	apiKey := false
+	client := NewClient(fakeRunner{run: func(_ context.Context, args []string, _, _ string) (string, string, error) {
+		if args[0] == "login" {
+			loginCalls++
+			if apiKey {
+				return "Logged in using an API key", "", nil
+			}
+			return "Logged in using ChatGPT", "", nil
+		}
+		execCalls++
+		if execCalls == 3 {
+			return "", "401 Unauthorized", errors.New("exit status 1")
+		}
+		return successfulEvents, "", nil
+	}})
+	for range 2 {
+		_, err := client.Complete(context.Background(), CallOptions{Model: "gpt-6-luna"})
+		require.NoError(t, err)
+	}
+	require.Equal(t, 1, loginCalls)
+	_, err := client.Complete(context.Background(), CallOptions{Model: "gpt-6-luna"})
+	require.ErrorIs(t, err, ErrAuth)
+	apiKey = true
+	_, err = client.Complete(context.Background(), CallOptions{Model: "gpt-6-luna"})
+	require.ErrorIs(t, err, ErrAuth)
+	require.Equal(t, 2, loginCalls)
+	require.Equal(t, 3, execCalls, "API-key login must not execute")
+	apiKey = false
+	_, err = client.Complete(context.Background(), CallOptions{Model: "gpt-6-luna"})
+	require.NoError(t, err)
+	client.authMu.Lock()
+	client.authConfirmedUntil = time.Now().Add(-time.Second)
+	client.authMu.Unlock()
+	_, err = client.Complete(context.Background(), CallOptions{Model: "gpt-6-luna"})
+	require.NoError(t, err)
+	require.Equal(t, 4, loginCalls)
+}
