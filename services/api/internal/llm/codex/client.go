@@ -263,14 +263,16 @@ func (client *Client) Complete(ctx context.Context, options CallOptions) (result
 		return result, fmt.Errorf("Codex execution: %w", ctx.Err())
 	}
 	if runErr != nil || parseErr != nil {
-		detail := strings.TrimSpace(stderr)
+		// Only Codex diagnostics can establish auth/quota failures. Model text,
+		// JSON decoding failures and OS runner errors are never classified.
+		stderrErr := classifyError(stderr)
+		if errors.Is(stderrErr, ErrAuth) || errors.Is(stderrErr, ErrQuota) {
+			return result, stderrErr
+		}
 		if parseErr != nil {
-			detail += "\n" + parseErr.Error()
+			return result, parseErr
 		}
-		if runErr != nil {
-			detail += "\n" + runErr.Error()
-		}
-		return result, classifyError(detail)
+		return result, fmt.Errorf("Codex execution: %w: %s", runErr, strings.TrimSpace(stderr))
 	}
 	return result, nil
 }
@@ -358,22 +360,16 @@ func benignWarning(message string) bool {
 // "Your access token could not be refreshed", "You've hit your usage limit",
 // "Rate limit reached" and "exceeded your current quota". Match messages rather
 // than exit codes: authentication and quota failures share a nonzero exit code.
+var authFailurePattern = regexp.MustCompile(`(?i)\b(?:401\s+unauthorized|status\s*[:=]?\s*401|not logged in|not authenticated|token[_ ]expired|refresh_token_reused|access token could not be refreshed|please log in(?: again)?|please login(?: again)?)\b`)
+var quotaFailurePattern = regexp.MustCompile(`(?i)\b(?:usage limit|rate limit reached|rate_limit_exceeded|exceeded your current quota|429\s+too many requests|status\s*[:=]?\s*429)\b`)
+
 func classifyError(detail string) error {
-	lower := strings.ToLower(detail)
 	kind := error(nil)
-	for _, pattern := range []string{"401", "unauthorized", "not logged in", "not authenticated", "authentication", "token expired", "token_expired", "refresh_token", "access token could not be refreshed", "please log in", "please login"} {
-		if strings.Contains(lower, pattern) {
-			kind = ErrAuth
-			break
-		}
-	}
-	if kind == nil {
-		for _, pattern := range []string{"usage limit", "rate limit", "rate_limit", "quota", "429", "too many requests"} {
-			if strings.Contains(lower, pattern) {
-				kind = ErrQuota
-				break
-			}
-		}
+	switch {
+	case authFailurePattern.MatchString(detail):
+		kind = ErrAuth
+	case quotaFailurePattern.MatchString(detail):
+		kind = ErrQuota
 	}
 	if len(detail) > 4000 {
 		detail = detail[:4000]

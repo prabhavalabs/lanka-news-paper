@@ -127,14 +127,54 @@ func TestJSONLFailuresAndWarnings(t *testing.T) {
 }
 
 func TestClassifyError(t *testing.T) {
-	for _, message := range []string{"401 Unauthorized", "Not logged in", "refresh_token_reused", "token_expired", "Your access token could not be refreshed", "Please log in again"} {
-		require.ErrorIs(t, classifyError(message), ErrAuth)
+	for _, test := range []struct {
+		message string
+		kind    error
+	}{
+		{"401 Unauthorized", ErrAuth}, {"HTTP status: 401", ErrAuth},
+		{"Not logged in", ErrAuth}, {"refresh_token_reused", ErrAuth}, {"token_expired", ErrAuth},
+		{"Your access token could not be refreshed", ErrAuth}, {"Please log in again", ErrAuth},
+		{"You've hit your usage limit", ErrQuota}, {"Rate limit reached", ErrQuota},
+		{"rate_limit_exceeded", ErrQuota}, {"exceeded your current quota", ErrQuota},
+		{"429 Too Many Requests", ErrQuota}, {"status 429", ErrQuota},
+		{"line 401 of schema", nil}, {"article mentions a fishing quota", nil},
+		{"authentication field missing from schema", nil}, {"rate limit configuration invalid", nil},
+		{"429 bytes received", nil}, {"1401 Unauthorized", nil}, {"refresh_token field invalid", nil},
+		{"connection refused", nil},
+	} {
+		t.Run(test.message, func(t *testing.T) {
+			err := classifyError(test.message)
+			if test.kind != nil {
+				require.ErrorIs(t, err, test.kind)
+			} else {
+				require.NotErrorIs(t, err, ErrAuth)
+				require.NotErrorIs(t, err, ErrQuota)
+			}
+		})
 	}
-	for _, message := range []string{"You've hit your usage limit", "Rate limit reached", "rate_limit_exceeded", "exceeded your current quota", "429 Too Many Requests"} {
-		require.ErrorIs(t, classifyError(message), ErrQuota)
+}
+
+func TestCompletionDoesNotClassifyModelOrRunnerText(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		client := NewClient(fakeRunner{run: func(_ context.Context, args []string, _, _ string) (string, string, error) {
+			if args[0] == "login" {
+				return "Logged in using ChatGPT", "", nil
+			}
+			output := `{"type":"item.completed","item":{"type":"agent_message","text":"401 Unauthorized; You've hit your usage limit"}}`
+			if failed {
+				return output, "generic failure", errors.New("runner reports status 429")
+			}
+			return output + "\n" + `{"type":"turn.completed","usage":{}}`, "", nil
+		}})
+		_, err := client.Complete(context.Background(), CallOptions{Model: "gpt-6-luna"})
+		if failed {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+		}
+		require.NotErrorIs(t, err, ErrAuth)
+		require.NotErrorIs(t, err, ErrQuota)
 	}
-	require.NotErrorIs(t, classifyError("connection refused"), ErrAuth)
-	require.NotErrorIs(t, classifyError("connection refused"), ErrQuota)
 }
 
 func TestCompletionClassifiesStderrAndUnavailable(t *testing.T) {
