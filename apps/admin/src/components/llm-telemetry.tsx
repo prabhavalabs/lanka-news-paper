@@ -1,3 +1,4 @@
+import { providerLabel } from '@/lib/llm'
 import { createClient, type LLMCall } from '@snap/api-client'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -89,7 +90,7 @@ export function LLMTelemetryCard({ articleId }: { articleId: string }) {
                 {!calls.isPending && !calls.isError ? rows.map((call) => (
                   <TableRow key={call.id} className="cursor-pointer" onClick={() => setSelected(call)}>
                     <TableCell className="font-medium">{call.task.replaceAll('_', ' ')}</TableCell>
-                    <TableCell>{call.provider_id}</TableCell>
+                    <TableCell>{providerLabel(call.provider_id)}</TableCell>
                     <TableCell>{call.model}<p className="mt-1 text-xs text-muted-foreground">{formatTokens(call)}</p></TableCell>
                     <TableCell>
                       <Badge variant={call.outcome === 'ok' ? 'outline' : call.outcome === 'running' ? 'secondary' : 'destructive'}>{call.outcome}</Badge>
@@ -166,7 +167,7 @@ function TraceSheet({ call, onOpenChange }: { call: LLMCall | null; onOpenChange
             <Badge variant={call.outcome === 'ok' ? 'outline' : call.outcome === 'running' ? 'secondary' : 'destructive'}>{call.outcome}</Badge>
           </div>
           <section><h3 className="text-sm font-medium">Correlation</h3><dl className="mt-3 grid gap-3 sm:grid-cols-2"><TraceDetail label="Call ID" value={String(call.id)} mono /><TraceDetail label="Pipeline run" value={call.pipeline_run_id || 'Not linked'} mono /><TraceDetail label="Pipeline step" value={call.pipeline_step_id || 'Not linked'} mono /></dl></section>
-          <section><h3 className="text-sm font-medium">Execution</h3><dl className="mt-3 grid gap-3 sm:grid-cols-2"><TraceDetail label="Provider" value={call.provider_id} /><TraceDetail label="Model" value={call.model} /><TraceDetail label="Transport" value={call.streamed ? 'Streaming' : 'Buffered'} /><TraceDetail label="Finish reason" value={call.finish_reason || 'Not reported'} /><TraceDetail label="Tokens" value={formatTokens(call)} /><TraceDetail label="First token" value={call.first_token_ms == null ? 'Not reported' : formatDuration(call.first_token_ms)} /></dl></section>
+          <section><h3 className="text-sm font-medium">Execution</h3><dl className="mt-3 grid gap-3 sm:grid-cols-2"><TraceDetail label="Provider" value={providerLabel(call.provider_id)} /><TraceDetail label="Model" value={call.model} /><TraceDetail label="Transport" value={call.streamed ? 'Streaming' : 'Buffered'} /><TraceDetail label="Finish reason" value={call.finish_reason || 'Not reported'} /><TraceDetail label="Tokens" value={formatTokens(call)} /><TraceDetail label="First token" value={call.first_token_ms == null ? 'Not reported' : formatDuration(call.first_token_ms)} /></dl></section>
           <section><h3 className="flex items-center gap-2 text-sm font-medium"><Clock3 className="size-4" />Lifecycle</h3><div className="mt-3 grid gap-3 sm:grid-cols-2"><TraceDetail label="Started" value={telemetryDate.format(new Date(call.created_at))} /><TraceDetail label="Completed" value={call.completed_at ? telemetryDate.format(new Date(call.completed_at)) : 'Still running'} /><TraceDetail label="Total latency" value={call.latency_ms == null ? 'In progress' : formatDuration(call.latency_ms)} /></div></section>
           {call.error_detail ? <TracePayload title="Provider error" value={call.error_detail} error /> : null}
           {call.response_text ? <TracePayload title="Raw provider response" value={call.response_text} /> : <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">No response body was recorded for this call.</div>}
@@ -193,7 +194,7 @@ function DeleteTelemetryDialog({ call, deleting, onOpenChange, onConfirm }: { ca
           <DialogTitle>Delete this telemetry record?</DialogTitle>
           <DialogDescription>This permanently removes the selected model-call trace. The article and pipeline result are not deleted.</DialogDescription>
         </DialogHeader>
-        {call ? <div className="rounded-2xl border bg-muted/20 p-4"><p className="font-medium capitalize">{call.task.replaceAll('_', ' ')}</p><p className="mt-1 text-xs text-muted-foreground">Call #{call.id} · {call.provider_id} / {call.model}</p></div> : null}
+        {call ? <div className="rounded-2xl border bg-muted/20 p-4"><p className="font-medium capitalize">{call.task.replaceAll('_', ' ')}</p><p className="mt-1 text-xs text-muted-foreground">Call #{call.id} · {providerLabel(call.provider_id)} / {call.model}</p></div> : null}
         <DialogFooter><Button variant="outline" disabled={deleting} onClick={() => onOpenChange(false)}>Cancel</Button><Button variant="destructive" disabled={deleting} onClick={onConfirm}>{deleting ? 'Deleting…' : 'Delete record'}</Button></DialogFooter>
       </DialogContent>
     </Dialog>

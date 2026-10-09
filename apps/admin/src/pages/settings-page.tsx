@@ -6,7 +6,7 @@ import {
   type AnalysisBackfillRun,
   type AnalysisBackfillScope,
   type AnalysisBackfillWorkflow,
-  type LlmModel,
+  type ReasoningEffort,
   type WatchTowerSettings,
 } from '@snap/api-client'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -50,6 +50,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
+import { ReasoningEffortSelect } from '@/components/reasoning-effort-select'
+import { codexStatusDetail, providerLabel as llmProviderLabel } from '@/lib/llm'
+
 const client = createClient()
 const dateTime = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' })
 type BackfillStreamState = 'connecting' | 'live' | 'reconnecting'
@@ -59,7 +62,7 @@ export function SettingsPage() {
   const queryClient = useQueryClient()
   const [scope, setScope] = useState<AnalysisBackfillScope>('date_range')
   const [workflow, setWorkflow] = useState<AnalysisBackfillWorkflow>('full_pipeline')
-  const [provider, setProvider] = useState<AnalysisBackfillProvider>('openrouter')
+  const [provider, setProvider] = useState<AnalysisBackfillProvider>('codex_cli')
   const [selectedModel, setSelectedModel] = useState('')
   const [from, setFrom] = useState(() => dateInput(daysAgo(7)))
   const [to, setTo] = useState(() => dateInput(new Date()))
@@ -69,10 +72,11 @@ export function SettingsPage() {
   const [selectedArticle, setSelectedArticle] = useState<AdminArticleListItem | null>(null)
   const [streamState, setStreamState] = useState<BackfillStreamState>('connecting')
   const [destructiveAction, setDestructiveAction] = useState<DestructiveBackfillAction | null>(null)
+  const [effort, setEffort] = useState<ReasoningEffort | '' | null>(null)
   const [watchTowerModel, setWatchTowerModel] = useState('')
   const [watchTowerLanguage, setWatchTowerLanguage] = useState<WatchTowerSettings['response_language'] | ''>('')
 
-  const openRouter = useQuery({
+  const codexProvider = useQuery({
     queryKey: ['llm-provider'],
     queryFn: () => client.llmProvider(),
     staleTime: 60_000,
@@ -109,14 +113,10 @@ export function SettingsPage() {
     staleTime: 30_000,
   })
 
-  const openRouterModels = useMemo(() => {
-    return (models.data?.items ?? []).filter((model) =>
-      model.output_modalities.includes('text') &&
-      (model.supported_parameters.includes('structured_outputs') || model.supported_parameters.includes('response_format')),
-    )
-  }, [models.data?.items])
   const watchTowerProfiles = (profiles.data?.items ?? []).filter((profile) => profile.task === 'watch_tower_retrieval' || profile.task === 'watch_tower_answer')
   const configuredWatchTowerModel = watchTowerProfiles.find((profile) => profile.task === 'watch_tower_answer')?.model ?? ''
+  const configuredEffort = watchTowerProfiles.find((profile) => profile.task === 'watch_tower_answer')?.reasoning_effort ?? ''
+  const activeEffort = effort ?? configuredEffort
   const activeWatchTowerModel = watchTowerModel || configuredWatchTowerModel
   const activeWatchTowerLanguage = watchTowerLanguage || watchTowerSettings.data?.response_language || 'si'
   const watchTowerModels = useMemo(() => {
@@ -127,20 +127,15 @@ export function SettingsPage() {
   const watchTowerModelItems = useMemo(() => watchTowerModels.map((item) => ({
     value: item.id,
     label: item.name,
-    detail: modelPriceLabel(item),
+    detail: `Reasoning: ${item.reasoning_efforts.join(' · ')}`,
   })), [watchTowerModels])
   const selectedWatchTowerModel = watchTowerModelItems.find((item) => item.value === activeWatchTowerModel) ?? null
   const watchTowerDirty = Boolean(
     activeWatchTowerModel &&
-    (activeWatchTowerModel !== configuredWatchTowerModel || activeWatchTowerLanguage !== (watchTowerSettings.data?.response_language ?? 'si')),
+    (activeEffort !== configuredEffort || activeWatchTowerModel !== configuredWatchTowerModel || activeWatchTowerLanguage !== (watchTowerSettings.data?.response_language ?? 'si')),
   )
-  const defaultOpenRouterModel = profiles.data?.items.find((profile) => profile.task === 'narration_framing')?.model ?? openRouterModels[0]?.id ?? ''
-  const availableModels = provider === 'codex_cli' ? (codex.data?.models ?? []) : openRouterModels.map((model) => model.id)
-  const model = availableModels.includes(selectedModel)
-    ? selectedModel
-    : provider === 'openrouter' && availableModels.includes(defaultOpenRouterModel)
-      ? defaultOpenRouterModel
-      : availableModels[0] ?? ''
+  const availableModels = codex.data?.models ?? []
+  const model = availableModels.includes(selectedModel) ? selectedModel : availableModels[0] ?? ''
 
   const backfillRequest = useMemo<AnalysisBackfillRequest>(() => ({
     scope,
@@ -168,7 +163,7 @@ export function SettingsPage() {
     enabled: previewReady,
     staleTime: 10_000,
   })
-  const providerReady = provider === 'openrouter' ? Boolean(openRouter.data?.available) : Boolean(codex.data?.ready)
+  const providerReady = Boolean(codexProvider.data?.ready)
   const catalogConfirmed = scope !== 'catalog' || confirmation === 'BACKFILL ENTIRE CATALOG'
 
   const start = useMutation({
@@ -218,7 +213,7 @@ export function SettingsPage() {
     mutationFn: async () => {
       if (!activeWatchTowerModel) throw new Error('A Watch Tower model is required')
       await Promise.all([
-        client.updateWatchTowerModel({ provider_id: 'openrouter', model: activeWatchTowerModel }),
+        client.updateWatchTowerModel({ provider_id: 'codex_cli', model: activeWatchTowerModel, reasoning_effort: activeEffort }),
         client.updateWatchTowerSettings({ response_language: activeWatchTowerLanguage }),
       ])
     },
@@ -228,6 +223,7 @@ export function SettingsPage() {
         queryClient.invalidateQueries({ queryKey: ['watch-tower-settings'] }),
       ])
       setWatchTowerModel('')
+      setEffort(null)
       setWatchTowerLanguage('')
       toast.success('Watch Tower defaults updated')
     },
@@ -250,7 +246,7 @@ export function SettingsPage() {
     return () => events.close()
   }, [queryClient])
 
-  const refreshProviders = () => void Promise.all([openRouter.refetch(), models.refetch(), profiles.refetch(), codex.refetch()])
+  const refreshProviders = () => void Promise.all([codexProvider.refetch(), models.refetch(), profiles.refetch(), codex.refetch()])
 
   return (
     <section className="flex min-w-0 flex-col gap-6">
@@ -262,28 +258,19 @@ export function SettingsPage() {
             Verify local inference tools and run exceptional, isolated analysis backfills.
           </p>
         </div>
-        <Button variant="outline" onClick={refreshProviders} disabled={openRouter.isFetching || codex.isFetching}>
-          <RefreshCw className={cn((openRouter.isFetching || codex.isFetching) && 'animate-spin')} /> Refresh readiness
+        <Button variant="outline" onClick={refreshProviders} disabled={codexProvider.isFetching || codex.isFetching}>
+          <RefreshCw className={cn((codexProvider.isFetching || codex.isFetching) && 'animate-spin')} /> Refresh readiness
         </Button>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ProviderCard
-          icon={Sparkles}
-          name="OpenRouter"
-          description="Default provider for regular workflows and administrative backfills."
-          ready={Boolean(openRouter.data?.available)}
-          pending={openRouter.isPending}
-          detail={openRouter.data?.status_detail ?? 'Checking API-key availability…'}
-          metadata={openRouter.data ? `${openRouter.data.latency_ms} ms · ${models.data?.items.length ?? 0} models` : ''}
-        />
+      <div className="grid gap-4">
         <ProviderCard
           icon={TerminalSquare}
           name="Codex CLI"
-          description="Pluggable local provider for single-pass analysis and complete editorial backfills."
-          ready={Boolean(codex.data?.ready)}
-          pending={codex.isPending}
-          detail={codex.data?.detail ?? 'Checking installation and authentication…'}
+          description="Codex CLI (ChatGPT) powers all inference and editorial backfills."
+          ready={Boolean(codexProvider.data?.ready)}
+          pending={codex.isPending || codexProvider.isPending}
+          detail={codexProvider.data ? codexStatusDetail(codexProvider.data) : codexProvider.isError ? 'Codex readiness is temporarily unavailable.' : 'Checking installation and authentication…'}
           metadata={codex.data?.installed ? `${codex.data.version || 'Version unknown'} · ${authLabel(codex.data.auth_method)}` : ''}
         />
       </div>
@@ -296,16 +283,16 @@ export function SettingsPage() {
               <div>
                 <CardTitle>Watch Tower defaults</CardTitle>
                 <CardDescription className="mt-1 max-w-3xl">
-                  Choose the OpenRouter model used for retrieval and cited answers, plus the language Watch Tower uses by default.
+                  Choose the Codex CLI (ChatGPT) model used for retrieval and cited answers, plus the language Watch Tower uses by default.
                 </CardDescription>
               </div>
             </div>
             <Badge variant="secondary"><Languages /> {activeWatchTowerLanguage === 'si' ? 'Sinhala default' : 'English default'}</Badge>
           </div>
         </CardHeader>
-        <CardContent className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[0.7fr_minmax(0,1.5fr)_0.8fr_auto] lg:items-end">
+        <CardContent className="grid gap-5 p-5 sm:p-6 lg:grid-cols-2 lg:items-end">
           <Field label="Provider" htmlFor="watch-tower-provider">
-            <div id="watch-tower-provider" className="flex h-8 items-center rounded-3xl bg-input/50 px-3 text-sm">OpenRouter</div>
+            <div id="watch-tower-provider" className="flex h-8 items-center rounded-3xl bg-input/50 px-3 text-sm">Codex CLI (ChatGPT)</div>
           </Field>
           <Field label="Model" htmlFor="watch-tower-model">
             <Combobox
@@ -328,6 +315,7 @@ export function SettingsPage() {
               </ComboboxContent>
             </Combobox>
           </Field>
+          <ReasoningEffortSelect value={activeEffort} onChange={(next) => setEffort(next)} />
           <Field label="Default answer language" htmlFor="watch-tower-language">
             <Select value={activeWatchTowerLanguage} onValueChange={(value) => setWatchTowerLanguage(value as WatchTowerSettings['response_language'])}>
               <SelectTrigger id="watch-tower-language" className="w-full"><SelectValue /></SelectTrigger>
@@ -337,11 +325,11 @@ export function SettingsPage() {
               </SelectContent>
             </Select>
           </Field>
-          <Button onClick={() => saveWatchTower.mutate()} disabled={!watchTowerDirty || saveWatchTower.isPending || !openRouter.data?.available}>
+          <Button onClick={() => saveWatchTower.mutate()} disabled={!watchTowerDirty || saveWatchTower.isPending || !codexProvider.data?.available}>
             {saveWatchTower.isPending ? <LoaderCircle className="animate-spin" /> : <CheckCircle2 />}
             {saveWatchTower.isPending ? 'Saving…' : 'Save defaults'}
           </Button>
-          <div className="rounded-xl border bg-muted/20 p-3 text-xs leading-5 text-muted-foreground lg:col-span-4">
+          <div className="rounded-xl border bg-muted/20 p-3 text-xs leading-5 text-muted-foreground lg:col-span-2">
             The same model is applied to bilingual retrieval planning and final answer generation. Current selection: <strong className="text-foreground">{selectedWatchTowerModel?.label ?? (activeWatchTowerModel || 'Not configured')}</strong>{selectedWatchTowerModel ? ` · ${selectedWatchTowerModel.detail}` : ''}.
           </div>
         </CardContent>
@@ -387,9 +375,8 @@ export function SettingsPage() {
             ) : null}
             <Field label="Provider" htmlFor="backfill-provider">
               <Select value={provider} onValueChange={(value) => { setProvider(value as AnalysisBackfillProvider); setSelectedModel('') }}>
-                <SelectTrigger id="backfill-provider" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectTrigger id="backfill-provider" className="w-full"><SelectValue>{() => 'Codex CLI (ChatGPT)'}</SelectValue></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="openrouter">OpenRouter (default)</SelectItem>
                   <SelectItem value="codex_cli">Codex CLI</SelectItem>
                 </SelectContent>
               </Select>
@@ -444,7 +431,7 @@ export function SettingsPage() {
               {preview.isFetching ? <Skeleton className="mt-3 h-10 w-28" /> : <p className="mt-2 font-heading text-4xl font-semibold tabular-nums">{preview.data?.articles.toLocaleString() ?? '—'}</p>}
               <p className="mt-3 text-xs leading-5 text-muted-foreground">Only articles with current full content and an active source approval for AI processing are included.</p>
             </div>
-            {!providerReady ? <InlineNotice message={`${provider === 'openrouter' ? 'OpenRouter' : 'Codex CLI'} is not ready.`} /> : null}
+            {!providerReady ? <InlineNotice message={'Codex CLI is not ready.'} /> : null}
             {preview.isError ? <InlineNotice message="This scope cannot be previewed. Check the dates or selected article." /> : null}
             <Button
               size="lg"
@@ -742,12 +729,10 @@ function InlineNotice({ message }: { message: string }) {
   return <div className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive"><CircleAlert className="mt-0.5 size-4 shrink-0" />{message}</div>
 }
 
-function providerLabel(provider: AnalysisBackfillProvider) { return provider === 'pipeline' ? 'Editorial pipeline' : provider === 'codex_cli' ? 'Codex CLI' : 'OpenRouter' }
+function providerLabel(provider: string) { return provider === 'pipeline' ? 'Editorial pipeline' : provider === 'codex_cli' ? 'Codex CLI' : llmProviderLabel(provider) }
 function workflowLabel(workflow: AnalysisBackfillRun['workflow']) { return workflow === 'full_pipeline' ? 'Full pipeline' : 'Single pass' }
 function scopeLabel(scope: AnalysisBackfillScope) { return scope === 'catalog' ? 'Entire catalog' : scope === 'article' ? 'Single article' : 'Date range' }
 function authLabel(value: string) { return value === 'chatgpt' ? 'ChatGPT authentication' : value === 'api_key' ? 'API key authentication' : 'Authenticated' }
 function modelName(id: string, models: { id: string; name: string }[] | undefined) { return models?.find((model) => model.id === id)?.name ?? id }
-function modelPriceLabel(model: LlmModel) { return `${formatModelPrice(model.input_price_per_million)} input · ${formatModelPrice(model.output_price_per_million)} output per 1M tokens` }
-function formatModelPrice(value: number) { return value === 0 ? 'Free' : `$${value.toLocaleString(undefined, { maximumFractionDigits: 3 })}` }
 function daysAgo(days: number) { const value = new Date(); value.setDate(value.getDate() - days); return value }
 function dateInput(value: Date) { return value.toISOString().slice(0, 10) }

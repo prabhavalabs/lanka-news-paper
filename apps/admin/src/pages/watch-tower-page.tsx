@@ -1,5 +1,6 @@
 import {
   createClient,
+  type ReasoningEffort,
   type LlmModel,
   type WatchTowerConversation,
   type WatchTowerMessage,
@@ -56,6 +57,9 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { providerLabel } from '@/lib/llm'
+
+import { ReasoningEffortSelect } from '@/components/reasoning-effort-select'
 
 const client = createClient()
 const dateTime = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' })
@@ -115,8 +119,11 @@ export function WatchTowerPage() {
     profile.task === 'watch_tower_retrieval' || profile.task === 'watch_tower_answer')
   const retrievalModel = watchTowerProfiles.find((profile) => profile.task === 'watch_tower_retrieval')?.model ?? ''
   const answerModel = watchTowerProfiles.find((profile) => profile.task === 'watch_tower_answer')?.model ?? ''
+  const [effort, setEffort] = useState<ReasoningEffort | '' | null>(null)
+  const configuredEffort = watchTowerProfiles.find((profile) => profile.task === 'watch_tower_answer')?.reasoning_effort ?? ''
+  const activeEffort = effort ?? configuredEffort
   const configuredModel = answerModel || retrievalModel
-  const profilesDiffer = Boolean(retrievalModel && answerModel && retrievalModel !== answerModel)
+  const profilesDiffer = Boolean(retrievalModel && answerModel && (retrievalModel !== answerModel || watchTowerProfiles[0]?.reasoning_effort !== watchTowerProfiles[1]?.reasoning_effort))
   const compatibleModels = useMemo(() => (models.data?.items ?? []).filter((model) =>
     model.compatible_tasks.includes('watch_tower_retrieval') && model.compatible_tasks.includes('watch_tower_answer')),
   [models.data?.items])
@@ -171,7 +178,7 @@ export function WatchTowerPage() {
   })
 
   const updateModel = useMutation({
-    mutationFn: (model: string) => client.updateWatchTowerModel({ provider_id: 'openrouter', model }),
+    mutationFn: (model: string) => client.updateWatchTowerModel({ provider_id: 'codex_cli', model, reasoning_effort: activeEffort }),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['llm-profiles'] }),
@@ -208,6 +215,7 @@ export function WatchTowerPage() {
 
   const openModelPicker = () => {
     setSelectedModel(configuredModel)
+    setEffort(null)
     setModelSearch('')
     setModelPickerOpen(true)
   }
@@ -364,9 +372,9 @@ export function WatchTowerPage() {
           <div className="space-y-4 border-b px-6 py-5">
             <div className="flex items-center justify-between gap-3 rounded-xl border bg-muted/20 p-4">
               <div className="min-w-0">
-                <p className="font-medium">OpenRouter</p>
+                <p className="font-medium">Codex CLI (ChatGPT)</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {provider.data?.key_set ? 'API key configured' : 'API key not configured'}
+                  {provider.data?.ready ? 'Ready' : provider.data?.status_detail}
                 </p>
               </div>
               {provider.data ? (
@@ -383,7 +391,7 @@ export function WatchTowerPage() {
             {profilesDiffer ? (
               <div className="flex gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300">
                 <CircleAlert className="mt-0.5 size-4 shrink-0" />
-                The two Watch Tower stages currently use different models. Applying a model here will synchronize them.
+                The two Watch Tower stages currently use different models or reasoning efforts. Applying a model here will synchronize them.
               </div>
             ) : null}
             {models.isError ? (
@@ -422,11 +430,12 @@ export function WatchTowerPage() {
             ) : null}
           </div>
 
+          <div className="border-t px-6 py-4"><ReasoningEffortSelect value={activeEffort} onChange={(next) => setEffort(next)} /></div>
           <SheetFooter className="border-t sm:flex-row sm:justify-end">
             <Button variant="outline" onClick={() => setModelPickerOpen(false)}>Cancel</Button>
             <Button
               onClick={() => updateModel.mutate(selectedModel)}
-              disabled={!selectedModel || updateModel.isPending || (!profilesDiffer && selectedModel === configuredModel)}
+              disabled={!selectedModel || updateModel.isPending || (!profilesDiffer && selectedModel === configuredModel && activeEffort === configuredEffort)}
             >
               {updateModel.isPending ? <LoaderCircle className="animate-spin" /> : <Bot />}
               Apply to Watch Tower
@@ -482,7 +491,7 @@ function ModelOption({ model, selected, onSelect }: { model: LlmModel; selected:
         <span className="block font-medium">{model.name}</span>
         <span className="mt-1 block break-all text-xs text-muted-foreground">{model.id}</span>
         <span className="mt-3 block text-xs text-muted-foreground">
-          {model.context_length.toLocaleString()} context · ${model.input_price_per_million.toLocaleString()}/1M input · ${model.output_price_per_million.toLocaleString()}/1M output
+          Reasoning: {model.reasoning_efforts.join(' · ')}
         </span>
       </span>
     </button>
@@ -625,7 +634,7 @@ function ChatMessage({ message, onSuggestion, disabled }: { message: WatchTowerM
             ))}
           </div>
         ) : null}
-        {message.model ? <p className="mt-3 text-[11px] text-muted-foreground">{message.provider} · {message.model}</p> : null}
+        {message.model ? <p className="mt-3 text-[11px] text-muted-foreground">{providerLabel(message.provider ?? '')} · {message.model}</p> : null}
       </div>
     </article>
   )

@@ -1,4 +1,4 @@
-import { createClient, type LlmModel, type LlmProfile } from '@snap/api-client'
+import { createClient, type LlmModel, type ReasoningEffort, type LlmProfile } from '@snap/api-client'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   BrainCircuit,
@@ -30,12 +30,16 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
+import { ReasoningEffortSelect } from '@/components/reasoning-effort-select'
+import { codexStatusDetail } from '@/lib/llm'
+
 const client = createClient()
 
 export function RoutingPage() {
   const queryClient = useQueryClient()
   const [selectedTask, setSelectedTask] = useState<LlmProfile | null>(null)
   const [selectedModel, setSelectedModel] = useState('')
+  const [effort, setEffort] = useState<ReasoningEffort | ''>('')
   const [search, setSearch] = useState('')
   const provider = useQuery({
     queryKey: ['llm-provider'],
@@ -52,7 +56,7 @@ export function RoutingPage() {
     queryFn: () => client.llmProfiles(),
   })
   const save = useMutation({
-    mutationFn: () => client.updateLlmProfile({ task: selectedTask?.task ?? '', model: selectedModel }),
+    mutationFn: () => client.updateLlmProfile({ task: selectedTask?.task ?? '', provider_id: 'codex_cli', model: selectedModel, reasoning_effort: effort }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['llm-profiles'] })
       toast.success('Model assignment updated')
@@ -79,6 +83,7 @@ export function RoutingPage() {
   const chooseModel = (profile: LlmProfile) => {
     setSelectedTask(profile)
     setSelectedModel(profile.model)
+    setEffort(profile.reasoning_effort)
     setSearch('')
   }
 
@@ -92,7 +97,7 @@ export function RoutingPage() {
           </Badge>
           <h1 className="font-heading text-2xl font-semibold tracking-tight">AI routing</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Monitor OpenRouter and assign one model to each AI task.
+            Monitor Codex CLI (ChatGPT) and assign one model to each AI task.
           </p>
         </div>
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -106,7 +111,7 @@ export function RoutingPage() {
       <Card className="gap-0 py-0 shadow-sm">
         <CardHeader className="border-b py-6">
           <CardTitle>Provider status</CardTitle>
-          <CardDescription>OpenRouter is the only inference provider enabled for AI tasks.</CardDescription>
+          <CardDescription>Codex CLI (ChatGPT) is the only inference provider enabled for AI tasks.</CardDescription>
         </CardHeader>
         <CardContent className="p-6">
           {provider.isPending ? <ProviderSkeleton /> : null}
@@ -118,18 +123,18 @@ export function RoutingPage() {
                   <Route className="size-6" />
                 </span>
                 <div>
-                  <p className="font-heading font-semibold">{provider.data.name}</p>
-                  <HealthBadge available={provider.data.available} status={provider.data.status} />
+                  <p className="font-heading font-semibold">Codex CLI (ChatGPT)</p>
+                  <HealthBadge available={provider.data.available} status={!provider.data.installed ? 'not installed' : provider.data.status.replaceAll('_', ' ')} />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-6 lg:flex lg:flex-1 lg:items-center">
-                <ProviderMetric icon={KeyRound} label="API key" value={provider.data.key_set ? 'Configured' : 'Missing'} />
+                <ProviderMetric icon={KeyRound} label="Authentication" value={provider.data.auth_method || 'Missing'} />
                 <ProviderMetric icon={CheckCircle2} label="Availability" value={provider.data.available ? 'Available' : 'Unavailable'} />
                 <ProviderMetric icon={Shapes} label="Catalog" value={models.data ? `${models.data.items.length} text models` : models.isError ? 'Unavailable' : 'Loading…'} />
-                <ProviderMetric icon={Clock3} label="Latency" value={`${provider.data.latency_ms} ms`} />
-                <ProviderMetric icon={BrainCircuit} label="Access" value={provider.data.free_tier ? 'Free tier' : 'Paid account'} />
+                <ProviderMetric icon={Clock3} label="Version" value={provider.data.version || 'Unknown'} />
+                <ProviderMetric icon={BrainCircuit} label="Installation" value={provider.data.installed ? 'Installed' : 'Not installed'} />
               </div>
-              {!provider.data.available ? <p className="w-full text-xs text-destructive">{provider.data.status_detail}</p> : null}
+              {!provider.data.available ? <p className="w-full text-xs text-destructive">{codexStatusDetail(provider.data)}</p> : null}
             </div>
           ) : null}
         </CardContent>
@@ -138,7 +143,7 @@ export function RoutingPage() {
       <Card className="gap-0 py-0 shadow-sm">
         <CardHeader className="border-b py-6">
           <CardTitle>Task assignments</CardTitle>
-          <CardDescription>One active OpenRouter model per AI task.</CardDescription>
+          <CardDescription>One active Codex CLI (ChatGPT) model per AI task.</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {profiles.isPending ? <TaskSkeleton /> : null}
@@ -160,7 +165,7 @@ export function RoutingPage() {
                     <p className="mt-1 max-w-md text-sm text-muted-foreground">{profile.purpose}</p>
                   </div>
                 </div>
-                <div className="lg:w-32"><TaskValue label="Provider" value="OpenRouter" /></div>
+                <div className="lg:w-40"><TaskValue label="Provider" value="Codex CLI (ChatGPT)" /><TaskValue label="Reasoning" value={profile.reasoning_effort || 'Model default'} /></div>
                 <div className="lg:flex-1">
                   <p className="text-xs font-medium text-muted-foreground">Assigned model</p>
                   <p className="mt-1 font-medium">{model?.name ?? profile.model}</p>
@@ -186,19 +191,19 @@ export function RoutingPage() {
         >
           <SheetHeader className="border-b">
             <SheetTitle>Choose model for {selectedTask?.name}</SheetTitle>
-            <SheetDescription>Select a compatible model from the live OpenRouter catalog.</SheetDescription>
+            <SheetDescription>Select a compatible model from the configured Codex catalog.</SheetDescription>
           </SheetHeader>
           <div className="border-b px-6 pb-4">
-            <label htmlFor="model-search" className="sr-only">Search OpenRouter models</label>
+            <label htmlFor="model-search" className="sr-only">Search Codex CLI (ChatGPT) models</label>
             <div className="relative">
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input id="model-search" className="pl-9" placeholder="Search OpenRouter models…" value={search} onChange={(event) => setSearch(event.target.value)} />
+              <Input id="model-search" className="pl-9" placeholder="Search Codex CLI (ChatGPT) models…" value={search} onChange={(event) => setSearch(event.target.value)} />
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
               Showing {Math.min(compatibleModels.length, 50)} of {compatibleModels.length} compatible models
             </p>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" role="radiogroup" aria-label="OpenRouter models">
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" role="radiogroup" aria-label="Codex CLI (ChatGPT) models">
             <div className="flex flex-col gap-3">
               {visibleModels.map((model) => (
                 <ModelOption key={model.id} model={model} selected={selectedModel === model.id} onSelect={() => setSelectedModel(model.id)} />
@@ -206,6 +211,7 @@ export function RoutingPage() {
               {compatibleModels.length === 0 ? <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No compatible models match this search.</div> : null}
             </div>
           </div>
+          <div className="border-t px-6 py-4"><ReasoningEffortSelect value={effort} onChange={setEffort} efforts={models.data?.items.find((model) => model.id === selectedModel)?.reasoning_efforts} /></div>
           <SheetFooter className="border-t sm:flex-row sm:justify-end">
             <Button variant="outline" onClick={() => setSelectedTask(null)}>Cancel</Button>
             <Button onClick={() => save.mutate()} disabled={!selectedModel || save.isPending}>{save.isPending ? 'Saving…' : 'Save assignment'}</Button>
@@ -247,40 +253,11 @@ function ModelOption({ model, selected, onSelect }: { model: LlmModel; selected:
             <div><p className="font-heading font-semibold">{model.name}</p><p className="mt-0.5 break-all text-xs text-muted-foreground">{model.id}</p></div>
             <span className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="size-3.5" /> Available</span>
           </div>
-          <div className="mt-4 grid grid-cols-3 gap-3 border-t pt-3">
-            <ModelMetric label="Input / 1M" value={formatPrice(model.input_price_per_million)} />
-            <ModelMetric label="Output / 1M" value={formatPrice(model.output_price_per_million)} />
-            <ModelMetric label="Context" value={formatContext(model.context_length)} />
-          </div>
-          <div className="mt-3 flex flex-wrap gap-1.5">{modelCapabilities(model).map((capability) => <Badge key={capability} variant="secondary">{capability}</Badge>)}</div>
+          <p className="mt-3 text-xs text-muted-foreground">Reasoning: {model.reasoning_efforts.join(' · ')}</p>
         </div>
       </div>
     </button>
   )
-}
-
-function ModelMetric({ label, value }: { label: string; value: string }) {
-  return <div><p className="text-[11px] text-muted-foreground">{label}</p><p className="mt-1 text-sm font-medium tabular-nums">{value}</p></div>
-}
-
-function modelCapabilities(model: LlmModel) {
-  const capabilities = ['Text']
-  if (model.supported_parameters?.includes('structured_outputs')) capabilities.push('Structured output')
-  if (model.supported_parameters?.includes('reasoning')) capabilities.push('Reasoning')
-  if (model.supported_parameters?.includes('tools')) capabilities.push('Tools')
-  return capabilities.slice(0, 4)
-}
-
-function formatPrice(value: number) {
-  if (value === 0) return 'Free'
-  if (value < 0.01) return '<$0.01'
-  return `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-}
-
-function formatContext(value: number) {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2).replace(/\.00$/, '')}M`
-  if (value >= 1_000) return `${Math.round(value / 1_000)}K`
-  return String(value)
 }
 
 function checkedLabel(value: string) {

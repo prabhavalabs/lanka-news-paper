@@ -1,3 +1,4 @@
+import { providerLabel } from '@/lib/llm'
 import {
   createClient, type AdminArticleDetail, type EventNarrativeAnalysis,
   type LLMCall, type PipelineRun, type PipelineStep,
@@ -541,7 +542,7 @@ function RunContext({ run, runs, onChangeRun }: { run: PipelineRun; runs: Pipeli
       <dl className="mt-5 grid gap-4 rounded-2xl border bg-muted/15 p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
         <Detail label="Run ID" value={run.id} />
         <Detail label="Trigger" value={run.trigger} />
-        <Detail label="Inference" value={run.provider_id ? `${run.provider_id} · ${run.model}` : 'Configured task profiles'} />
+        <Detail label="Inference" value={run.provider_id ? `${providerLabel(run.provider_id)} · ${run.model}` : 'Configured task profiles'} />
         <Detail label="Started" value={run.started_at ? date.format(new Date(run.started_at)) : 'Waiting'} />
       </dl>
       {run.last_error ? <div className="mt-4 flex gap-3 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm"><TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" /><div><p className="font-medium">Last failure</p><p className="mt-1 break-words text-muted-foreground">{run.last_error}</p></div></div> : null}
@@ -564,7 +565,7 @@ function StepInspector({ step, calls, running, onRun }: { step: PipelineStep; ca
         </div>
         <Button className="w-full sm:w-auto" variant="outline" size="sm" disabled={running} onClick={onRun}><Play /> Run step</Button>
       </div>
-      {step.status === 'queued' ? <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-muted-foreground"><strong className="text-foreground">Waiting for the analysis worker.</strong> This is queued, not broken; VPS inference runs one article at a time.</p> : null}
+      {step.status === 'queued' ? <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-muted-foreground"><strong className="text-foreground">Waiting for the analysis worker.</strong> This is queued, not broken; Codex execution waits for available concurrency and quota.</p> : null}
       {step.status === 'skipped' ? <p className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground"><strong className="text-foreground">Skipped for this run.</strong> {skippedReason}</p> : null}
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-y py-4 text-sm">
         <Detail label="Started" value={step.started_at ? date.format(new Date(step.started_at)) : 'Waiting'} />
@@ -576,11 +577,11 @@ function StepInspector({ step, calls, running, onRun }: { step: PipelineStep; ca
           <li key={log.id} className="group relative grid grid-cols-[1rem_1fr] gap-3 pb-4 last:pb-0">
             <span className={`relative z-10 mt-1 size-2.5 rounded-full ${log.level === 'error' ? 'bg-destructive' : 'bg-primary'}`} />
             <span className="absolute bottom-0 left-[4px] top-3 w-px bg-border group-last:hidden" />
-            <details className="group/log min-w-0"><summary className="flex cursor-pointer list-none flex-col items-start gap-1 sm:flex-row sm:justify-between sm:gap-3 [&::-webkit-details-marker]:hidden"><span className="text-sm font-medium group-hover/log:text-primary">{log.message}</span><time className="shrink-0 text-[11px] text-muted-foreground">{date.format(new Date(log.created_at))}</time></summary>{Object.keys(log.details).length ? <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-muted/60 p-2 text-[11px] leading-5 text-muted-foreground">{JSON.stringify(log.details, null, 2)}</pre> : null}</details>
+            <details className="group/log min-w-0"><summary className="flex cursor-pointer list-none flex-col items-start gap-1 sm:flex-row sm:justify-between sm:gap-3 [&::-webkit-details-marker]:hidden"><span className="text-sm font-medium group-hover/log:text-primary">{log.message}</span><time className="shrink-0 text-[11px] text-muted-foreground">{date.format(new Date(log.created_at))}</time></summary>{log.event === 'provider_response_completed' ? <p className="mt-2 text-xs text-muted-foreground">{String(log.details.input_tokens ?? '—')} in · {String(log.details.output_tokens ?? '—')} out · {String(log.details.cached_input_tokens ?? '—')} cached input · {String(log.details.reasoning_tokens ?? '—')} reasoning</p> : null}{Object.keys(log.details).length ? <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-muted/60 p-2 text-[11px] leading-5 text-muted-foreground">{JSON.stringify(log.details, null, 2)}</pre> : null}</details>
           </li>
         ))}</ol> : <p className="mt-3 rounded-lg border border-dashed p-3 text-xs text-muted-foreground">No append-only events were captured for this older run. Its current state is still shown above.</p>}
       </div>
-      {calls.map((call) => <LLMCallInspector key={call.id} call={call} />)}
+      {calls.map((call) => <LLMCallInspector key={call.id} call={call} usage={step.logs.find((log) => log.event === 'provider_response_completed' && log.details.call_id === call.id)?.details} />)}
       {step.error_detail ? <LogBlock title="Error detail" value={step.error_detail} error /> : null}
       {Object.keys(step.output).length ? <LogBlock title="Step output" value={JSON.stringify(step.output, null, 2)} /> : null}
     </div>
@@ -611,8 +612,8 @@ function stepDetail(step: PipelineStep) {
   return step.status
 }
 
-function LLMCallInspector({ call }: { call: LLMCall }) {
-  return <div className="space-y-3 border-t pt-5"><div className="flex items-center justify-between gap-3"><p className="text-sm font-medium">LLM request</p><Badge variant={call.outcome === 'ok' ? 'outline' : call.outcome === 'running' ? 'secondary' : 'destructive'}>{call.outcome}</Badge></div><dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm"><Detail label="Provider / model" value={`${call.provider_id} / ${call.model}`} /><Detail label="Transport" value={call.streamed ? 'Streaming' : 'Buffered'} /><Detail label="First token" value={call.first_token_ms == null ? '—' : formatDuration(call.first_token_ms)} /><Detail label="Total latency" value={call.latency_ms == null ? 'In progress' : formatDuration(call.latency_ms)} /><Detail label="Tokens" value={formatTokens(call)} /><Detail label="Finish reason" value={call.finish_reason || '—'} /></dl>{call.error_detail ? <LogBlock title="Provider error" value={call.error_detail} error /> : null}{call.response_text ? <LogBlock title="Raw response" value={call.response_text} /> : null}</div>
+function LLMCallInspector({ call, usage }: { call: LLMCall; usage?: Record<string, unknown> }) {
+  return <div className="space-y-3 border-t pt-5"><div className="flex items-center justify-between gap-3"><p className="text-sm font-medium">LLM request</p><Badge variant={call.outcome === 'ok' ? 'outline' : call.outcome === 'running' ? 'secondary' : 'destructive'}>{call.outcome}</Badge></div><dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm"><Detail label="Provider / model" value={`${providerLabel(call.provider_id)} / ${call.model}`} /><Detail label="Transport" value={call.streamed ? 'Streaming' : 'Buffered'} /><Detail label="First token" value={call.first_token_ms == null ? '—' : formatDuration(call.first_token_ms)} /><Detail label="Total latency" value={call.latency_ms == null ? 'In progress' : formatDuration(call.latency_ms)} /><Detail label="Tokens" value={formatTokens(call)} />{usage ? <><Detail label="Cached input tokens" value={String(usage.cached_input_tokens ?? '—')} /><Detail label="Reasoning tokens" value={String(usage.reasoning_tokens ?? '—')} /></> : null}<Detail label="Finish reason" value={call.finish_reason || '—'} /></dl>{call.error_detail ? <LogBlock title="Provider error" value={call.error_detail} error /> : null}{call.response_text ? <LogBlock title="Raw response" value={call.response_text} /> : null}</div>
 }
 
 function LogBlock({ title, value, error = false }: { title: string; value: string; error?: boolean }) {
@@ -636,7 +637,7 @@ function PoliticalCard({ political }: { political: Awaited<ReturnType<typeof cli
 				{political.relevant ? <><div className="flex items-end justify-between gap-3"><span className="text-2xl font-semibold capitalize">{political.label.replaceAll('_', ' ')}</span><span className="text-xs text-muted-foreground">{Math.round(political.confidence * 100)}% confidence</span></div><SpectrumBar left={left} center={center} right={right} /></> : <div className="rounded-xl bg-muted/50 p-4 text-sm">This article does not contain enough political or public-policy framing to place it on the spectrum.</div>}
 				<div><p className="text-sm font-medium">Why</p><p className="mt-1 text-sm leading-6 text-muted-foreground">{political.rationale}</p></div>
 				{political.evidence?.length ? <div><p className="text-sm font-medium">Evidence</p><ul className="mt-2 space-y-2 text-sm text-muted-foreground">{political.evidence.map((evidence) => <li key={evidence} className="border-l-2 pl-3">“{evidence}”</li>)}</ul></div> : null}
-				<p className="text-xs text-muted-foreground">{political.provider_id} · {political.provider_model} · {political.axis_version}</p>
+				<p className="text-xs text-muted-foreground">{providerLabel(political.provider_id)} · {political.provider_model} · {political.axis_version}</p>
 			</CardContent>
 		</Card>
 	)
@@ -751,7 +752,7 @@ function ContentVersionsCard({ content, analysis }: {
         {version === 'summary' && analysis?.summary_points.length ? <ul className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">{analysis.summary_points.map((point) => <li key={point} className="rounded-xl border p-3">{point}</li>)}</ul> : null}
         <dl className="grid gap-4 border-t pt-5 text-sm sm:grid-cols-2 lg:grid-cols-4">
           <Detail label="Original acquisition" value={content ? content.acquisition_method.replaceAll('_', ' ') : 'Unavailable'} />
-          <Detail label="Cleaner" value={analysis?.cleaner_model ? `${analysis.cleaner_provider} · ${analysis.cleaner_model}` : analysis?.cleaner_version ?? 'Pending'} />
+          <Detail label="Cleaner" value={analysis?.cleaner_model ? `${providerLabel(analysis.cleaner_provider)} · ${analysis.cleaner_model}` : analysis?.cleaner_version ?? 'Pending'} />
           <Detail label="Summary model" value={analysis?.summary_model || 'Pending'} />
           <Detail label="Visibility" value="Admin only" />
         </dl>
