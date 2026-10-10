@@ -14,7 +14,21 @@ permissions:
   packages: write
 
 jobs:
-  verify:
+  # Go tests run alongside the release build; deploy waits for both.
+  test-go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/api/go.mod
+          cache-dependency-path: services/api/go.sum
+      - run: go vet ./... && go test ./...
+        working-directory: services/api
+
+  # Compiles on the runner (warm Go and pnpm caches), then packages the three images
+  # in parallel with buildx bake. Runs on other refs (manual dispatch) stop after compiling and testing.
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,53 +44,39 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm test
-      - run: pnpm build
-      - run: go test ./...
-        working-directory: services/api
-      - run: go vet ./...
-        working-directory: services/api
-
-  build:
-    if: github.ref == 'refs/heads/main'
-    needs: verify
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - name: api
-            dockerfile: infra/production/api.Dockerfile
-            build_args: ""
-          - name: web
-            dockerfile: infra/production/frontend.Dockerfile
-            build_args: APP=web
-          - name: admin
-            dockerfile: infra/production/frontend.Dockerfile
-            build_args: APP=admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - name: Test and compile
+        run: |
+          set -e
+          (cd services/api && for cmd in api worker content-backfill migrate; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o "../../.ci-out/api/$cmd" "./cmd/$cmd"
+          done) &
+          go_build=$!
+          pnpm test
+          pnpm --filter @snap/web --filter @snap/admin build
+          wait "$go_build"
+          cp -R apps/web/dist .ci-out/web
+          cp -R apps/admin/public/source-logos .ci-out/web/source-logos
+          cp -R apps/admin/dist .ci-out/admin
+      - if: github.ref == 'refs/heads/main'
+        uses: docker/setup-buildx-action@v3
+      - if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - if: github.ref == 'refs/heads/main'
+        uses: docker/bake-action@v6
+        env:
+          TAG: ${{ github.sha }}
         with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          build-args: ${{ matrix.build_args }}
-          platforms: linux/amd64
+          source: .
+          files: infra/production/docker-bake.hcl
           push: true
-          tags: |
-            ghcr.io/prabhavalabs/lanka-news-paper-${{ matrix.name }}:${{ github.sha }}
-            ghcr.io/prabhavalabs/lanka-news-paper-${{ matrix.name }}:main
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
   deploy:
     if: github.ref == 'refs/heads/main'
-    needs: build
+    needs: [test-go, build]
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -87,22 +87,22 @@ jobs:
       SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_KNOWN_HOSTS }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          sparse-checkout: infra/production
       - name: Configure SSH
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
-      - name: Upload deployment files
-        run: |
-          scp infra/production/compose.yaml infra/production/deploy.sh \
-            "$DEPLOY_USER@$DEPLOY_HOST:/opt/lanka-news-paper/"
+          printf 'Host prod\n  HostName %s\n  User %s\n  ControlMaster auto\n  ControlPath ~/.ssh/cm-%%r@%%h\n  ControlPersist 120\n' "$DEPLOY_HOST" "$DEPLOY_USER" > ~/.ssh/config
+      # Deployment only: upload the compose file and script, then pull and start the release.
+      # Server configuration (nginx, TLS, .env) is managed by hand over SSH, never here.
       - name: Deploy release
         run: |
-          printf '%s\n' "$GHCR_TOKEN" | ssh "$DEPLOY_USER@$DEPLOY_HOST" \
-            "docker login ghcr.io --username '${{ github.actor }}' --password-stdin"
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
-            "chmod 700 /opt/lanka-news-paper/deploy.sh && /opt/lanka-news-paper/deploy.sh '${{ github.sha }}'"
+          scp infra/production/compose.yaml infra/production/deploy.sh prod:/opt/lanka-news-paper/
+          printf '%s\n' "$GHCR_TOKEN" | ssh prod "docker login ghcr.io --username '${{ github.actor }}' --password-stdin"
+          ssh prod "chmod 700 /opt/lanka-news-paper/deploy.sh && /opt/lanka-news-paper/deploy.sh '${{ github.sha }}'"
       - name: Remove registry credentials
         if: always()
-        run: ssh "$DEPLOY_USER@$DEPLOY_HOST" 'docker logout ghcr.io >/dev/null 2>&1 || true'
+        run: ssh prod 'docker logout ghcr.io >/dev/null 2>&1 || true'
