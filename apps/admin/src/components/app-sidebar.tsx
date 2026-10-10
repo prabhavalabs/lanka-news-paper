@@ -4,6 +4,7 @@ import {
   ListTreeIcon,
   ListChecksIcon,
   MailIcon,
+  Share2Icon,
   MessageSquareWarningIcon,
   NetworkIcon,
   NewspaperIcon,
@@ -40,6 +41,7 @@ const navigation: NavItem[] = [
 const administratorNavigation: NavItem[] = [
   { title: 'Workflow manager', url: '/workflows', icon: SparklesIcon },
   { title: 'Mailing list', url: '/mailing-list', icon: MailIcon },
+  { title: 'Social publishing', url: '/social', icon: Share2Icon },
   { title: 'Settings', url: '/settings', icon: SettingsIcon },
 ]
 
