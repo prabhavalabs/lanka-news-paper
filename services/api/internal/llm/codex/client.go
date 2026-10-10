@@ -366,7 +366,7 @@ func benignWarning(message string) bool {
 // "Your access token could not be refreshed", "You've hit your usage limit",
 // "Rate limit reached" and "exceeded your current quota". Match messages rather
 // than exit codes: authentication and quota failures share a nonzero exit code.
-var authFailurePattern = regexp.MustCompile(`(?i)\b(?:401\s+unauthorized|status\s*[:=]?\s*401|not logged in|not authenticated|token[_ ]expired|refresh_token_reused|access token could not be refreshed|please log in(?: again)?|please login(?: again)?)\b`)
+var authFailurePattern = regexp.MustCompile(`(?i)\b(?:401\s+unauthorized|status\s*[:=]?\s*401|not logged in|not authenticated|chatgpt login is required|token[_ ]expired|refresh_token_reused|access token could not be refreshed|please log in(?: again)?|please login(?: again)?)\b`)
 var quotaFailurePattern = regexp.MustCompile(`(?i)\b(?:usage limit|rate limit reached|rate_limit_exceeded|exceeded your current quota|429\s+too many requests|status\s*[:=]?\s*429)\b`)
 
 func classifyError(detail string) error {

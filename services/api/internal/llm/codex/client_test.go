@@ -133,6 +133,7 @@ func TestClassifyError(t *testing.T) {
 		kind    error
 	}{
 		{"401 Unauthorized", ErrAuth}, {"HTTP status: 401", ErrAuth},
+		{"ChatGPT login is required, but an API key is currently being used. Logging out.", ErrAuth},
 		{"Not logged in", ErrAuth}, {"refresh_token_reused", ErrAuth}, {"token_expired", ErrAuth},
 		{"Your access token could not be refreshed", ErrAuth}, {"Please log in again", ErrAuth},
 		{"You've hit your usage limit", ErrQuota}, {"Rate limit reached", ErrQuota},
