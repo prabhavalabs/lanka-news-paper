@@ -114,6 +114,9 @@ func TestGatewayCodexLoggingAndCooldownIntegration(t *testing.T) {
 		var checkedAt time.Time
 		require.NoError(t, pool.QueryRow(ctx, `SELECT status,checked_at FROM llm_providers WHERE id='codex_cli'`).Scan(&status, &checkedAt))
 		require.Equal(t, test.status, status)
+		gateway.recordCallStatus(ctx, nil, checkedAt.Add(-time.Second))
+		require.NoError(t, pool.QueryRow(ctx, `SELECT status FROM llm_providers WHERE id='codex_cli'`).Scan(&status))
+		require.Equal(t, test.status, status, "older in-flight success must not clear a newer cooldown")
 		blocked, err := gateway.ProviderBlocked(ctx)
 		require.NoError(t, err)
 		require.True(t, blocked)

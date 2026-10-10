@@ -127,7 +127,7 @@ func (gateway *Gateway) completeWithProfile(ctx context.Context, request Request
 	if callErr != nil {
 		// Fast failures do not extend the cooldown; only an attempted call does.
 		if blockedErr == nil && !errors.Is(callErr, ErrProviderBlocked) {
-			gateway.recordCallStatus(recordContext, callErr)
+			gateway.recordCallStatus(recordContext, callErr, started)
 		}
 		outcome := "failed"
 		if allowFallback {
@@ -144,7 +144,7 @@ func (gateway *Gateway) completeWithProfile(ctx context.Context, request Request
 		}
 		return Response{}, callErr
 	}
-	gateway.recordCallStatus(recordContext, nil)
+	gateway.recordCallStatus(recordContext, nil, started)
 	gateway.finishCall(recordContext, callID, "ok", latencyMS, result, nil)
 	gateway.logPipeline(recordContext, request, "info", "provider_response_completed", "Structured response completed", map[string]any{
 		"call_id": callID, "provider": profile.id, "model": profile.model, "latency_ms": latencyMS,
@@ -217,7 +217,7 @@ func (gateway *Gateway) ProviderBlocked(ctx context.Context) (bool, error) {
 	return false, err
 }
 
-func (gateway *Gateway) recordCallStatus(ctx context.Context, callErr error) {
+func (gateway *Gateway) recordCallStatus(ctx context.Context, callErr error, started time.Time) {
 	status, detail := "operational", "Codex completion succeeded."
 	if callErr != nil {
 		detail = callErr.Error()
@@ -230,7 +230,10 @@ func (gateway *Gateway) recordCallStatus(ctx context.Context, callErr error) {
 			return
 		}
 	}
-	gateway.recordProviderStatus(ctx, Provider{ID: "codex_cli", Status: status, StatusDetail: detail, CheckedAt: time.Now().UTC()})
+	// An older in-flight success must not erase a newer quota/auth failure.
+	_, _ = gateway.pool.Exec(ctx, `UPDATE llm_providers SET status=$1,status_detail=$2,checked_at=clock_timestamp()
+		WHERE id='codex_cli' AND ($1 <> 'operational' OR status NOT IN ('auth_expired','quota_exhausted')
+		  OR checked_at IS NULL OR checked_at <= $3)`, status, detail, started)
 }
 
 func (gateway *Gateway) startCall(ctx context.Context, request Request, profile providerProfile) int64 {
@@ -330,10 +333,6 @@ func (gateway *Gateway) ProviderStatus(ctx context.Context) (Provider, error) {
 	// A local login probe cannot establish that quota is restored. It must never
 	// overwrite a call failure or renew its cooldown timestamp.
 	return item, nil
-}
-
-func (gateway *Gateway) recordProviderStatus(ctx context.Context, item Provider) {
-	_, _ = gateway.pool.Exec(ctx, `UPDATE llm_providers SET status = $2, status_detail = NULLIF($3, ''), checked_at = $4 WHERE id = $1`, item.ID, item.Status, item.StatusDetail, item.CheckedAt)
 }
 
 type Model struct {
