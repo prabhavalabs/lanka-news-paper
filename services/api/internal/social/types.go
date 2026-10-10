@@ -94,8 +94,19 @@ type Post struct {
 	ReviewIssues         []ReviewIssue `json:"review_issues"`
 	ReviewLLMCallID      *int64        `json:"review_llm_call_id"`
 	ReviewedAt           *time.Time    `json:"reviewed_at"`
+	HoldReason           *string       `json:"hold_reason"`
+	Plan                 *PublishPlan  `json:"plan,omitempty"`
 	CreatedAt            time.Time     `json:"created_at"`
 	UpdatedAt            time.Time     `json:"updated_at"`
+}
+
+// PublishPlan tells editors whether and when a post will go out.
+// State is one of published, publishing, scheduled, paused, needs_editor or not_publishing.
+type PublishPlan struct {
+	State     string     `json:"state"`
+	At        *time.Time `json:"at"`
+	Estimated bool       `json:"estimated"`
+	Note      string     `json:"note"`
 }
 
 type EditInput struct {
@@ -125,6 +136,7 @@ type Candidate struct {
 	SubjectKind        string    `json:"subject_kind"`
 	Title              string    `json:"title"`
 	Category           string    `json:"category"`
+	CategorySlug       string    `json:"category_slug"`
 	SourceNames        []string  `json:"source_names"`
 	SourceCount        int       `json:"source_count"`
 	ArticleCount       int       `json:"article_count"`

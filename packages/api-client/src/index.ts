@@ -953,6 +953,12 @@ export type SocialPost = {
   created_by: string; created_at: string; updated_at: string;
   channel: SocialChannelKey; trigger: SocialTrigger; review_status: SocialReviewStatus; review_score: number | null;
   review_summary: string; review_issues: SocialReviewIssue[]; reviewed_at: string | null;
+  hold_reason: string | null; plan?: SocialPublishPlan;
+};
+/** Whether and when a post goes out; `at` is an estimate when `estimated` is true. */
+export type SocialPublishPlan = {
+  state: "published" | "publishing" | "scheduled" | "paused" | "needs_editor" | "not_publishing";
+  at: string | null; estimated: boolean; note: string;
 };
 export type SocialChannel = { key: string; name: string; available: boolean; status: string };
 export type SocialContentList = { items: SocialPost[]; from: string; to: string };

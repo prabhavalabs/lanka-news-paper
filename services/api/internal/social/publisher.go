@@ -181,7 +181,13 @@ func (service *Service) Publish(ctx context.Context) error {
 		}
 		return tx.Commit(ctx)
 	}
-	p, err := scanPost(tx.QueryRow(ctx, postSelect+`WHERE p.status='approved' AND COALESCE(p.scheduled_for,$1)<=$1 ORDER BY p.created_at,p.id FOR UPDATE OF p SKIP LOCKED LIMIT 1`, service.now()))
+	// Posts approved automatically go stale if caps kept them queued; an editor's approval stands.
+	if _, err = tx.Exec(ctx, `UPDATE social_posts SET status='skipped',last_error='Not published: the story was more than 12 hours old when a publishing slot opened'
+ WHERE status='approved' AND approved_by IS NULL AND created_at<$1`, service.now().Add(-autoPublishMaxAge)); err != nil {
+		return err
+	}
+	// Breaking news goes first; otherwise first approved, first published.
+	p, err := scanPost(tx.QueryRow(ctx, postSelect+`WHERE p.status='approved' AND COALESCE(p.scheduled_for,$1)<=$1 ORDER BY p.kind='breaking' DESC,p.created_at,p.id FOR UPDATE OF p SKIP LOCKED LIMIT 1`, service.now()))
 	if errors.Is(err, ErrNotFound) {
 		return nil
 	}

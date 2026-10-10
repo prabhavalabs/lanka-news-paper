@@ -136,7 +136,11 @@ func (service *Service) ManualPost(ctx context.Context, eventID, articleID strin
 // review passes. Every other outcome waits in pending_review for an editor.
 func (service *Service) createFromCandidates(ctx context.Context, candidates []Candidate, settings Settings, trigger string, actor uuid.UUID) ([]Post, error) {
 	manual := trigger == TriggerManual
-	items, callID, err := service.editorial(ctx, candidates)
+	recent, err := service.store.recentPosts(ctx, service.now())
+	if err != nil {
+		return nil, err
+	}
+	items, callID, err := service.editorial(ctx, candidates, recent)
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +159,11 @@ func (service *Service) createFromCandidates(ctx context.Context, candidates []C
 			status = "pending_review"
 		} else if item.Publish && item.Score >= settings.MinScore {
 			status = "pending_review"
+			// The model is told about recent posts; this catches repeats it still lets through.
+			if repeated := duplicateOf(item, recent); repeated != nil {
+				status = "skipped"
+				item.Reason = truncate("Repeats a recent post ("+repeated.Headline+"). "+item.Reason, 500)
+			}
 		}
 		p, err := service.insertPost(ctx, candidate, item, status, callID, trigger, actor)
 		if errors.Is(err, ErrConflict) {
@@ -167,7 +176,11 @@ func (service *Service) createFromCandidates(ctx context.Context, candidates []C
 			_ = service.render(ctx, p.ID, uuid.Nil)
 			_, result, reviewErr := service.review(ctx, p.ID)
 			if reviewErr == nil && !manual && settings.AutoPublish && approvable(result, settings.MinReviewScore) {
-				if approved, err := service.store.autoApprove(ctx, p.ID, service.now()); err == nil && approved && service.enqueuePublisher != nil {
+				if hold := topicHold(candidate, recent, service.now()); hold != "" {
+					if _, err := service.store.pool.Exec(ctx, `UPDATE social_posts SET hold_reason=$2 WHERE id=$1`, p.ID, hold); err != nil {
+						return posts, err
+					}
+				} else if approved, err := service.store.autoApprove(ctx, p.ID, service.now()); err == nil && approved && service.enqueuePublisher != nil {
 					_ = service.enqueuePublisher(ctx)
 				}
 			}
@@ -175,6 +188,8 @@ func (service *Service) createFromCandidates(ctx context.Context, candidates []C
 			if err != nil {
 				return posts, err
 			}
+			recent = append(recent, recentPost{ID: p.ID, Headline: p.HeadlineSI, Summary: p.SummarySI, Category: candidate.Category,
+				CategorySlug: candidate.CategorySlug, Breaking: candidate.Breaking, Status: p.Status, At: service.now()})
 		}
 		posts = append(posts, p)
 	}

@@ -93,7 +93,7 @@ func (handler socialHandler) serve(w http.ResponseWriter, request *http.Request)
 			writeSocialProblem(w, social.ErrInvalid)
 			return
 		}
-		result, err = handler.service.Store().Content(request.Context(), from, to, query.Get("channel"), query.Get("status"))
+		result, err = handler.service.Content(request.Context(), from, to, query.Get("channel"), query.Get("status"))
 	case "/api/admin/social/posts":
 		if request.Method == http.MethodGet {
 			limit := 30
@@ -104,7 +104,7 @@ func (handler socialHandler) serve(w http.ResponseWriter, request *http.Request)
 					return
 				}
 			}
-			result, err = handler.service.Store().ListPosts(request.Context(), request.URL.Query().Get("status"), limit, request.URL.Query().Get("cursor"))
+			result, err = handler.service.ListPosts(request.Context(), request.URL.Query().Get("status"), limit, request.URL.Query().Get("cursor"))
 		} else {
 			var input struct {
 				EventID   string `json:"event_id"`

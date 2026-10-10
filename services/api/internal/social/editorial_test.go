@@ -34,9 +34,20 @@ func TestEditorialValidation(t *testing.T) {
 
 func TestRankingAndSkippedReevaluation(t *testing.T) {
 	now := time.Now()
-	items := []Candidate{{ID: "recent", LatestAt: now, SourceCount: 2}, {ID: "many", SourceCount: 4, ArticleCount: 4}, {ID: "breaking", Breaking: true, SourceCount: 1}, {ID: "more-members", SourceCount: 4, ArticleCount: 6}}
-	rankCandidates(items)
-	require.Equal(t, []string{"breaking", "more-members", "many", "recent"}, []string{items[0].ID, items[1].ID, items[2].ID, items[3].ID})
+	items := []Candidate{
+		{ID: "recent", LatestAt: now, SourceCount: 2, ArticleCount: 2},
+		{ID: "many", LatestAt: now, SourceCount: 4, ArticleCount: 4},
+		{ID: "breaking", Breaking: true, SourceCount: 1, LatestAt: now.Add(-3 * time.Hour)},
+		{ID: "more-members", LatestAt: now, SourceCount: 4, ArticleCount: 6},
+		{ID: "politics", CategorySlug: "politics", LatestAt: now, SourceCount: 2, ArticleCount: 2},
+		{ID: "stale", LatestAt: now.Add(-10 * time.Hour), SourceCount: 4, ArticleCount: 6},
+	}
+	rankCandidates(items, now)
+	ids := make([]string, len(items))
+	for i, item := range items {
+		ids[i] = item.ID
+	}
+	require.Equal(t, []string{"breaking", "politics", "more-members", "many", "recent", "stale"}, ids)
 	require.False(t, reevaluateSkipped(Candidate{SourceCount: 3}, 2, false))
 	require.True(t, reevaluateSkipped(Candidate{SourceCount: 4}, 2, false))
 	require.True(t, reevaluateSkipped(Candidate{Breaking: true, SourceCount: 2}, 2, false))
@@ -76,20 +87,20 @@ func (model *editorialModel) CompleteWithModel(ctx context.Context, request llm.
 func TestEditorialDropsUnknownAndDuplicateItems(t *testing.T) {
 	model := &editorialModel{response: llm.Response{Provider: "codex_cli", CallID: 42, Text: `{"items":[{"id":"one","score":30,"reason":"not urgent","publish":false},{"id":"one","score":80,"reason":"duplicate","publish":false},{"id":"unknown","reason":"unknown","publish":false}]}`}}
 	service := &Service{model: model}
-	items, callID, err := service.editorial(context.Background(), []Candidate{{ID: "one"}})
+	items, callID, err := service.editorial(context.Background(), []Candidate{{ID: "one"}}, nil)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	require.Equal(t, int64(42), *callID)
 	require.Equal(t, "social_post_editorial", model.request.Task)
 	model.response.Provider = "none"
-	_, _, err = service.editorial(context.Background(), []Candidate{{ID: "one"}})
+	_, _, err = service.editorial(context.Background(), []Candidate{{ID: "one"}}, nil)
 	require.ErrorIs(t, err, ErrModelUnavailable)
 }
 
 func TestEditorialRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {
 	for _, text := range []string{`{"items":[],"unexpected":true}`, `{"items":[{"id":"one","reason":"skip","unexpected":true}]}`, `{"items":[]} {}`} {
 		service := &Service{model: &editorialModel{response: llm.Response{Provider: "codex_cli", Text: text}}}
-		_, _, err := service.editorial(context.Background(), []Candidate{{ID: "one"}})
+		_, _, err := service.editorial(context.Background(), []Candidate{{ID: "one"}}, nil)
 		require.ErrorIs(t, err, ErrModelUnavailable)
 	}
 }

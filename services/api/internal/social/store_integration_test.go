@@ -484,9 +484,11 @@ func TestSocialSelectionBatchAndUnavailableModelIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, service.Select(ctx, TriggerScheduled))
 	require.Equal(t, 1, model.calls)
-	var input []Candidate
+	var input struct {
+		Candidates []Candidate `json:"candidates"`
+	}
 	require.NoError(t, json.Unmarshal([]byte(model.request.Input), &input))
-	require.Len(t, input, 2)
+	require.Len(t, input.Candidates, 2)
 	page, err := store.ListPosts(ctx, "approved", 10, "")
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
@@ -660,10 +662,12 @@ func TestSocialReviewGateIntegration(t *testing.T) {
 		{"low score", llm.Response{Provider: "codex_cli", Text: `{"pass":true,"score":60,"summary":"Weak Sinhala.","issues":[]}`}, nil, "pending_review", "failed"},
 		{"unavailable", llm.Response{Provider: "none"}, nil, "pending_review", "unavailable"},
 	}
-	for _, tc := range cases {
+	// Distinct places keep the drafts from being skipped as repeats of each other.
+	places := []string{"කොළඹ", "මහනුවර", "ගාල්ල", "යාපනය"}
+	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			id := fixtureEvent(t, store, 2, now)
-			text := fmt.Sprintf(`{"items":[{"id":%q,"score":90,"publish":true,"reason":"Important","headline_si":"පුවත","summary_si":"සාරාංශය","caption_si":"පුවත මෙන්න.","hashtags":[]}]}`, id)
+			text := fmt.Sprintf(`{"items":[{"id":%q,"score":90,"publish":true,"reason":"Important","headline_si":%q,"summary_si":%q,"caption_si":"පුවත මෙන්න.","hashtags":[]}]}`, id, places[i], places[i])
 			model := &editorialModel{response: llm.Response{Provider: "codex_cli", Text: text}, review: tc.review, reviewErr: tc.err}
 			service.model = model
 			require.NoError(t, service.Select(ctx, TriggerRealtime))
