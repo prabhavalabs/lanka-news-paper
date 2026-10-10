@@ -18,10 +18,13 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/jobs"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm/codex"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/media"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/newsletter"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social/card"
 )
 
 func main() {
@@ -86,8 +89,21 @@ func run(logger *slog.Logger) error {
 		},
 		time.Now,
 	)
+	mediaStore, err := media.New(processContext, media.Config{LocalDirectory: loaded.MediaLocalDirectory, R2AccessKeyID: loaded.R2AccessKeyID, R2AccountID: loaded.R2AccountID, R2Bucket: loaded.R2Bucket, R2SecretKey: loaded.R2SecretAccessKey})
+	if err != nil {
+		return fmt.Errorf("configure social media storage: %w", err)
+	}
+	chromeRenderer, renderErr := card.NewChromeRenderer(card.Options{ChromePath: loaded.Social.ChromePath})
+	var socialRenderer card.Renderer
+	if renderErr != nil {
+		logger.Warn("social image renderer unavailable", "error", renderErr)
+	} else {
+		socialRenderer = chromeRenderer
+	}
+	socialService := social.NewService(social.NewStore(pool), loaded.Social, model, socialRenderer, mediaStore, time.Now)
+
 	poller := ingest.NewPoller(pool, logger, clusters)
-	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news, newsletterService, adminAnalysis)
+	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news, newsletterService, adminAnalysis, socialService)
 	if err != nil {
 		return err
 	}

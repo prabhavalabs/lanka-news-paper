@@ -1,10 +1,12 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/mail"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +29,7 @@ type Config struct {
 	MediaLocalDirectory        string
 	MigrationsPath             string
 	Newsletter                 NewsletterConfig
+	Social                     SocialConfig
 	R2AccessKeyID              string
 	R2AccountID                string
 	R2Bucket                   string
@@ -110,7 +113,12 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
+	social, err := loadSocialConfig(lookup, environment, newsletter.BaseURL)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
+		Social:                     social,
 		Address:                    valueOrDefault(lookup("SNAP_API_ADDRESS"), defaultAddress),
 		AllowedOrigins:             allowedOrigins,
 		BootstrapAdminEmail:        strings.TrimSpace(lookup("SNAP_BOOTSTRAP_ADMIN_EMAIL")),
@@ -213,4 +221,58 @@ func valueOrDefault(value string, fallback string) string {
 		return fallback
 	}
 	return trimmed
+}
+
+type SocialConfig struct {
+	AppID         string
+	AppSecret     string
+	RedirectURL   string
+	LoginConfigID string
+	GraphVersion  string
+	TokenKey      []byte
+	PublicBaseURL string
+	ChromePath    string
+}
+
+func (config SocialConfig) Configured() bool {
+	return config.AppID != "" && config.AppSecret != "" && len(config.TokenKey) == 32
+}
+
+func loadSocialConfig(lookup LookupFunc, environment, newsletterBaseURL string) (SocialConfig, error) {
+	redirect := "http://127.0.0.1:5174/api/admin/social/facebook/callback"
+	if environment == "production" {
+		redirect = "https://admin.lankanewspaper.prabhavalabs.com/api/admin/social/facebook/callback"
+	}
+	base := newsletterBaseURL
+	if base == "" {
+		base = "https://lankanewspaper.prabhavalabs.com"
+	}
+	configured := SocialConfig{
+		AppID: strings.TrimSpace(lookup("SNAP_META_APP_ID")), AppSecret: strings.TrimSpace(lookup("SNAP_META_APP_SECRET")),
+		RedirectURL:   valueOrDefault(lookup("SNAP_META_REDIRECT_URL"), redirect),
+		LoginConfigID: strings.TrimSpace(lookup("SNAP_META_LOGIN_CONFIG_ID")),
+		GraphVersion:  valueOrDefault(lookup("SNAP_META_GRAPH_VERSION"), "v26.0"),
+		PublicBaseURL: strings.TrimRight(valueOrDefault(lookup("SNAP_SOCIAL_PUBLIC_BASE_URL"), base), "/"),
+		ChromePath:    strings.TrimSpace(lookup("SNAP_SOCIAL_CHROME_PATH")),
+	}
+	if value := strings.TrimSpace(lookup("SNAP_SOCIAL_TOKEN_KEY")); value != "" {
+		key, err := base64.StdEncoding.DecodeString(value)
+		if err != nil || len(key) != 32 {
+			return SocialConfig{}, fmt.Errorf("SNAP_SOCIAL_TOKEN_KEY must be base64-encoded 32 bytes")
+		}
+		configured.TokenKey = key
+	}
+	for _, item := range []struct{ name, value string }{{"SNAP_META_REDIRECT_URL", configured.RedirectURL}, {"SNAP_SOCIAL_PUBLIC_BASE_URL", configured.PublicBaseURL}} {
+		parsed, err := url.Parse(item.value)
+		if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return SocialConfig{}, fmt.Errorf("%s must be an absolute HTTP(S) URL without credentials, query or fragment", item.name)
+		}
+		if environment == "production" && parsed.Scheme != "https" {
+			return SocialConfig{}, fmt.Errorf("%s must use HTTPS in production", item.name)
+		}
+	}
+	if !regexp.MustCompile(`^v[0-9]+\.[0-9]+$`).MatchString(configured.GraphVersion) {
+		return SocialConfig{}, fmt.Errorf("SNAP_META_GRAPH_VERSION must have the form v26.0")
+	}
+	return configured, nil
 }

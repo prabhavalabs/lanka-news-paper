@@ -16,6 +16,14 @@ x-app-environment: &app-environment
   SNAP_NEWSLETTER_RECIPIENT: ${SNAP_NEWSLETTER_RECIPIENT:-}
   SNAP_NEWSLETTER_SEND_HOUR: ${SNAP_NEWSLETTER_SEND_HOUR:-8}
   SNAP_NEWSLETTER_TIMEZONE: ${SNAP_NEWSLETTER_TIMEZONE:-Asia/Colombo}
+  SNAP_META_APP_ID: ${SNAP_META_APP_ID:-}
+  SNAP_META_APP_SECRET: ${SNAP_META_APP_SECRET:-}
+  SNAP_META_REDIRECT_URL: ${SNAP_META_REDIRECT_URL:-https://admin.lankanewspaper.prabhavalabs.com/api/admin/social/facebook/callback}
+  SNAP_META_LOGIN_CONFIG_ID: ${SNAP_META_LOGIN_CONFIG_ID:-}
+  SNAP_META_GRAPH_VERSION: ${SNAP_META_GRAPH_VERSION:-v26.0}
+  SNAP_SOCIAL_TOKEN_KEY: ${SNAP_SOCIAL_TOKEN_KEY:-}
+  SNAP_SOCIAL_PUBLIC_BASE_URL: ${SNAP_SOCIAL_PUBLIC_BASE_URL:-}
+  SNAP_SOCIAL_CHROME_PATH: ${SNAP_SOCIAL_CHROME_PATH:-}
   SNAP_MIGRATIONS_PATH: /app/migrations
   SNAP_R2_ACCESS_KEY_ID: ${SNAP_R2_ACCESS_KEY_ID:-}
   SNAP_R2_ACCOUNT_ID: ${SNAP_R2_ACCOUNT_ID:-}
@@ -88,6 +96,7 @@ services:
     environment: *app-environment
     volumes:
       - codex-data:/data/codex
+      - media-data:/data/media
     depends_on:
       postgres:
         condition: service_healthy

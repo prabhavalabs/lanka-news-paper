@@ -177,3 +177,22 @@ ssh -N -o ExitOnForwardFailure=yes \
 Copy `infra/local/shared.env.example` to the repository-root `.env`, replace its placeholders with the production database password and bucket-scoped R2 credentials, then run the API and either frontend normally. The production worker remains the only ingestion scheduler.
 
 `SNAP_ENV=shared-development` blocks `pnpm worker:dev` and `pnpm migrate`. Tests and schema migrations must continue to use an isolated local database. Admin actions from the local API still modify shared data intentionally.
+
+## Facebook Page publishing
+
+See [Facebook Page publishing](social-publishing.md) for the new Meta Business app setup, review workflow, caps and failure recovery. These optional server variables are forwarded to API and worker:
+
+```dotenv
+SNAP_META_APP_ID=
+SNAP_META_APP_SECRET=
+SNAP_META_REDIRECT_URL=https://admin.lankanewspaper.prabhavalabs.com/api/admin/social/facebook/callback
+SNAP_META_LOGIN_CONFIG_ID=
+SNAP_META_GRAPH_VERSION=v26.0
+SNAP_SOCIAL_TOKEN_KEY=
+SNAP_SOCIAL_PUBLIC_BASE_URL=https://lankanewspaper.prabhavalabs.com
+SNAP_SOCIAL_CHROME_PATH=
+```
+
+Generate `SNAP_SOCIAL_TOKEN_KEY` once as base64 encoded 32 bytes and preserve it with deployment secrets. Both processes must have the same key and use shared media storage (the Compose worker now also mounts `media-data`). Chrome/Chromium and Sinhala fonts are included by the image renderer's Docker configuration. If renderer initialization fails, queue/review still work and publishing waits for a rendered image. No app configuration automatically enables selection or auto-publish; both default to off in migration 54.
+
+The existing admin-origin `/api/` proxy carries the OAuth callback and session cookie. Manual post creation gets the existing long-inference nginx timeout, because it invokes the editorial model. After deployment, verify the Page connection and a reviewed post through the actual Meta app; Development-mode API success does not by itself prove public post visibility.
