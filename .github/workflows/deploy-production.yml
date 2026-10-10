@@ -25,6 +25,9 @@ jobs:
           cache-dependency-path: services/api/go.sum
       - run: go vet ./... && go test ./...
         working-directory: services/api
+        env:
+          # Ubuntu runners block Chrome's user-namespace sandbox; the card render test needs it off.
+          SNAP_SOCIAL_CHROME_NO_SANDBOX: "true"
 
   # Compiles on the runner (warm Go and pnpm caches), then packages the three images
   # in parallel with buildx bake. Runs on other refs (manual dispatch) stop after compiling and testing.
