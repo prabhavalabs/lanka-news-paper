@@ -63,9 +63,6 @@ func (service *Service) Edit(ctx context.Context, id string, input EditInput, ac
 	if !strings.Contains(p.Caption, "මූලාශ්‍ර: "+strings.Join(p.SourceNames, ", ")) {
 		return p, fmt.Errorf("%w: caption must retain the source credits", ErrInvalid)
 	}
-	if service.config.IncludeLink && !strings.Contains(p.Caption, p.LinkURL) {
-		return p, fmt.Errorf("%w: caption must retain the site link", ErrInvalid)
-	}
 	if _, err = tx.Exec(ctx, `UPDATE social_posts SET headline_si=$2,summary_si=$3,caption=$4,hashtags=$5,image_key=NULL,image_rendered_at=NULL,last_error=NULL,
  review_status='not_reviewed',review_score=NULL,review_summary='',review_issues='[]',review_llm_call_id=NULL,reviewed_at=NULL WHERE id=$1`, id, p.HeadlineSI, p.SummarySI, p.Caption, p.Hashtags); err != nil {
 		return p, err
@@ -117,7 +114,7 @@ func (service *Service) render(ctx context.Context, id string, actor uuid.UUID) 
 		}
 		siteURL := ""
 		if service.config.IncludeLink {
-			siteURL = strings.TrimPrefix(strings.TrimPrefix(p.LinkURL, "https://"), "http://")
+			siteURL = siteName(service.config.PublicBaseURL)
 		}
 		marks, marksErr := service.sourceMarks(ctx, p)
 		if marksErr != nil {
@@ -154,4 +151,14 @@ func (service *Service) render(ctx context.Context, id string, actor uuid.UUID) 
 		return fmt.Errorf("render social card: %w", renderError)
 	}
 	return nil
+}
+
+// siteName turns the public base URL into the bare website name shown on cards.
+func siteName(baseURL string) string {
+	name := strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://")
+	name = strings.TrimPrefix(name, "www.")
+	if i := strings.IndexAny(name, "/?#"); i >= 0 {
+		name = name[:i]
+	}
+	return name
 }

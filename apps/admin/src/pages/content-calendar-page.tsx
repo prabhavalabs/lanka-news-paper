@@ -4,7 +4,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, ExternalLink, ListChecks } fro
 import { Fragment, useMemo, useState } from 'react'
 import { Link } from 'react-router'
 
-import { ReviewBadge, ReviewPanel } from '@/components/social-review'
+import { PlanCell, PublishPlanPanel, ReviewBadge, ReviewPanel, triggerLabel } from '@/components/social-review'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -28,7 +28,6 @@ const statusStyle: Record<SocialPostStatus, { label: string; dot: string }> = {
   rejected: { label: 'Rejected', dot: 'bg-zinc-400' },
   skipped: { label: 'Not selected', dot: 'bg-zinc-300' },
 }
-const triggerLabel: Record<string, string> = { scheduled: 'Scheduled run', realtime: 'Arrived live', manual: 'Manual' }
 
 // The calendar places each post on the day it published, else when it is scheduled, else when it was drafted.
 function calendarTime(post: SocialPost) {
@@ -142,13 +141,14 @@ export function ContentCalendarPage() {
           </div>
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">{(['published', 'approved', 'pending_review', 'failed', 'skipped'] as const).map((key) => <span key={key} className="flex items-center gap-1.5"><span className={`size-2 rounded-full ${statusStyle[key].dot}`} />{statusStyle[key].label}</span>)}</div>
         </div> : !items.length ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No content in this period.</p> : <Table>
-          <TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Channel</TableHead><TableHead>Status</TableHead><TableHead>Story</TableHead><TableHead>AI review</TableHead><TableHead>Origin</TableHead><TableHead>Sources</TableHead><TableHead /></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Channel</TableHead><TableHead>Status</TableHead><TableHead title="When the post goes out, or why it will not">Publishes</TableHead><TableHead>Story</TableHead><TableHead>AI review</TableHead><TableHead title="How the story was picked">Found by</TableHead><TableHead>Sources</TableHead><TableHead /></TableRow></TableHeader>
           <TableBody>{items.map((post) => {
             const permalink = post.fb_permalink ? safeSocialLink(post.fb_permalink) : undefined
             return <TableRow key={post.id} className="cursor-pointer" onClick={() => setSelected(post)}>
               <TableCell className="whitespace-nowrap text-xs">{formatDateTime(calendarTime(post).toISOString())}</TableCell>
               <TableCell className="capitalize">{post.channel}</TableCell>
               <TableCell><span className="flex items-center gap-1.5 whitespace-nowrap text-xs"><span className={`size-2 rounded-full ${statusStyle[post.status].dot}`} />{statusStyle[post.status].label}</span></TableCell>
+              <TableCell><PlanCell post={post} /></TableCell>
               <TableCell className="max-w-80"><p className="truncate" lang="si">{post.headline_si || post.subject_title}</p><p className="truncate text-xs text-muted-foreground">{post.category}</p></TableCell>
               <TableCell><ReviewBadge post={post} /></TableCell>
               <TableCell className="whitespace-nowrap text-xs">{triggerLabel[post.trigger] ?? post.trigger}</TableCell>
@@ -171,7 +171,7 @@ export function ContentCalendarPage() {
 function ContentDetail({ post }: { post: SocialPost }) {
   const image = post.image_url ? `${post.image_url}${post.image_url.includes('?') ? '&' : '?'}v=${encodeURIComponent(post.image_rendered_at ?? post.updated_at)}` : ''
   const permalink = post.fb_permalink ? safeSocialLink(post.fb_permalink) : undefined
-  const timeline: [string, string | null][] = [['Drafted', post.created_at], ['Reviewed by AI', post.reviewed_at], ['Approved', post.approved_at], ['Scheduled for', post.scheduled_for], ['Published', post.published_at], ['Rejected', post.rejected_at]]
+  const timeline: [string, string | null][] = [['Drafted', post.created_at], ['Reviewed by AI', post.reviewed_at], ['Approved', post.approved_at], ['Earliest publish time', post.scheduled_for], ['Published', post.published_at], ['Rejected', post.rejected_at]]
   return <>
     <DialogHeader>
       <DialogTitle lang="si" className="leading-relaxed">{post.headline_si || post.subject_title}</DialogTitle>
@@ -180,6 +180,7 @@ function ContentDetail({ post }: { post: SocialPost }) {
     <div className="grid gap-4 sm:grid-cols-[180px_minmax(0,1fr)]">
       {image ? <a href={image} target="_blank" rel="noreferrer" className="self-start overflow-hidden rounded-xl border bg-muted"><img src={image} alt="" className="aspect-[4/5] w-full object-contain" /></a> : <div className="grid aspect-[4/5] place-items-center rounded-xl border bg-muted text-xs text-muted-foreground">No image</div>}
       <div className="min-w-0 space-y-3 text-sm">
+        <PublishPlanPanel post={post} />
         <div className="flex flex-wrap gap-2"><ReviewBadge post={post} /><Badge variant="outline">Selection score {post.score}/100</Badge></div>
         <p className="whitespace-pre-wrap break-words rounded-xl bg-muted/50 p-3 leading-7" lang="si">{post.caption}</p>
         <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1 text-xs">{timeline.filter(([, value]) => value).map(([label, value]) => <Fragment key={label}><dt className="text-muted-foreground">{label}</dt><dd>{formatDateTime(value)}</dd></Fragment>)}

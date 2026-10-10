@@ -4,7 +4,7 @@ import { Share2, ImagePlus, Loader2, RefreshCw, ShieldCheck } from 'lucide-react
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { CreateSocialPost } from '@/components/create-social-post'
-import { ReviewBadge, ReviewPanel } from '@/components/social-review'
+import { PublishPlanPanel, ReviewBadge, ReviewPanel, triggerLabel } from '@/components/social-review'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -82,7 +82,7 @@ export function SocialPage() {
     {status.isPending ? <Skeleton className="h-48 w-full" /> : status.isError ? <Card><CardContent className="space-y-3"><p role="alert">Could not load social publishing.</p><Button variant="outline" onClick={() => void status.refetch()}>Try again</Button></CardContent></Card> : <>
       <Connection status={status.data} phase={redirecting ? 'redirecting' : connect.isPending ? 'starting' : 'idle'} onConnect={() => { if (!connect.isPending && !redirecting) connect.mutate() }} onDisconnect={() => setDisconnectOpen(true)} />
       <Settings settings={status.data.settings} next={status.data.next_publish_eligible_at} />
-      <Card><CardHeader><CardTitle>Publishing queue</CardTitle><CardDescription>Review the source evidence and keep source credits and the site link in every caption. Updates refresh every 30 seconds while this page is visible.</CardDescription></CardHeader><CardContent className="space-y-5">
+      <Card><CardHeader><CardTitle>Publishing queue</CardTitle><CardDescription>Review the source evidence and keep the source credits in every caption. Captions never contain a link; the card shows the website name. Updates refresh every 30 seconds while this page is visible.</CardDescription></CardHeader><CardContent className="space-y-5">
         <div role="tablist" aria-label="Post status" className="flex flex-wrap gap-2">{tabs.map((item, i) => <Button key={item.label} role="tab" id={`social-tab-${i}`} aria-controls="social-panel" aria-selected={tab === i} tabIndex={tab === i ? 0 : -1} onKeyDown={(event) => {
           const next = event.key === 'ArrowRight' ? (i + 1) % tabs.length : event.key === 'ArrowLeft' ? (i + tabs.length - 1) % tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : null
           if (next !== null) { event.preventDefault(); setTab(next); document.getElementById(`social-tab-${next}`)?.focus() }
@@ -179,6 +179,7 @@ function PostCard({ post }: { post: SocialPost }) {
       <p className="whitespace-pre-wrap break-words rounded-xl bg-muted/50 p-4 text-sm leading-7" lang="si">{post.caption}</p>
       <div className="flex flex-wrap gap-2">{(post.hashtags ?? []).map((tag) => <Badge key={tag} variant="secondary">#{tag}</Badge>)}</div>
       <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground"><span>Created {formatDateTime(post.created_at)}</span><span>Updated {formatDateTime(post.updated_at)}</span>{post.image_rendered_at ? <span>Image {formatDateTime(post.image_rendered_at)}</span> : null}{post.scheduled_for ? <span>Scheduled {formatDateTime(post.scheduled_for)}</span> : null}{post.published_at ? <span>Published {formatDateTime(post.published_at)}</span> : null}</div>
+      <PublishPlanPanel post={post} />
       <ReviewPanel post={post} />
       {post.last_error ? <p role="alert" className="break-words rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm">{post.last_error}</p> : null}
       <div className="flex flex-wrap gap-2">{['pending_review', 'approved'].includes(post.status) ? <Button size="sm" disabled={mutation.isPending} onClick={() => open('approve')}>{post.status === 'approved' ? 'Reschedule' : 'Approve'}</Button> : null}{editable ? <><Button size="sm" variant="outline" disabled={mutation.isPending} onClick={() => open('edit')}>Edit</Button><Button size="sm" variant="outline" disabled={mutation.isPending} onClick={() => mutation.mutate('render')}><RefreshCw />{mutation.isPending && mutation.variables === 'render' ? 'Rendering…' : 'Re-render image'}</Button><Button size="sm" variant="outline" disabled={mutation.isPending} onClick={() => mutation.mutate('review')}>{mutation.isPending && mutation.variables === 'review' ? <Loader2 className="animate-spin" /> : <ShieldCheck />}{mutation.isPending && mutation.variables === 'review' ? 'Reviewing…' : 'Run AI review'}</Button><Button size="sm" variant="outline" disabled={mutation.isPending} onClick={() => open('reject')}>Reject</Button></> : null}{['failed', 'needs_attention'].includes(post.status) ? <Button size="sm" variant="outline" onClick={() => open('retry')} disabled={mutation.isPending}>Retry</Button> : null}{permalink ? <Button size="sm" variant="outline" nativeButton={false} render={<a href={permalink} target="_blank" rel="noreferrer" />}>View on Facebook</Button> : null}</div>
@@ -198,5 +199,4 @@ function PostCard({ post }: { post: SocialPost }) {
   </CardContent></Card>
 }
 
-const triggerLabel: Record<string, string> = { scheduled: 'Scheduled run', realtime: 'Arrived live', manual: 'Manual' }
 

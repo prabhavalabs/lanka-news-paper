@@ -232,7 +232,8 @@ type SocialConfig struct {
 	TokenKey      []byte
 	PublicBaseURL string
 	ChromePath    string
-	// IncludeLink adds the public story link to captions and cards. Off until the public domain is ready.
+	// IncludeLink shows the website name (for example thulawanews.com) in the card footer.
+	// Captions never contain a URL.
 	IncludeLink bool
 }
 
