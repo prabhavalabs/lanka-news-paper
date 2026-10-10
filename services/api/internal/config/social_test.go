@@ -14,6 +14,15 @@ func TestSocialConfigOptionalAndValidated(t *testing.T) {
 	require.False(t, configured.Configured())
 	require.Equal(t, "v26.0", configured.GraphVersion)
 	require.Equal(t, "http://127.0.0.1:5174/api/admin/social/facebook/callback", configured.RedirectURL)
+	require.False(t, configured.IncludeLink)
+	values["SNAP_SOCIAL_INCLUDE_LINK"] = "true"
+	configured, err = loadSocialConfig(lookup, "local", "")
+	require.NoError(t, err)
+	require.True(t, configured.IncludeLink)
+	values["SNAP_SOCIAL_INCLUDE_LINK"] = "sometimes"
+	_, err = loadSocialConfig(lookup, "local", "")
+	require.ErrorContains(t, err, "SNAP_SOCIAL_INCLUDE_LINK")
+	values["SNAP_SOCIAL_INCLUDE_LINK"] = ""
 	configured, err = loadSocialConfig(lookup, "production", "https://news.invalid")
 	require.NoError(t, err)
 	require.Equal(t, "https://news.invalid", configured.PublicBaseURL)

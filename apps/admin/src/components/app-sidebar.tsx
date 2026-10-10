@@ -1,5 +1,6 @@
 import * as React from 'react'
 import {
+  CalendarDaysIcon,
   LayoutDashboardIcon,
   ListTreeIcon,
   ListChecksIcon,
@@ -8,6 +9,7 @@ import {
   MessageSquareWarningIcon,
   NetworkIcon,
   NewspaperIcon,
+  PaletteIcon,
   RadioTowerIcon,
   SettingsIcon,
   SparklesIcon,
@@ -42,6 +44,8 @@ const administratorNavigation: NavItem[] = [
   { title: 'Workflow manager', url: '/workflows', icon: SparklesIcon },
   { title: 'Mailing list', url: '/mailing-list', icon: MailIcon },
   { title: 'Social publishing', url: '/social', icon: Share2Icon },
+  { title: 'Content calendar', url: '/social/content', icon: CalendarDaysIcon },
+  { title: 'Brand kit', url: '/brand', icon: PaletteIcon },
   { title: 'Settings', url: '/settings', icon: SettingsIcon },
 ]
 
@@ -58,11 +62,11 @@ export function AppSidebar({ user, onLogout, ...props }: AppSidebarProps) {
           <SidebarMenuItem>
             <SidebarMenuButton
               render={<Link to="/" />}
-              tooltip="News Control Room"
+              tooltip="Thulawa Control Room"
               className="data-[slot=sidebar-menu-button]:p-1.5!"
             >
-              <img src="/brand/news-control-room-mark.svg" alt="" className="size-7" />
-              <span className="text-base font-semibold tracking-tight">News Control Room</span>
+              <img src="/brand/icon-192.png" alt="" className="size-7 rounded-md" />
+              <span className="text-base font-semibold tracking-tight">Thulawa Control Room</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

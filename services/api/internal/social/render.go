@@ -60,10 +60,14 @@ func (service *Service) Edit(ctx context.Context, id string, input EditInput, ac
 	if p.HeadlineSI == "" || utf8.RuneCountInString(p.HeadlineSI) > 90 || p.SummarySI == "" || utf8.RuneCountInString(p.SummarySI) > 280 || p.Caption == "" || utf8.RuneCountInString(p.Caption) > 5000 {
 		return p, ErrInvalid
 	}
-	if !strings.Contains(p.Caption, "මූලාශ්‍ර: "+strings.Join(p.SourceNames, ", ")) || !strings.Contains(p.Caption, p.LinkURL) {
-		return p, fmt.Errorf("%w: caption must retain the source credits and site link", ErrInvalid)
+	if !strings.Contains(p.Caption, "මූලාශ්‍ර: "+strings.Join(p.SourceNames, ", ")) {
+		return p, fmt.Errorf("%w: caption must retain the source credits", ErrInvalid)
 	}
-	if _, err = tx.Exec(ctx, `UPDATE social_posts SET headline_si=$2,summary_si=$3,caption=$4,hashtags=$5,image_key=NULL,image_rendered_at=NULL,last_error=NULL WHERE id=$1`, id, p.HeadlineSI, p.SummarySI, p.Caption, p.Hashtags); err != nil {
+	if service.config.IncludeLink && !strings.Contains(p.Caption, p.LinkURL) {
+		return p, fmt.Errorf("%w: caption must retain the site link", ErrInvalid)
+	}
+	if _, err = tx.Exec(ctx, `UPDATE social_posts SET headline_si=$2,summary_si=$3,caption=$4,hashtags=$5,image_key=NULL,image_rendered_at=NULL,last_error=NULL,
+ review_status='not_reviewed',review_score=NULL,review_summary='',review_issues='[]',review_llm_call_id=NULL,reviewed_at=NULL WHERE id=$1`, id, p.HeadlineSI, p.SummarySI, p.Caption, p.Hashtags); err != nil {
 		return p, err
 	}
 	if err = audit(ctx, tx, actor, "social_post_edit", id); err != nil {
@@ -111,7 +115,15 @@ func (service *Service) render(ctx context.Context, id string, actor uuid.UUID) 
 		if p.Spectrum != nil {
 			spectrum = &card.Spectrum{Left: p.Spectrum.Left, Center: p.Spectrum.Center, Right: p.Spectrum.Right}
 		}
-		png, renderError = service.renderer.Render(ctx, card.Card{Kind: card.Kind(p.Kind), Kicker: p.Category, Headline: p.HeadlineSI, Summary: p.SummarySI, Sources: p.SourceNames, SourceCount: p.SourceCount, Spectrum: spectrum, PublishedAt: service.now()})
+		siteURL := ""
+		if service.config.IncludeLink {
+			siteURL = strings.TrimPrefix(strings.TrimPrefix(p.LinkURL, "https://"), "http://")
+		}
+		marks, marksErr := service.sourceMarks(ctx, p)
+		if marksErr != nil {
+			marks = nil // Fall back to names only; the card stays renderable.
+		}
+		png, renderError = service.renderer.Render(ctx, card.Card{Kind: card.Kind(p.Kind), Kicker: p.Category, Headline: p.HeadlineSI, Summary: p.SummarySI, Sources: p.SourceNames, Marks: marks, SourceCount: p.SourceCount, Spectrum: spectrum, PublishedAt: service.now(), SiteURL: siteURL})
 		if renderError == nil && len(png) == 0 {
 			renderError = errors.New("social renderer returned an empty image")
 		}

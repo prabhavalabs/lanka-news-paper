@@ -292,9 +292,8 @@ function ShareGraphButton({ searchParams, selectedNodeID }: { searchParams: URLS
     }
     if (selectedNodeID) query.set('node', selectedNodeID)
     if (!query.has('days') && !query.has('from')) query.set('days', '1')
-    const origin = window.location.hostname === 'admin.lankanewspaper.prabhavalabs.com'
-      ? 'https://lankanewspaper.prabhavalabs.com'
-      : `${window.location.protocol}//${window.location.hostname}${window.location.port === '5174' ? ':5173' : window.location.port ? `:${window.location.port}` : ''}`
+    const publicOrigin: Record<string, string> = { 'admin.thulawanews.com': 'https://thulawanews.com', 'admin.lankanewspaper.prabhavalabs.com': 'https://lankanewspaper.prabhavalabs.com' }
+    const origin = publicOrigin[window.location.hostname] ?? `${window.location.protocol}//${window.location.hostname}${window.location.port === '5174' ? ':5173' : window.location.port ? `:${window.location.port}` : ''}`
     const url = `${origin}/analysis/knowledge?${query}`
     try {
       await navigator.clipboard.writeText(url)

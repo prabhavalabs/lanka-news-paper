@@ -92,6 +92,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 		"GET /api/admin/social/facebook/pending-pages", "POST /api/admin/social/facebook/select", "POST /api/admin/social/facebook/disconnect",
 		"GET /api/admin/social/posts", "POST /api/admin/social/posts", "GET /api/admin/social/posts/{id}",
 		"PATCH /api/admin/social/posts/{id}", "POST /api/admin/social/posts/{id}/{action}", "POST /api/admin/social/run-selection",
+		"GET /api/admin/social/channels", "GET /api/admin/social/content",
 	} {
 		protected.HandleFunc(route, socialAdmin.serve)
 	}

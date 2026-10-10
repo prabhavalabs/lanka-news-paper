@@ -24,11 +24,11 @@ type scanner interface{ Scan(...any) error }
 
 const settingsColumns = `enabled, auto_publish, max_posts_per_hour, max_posts_per_day, min_gap_minutes,
  quiet_hours_start, quiet_hours_end, min_score, lookback_hours, candidates_per_run,
- include_single_articles, timezone, updated_at`
+ include_single_articles, timezone, updated_at, realtime_enabled, min_review_score`
 
 func scanSettings(row scanner) (Settings, error) {
 	var s Settings
-	err := row.Scan(&s.Enabled, &s.AutoPublish, &s.MaxPostsPerHour, &s.MaxPostsPerDay, &s.MinGapMinutes, &s.QuietHoursStart, &s.QuietHoursEnd, &s.MinScore, &s.LookbackHours, &s.CandidatesPerRun, &s.IncludeSingleArticles, &s.Timezone, &s.UpdatedAt)
+	err := row.Scan(&s.Enabled, &s.AutoPublish, &s.MaxPostsPerHour, &s.MaxPostsPerDay, &s.MinGapMinutes, &s.QuietHoursStart, &s.QuietHoursEnd, &s.MinScore, &s.LookbackHours, &s.CandidatesPerRun, &s.IncludeSingleArticles, &s.Timezone, &s.UpdatedAt, &s.RealtimeEnabled, &s.MinReviewScore)
 	return s, err
 }
 
@@ -39,7 +39,7 @@ func validateSettings(s Settings) error {
 	if _, err := time.LoadLocation(s.Timezone); err != nil {
 		return ErrInvalid
 	}
-	if s.MaxPostsPerHour < 1 || s.MaxPostsPerHour > 100 || s.MaxPostsPerDay < 1 || s.MaxPostsPerDay > 1000 || s.MinGapMinutes < 1 || s.MinGapMinutes > 1440 || s.QuietHoursStart < 0 || s.QuietHoursStart > 23 || s.QuietHoursEnd < 0 || s.QuietHoursEnd > 23 || s.MinScore < 0 || s.MinScore > 100 || s.LookbackHours < 1 || s.LookbackHours > 168 || s.CandidatesPerRun < 1 || s.CandidatesPerRun > 30 {
+	if s.MaxPostsPerHour < 1 || s.MaxPostsPerHour > 100 || s.MaxPostsPerDay < 1 || s.MaxPostsPerDay > 1000 || s.MinGapMinutes < 1 || s.MinGapMinutes > 1440 || s.QuietHoursStart < 0 || s.QuietHoursStart > 23 || s.QuietHoursEnd < 0 || s.QuietHoursEnd > 23 || s.MinScore < 0 || s.MinScore > 100 || s.LookbackHours < 1 || s.LookbackHours > 168 || s.CandidatesPerRun < 1 || s.CandidatesPerRun > 30 || s.MinReviewScore < 0 || s.MinReviewScore > 100 {
 		return ErrInvalid
 	}
 	return nil
@@ -71,8 +71,8 @@ func (store *Store) UpdateSettings(ctx context.Context, s Settings, actor uuid.U
 	result, err := scanSettings(tx.QueryRow(ctx, `UPDATE social_settings SET enabled=$1,auto_publish=$2,max_posts_per_hour=$3,
  max_posts_per_day=$4,min_gap_minutes=$5,quiet_hours_start=$6,quiet_hours_end=$7,min_score=$8,
  lookback_hours=$9,candidates_per_run=$10,include_single_articles=$11,timezone=$12,
- updated_by=$13,updated_at=clock_timestamp() WHERE singleton RETURNING `+settingsColumns,
-		s.Enabled, s.AutoPublish, s.MaxPostsPerHour, s.MaxPostsPerDay, s.MinGapMinutes, s.QuietHoursStart, s.QuietHoursEnd, s.MinScore, s.LookbackHours, s.CandidatesPerRun, s.IncludeSingleArticles, s.Timezone, actor))
+ updated_by=$13,realtime_enabled=$14,min_review_score=$15,updated_at=clock_timestamp() WHERE singleton RETURNING `+settingsColumns,
+		s.Enabled, s.AutoPublish, s.MaxPostsPerHour, s.MaxPostsPerDay, s.MinGapMinutes, s.QuietHoursStart, s.QuietHoursEnd, s.MinScore, s.LookbackHours, s.CandidatesPerRun, s.IncludeSingleArticles, s.Timezone, actor, s.RealtimeEnabled, s.MinReviewScore))
 	if err != nil {
 		return s, fmt.Errorf("update social settings: %w", err)
 	}
@@ -268,4 +268,28 @@ func publishablePost(ctx context.Context, tx pgx.Tx, p Post, now time.Time) (boo
  AND COALESCE(array_agg(DISTINCT permitted.id) FILTER (WHERE permitted.id IS NOT NULL),'{}'::uuid[]) @> post.evidence_article_ids
  FROM social_posts post LEFT JOIN permitted ON true WHERE post.id=$6 GROUP BY post.evidence_article_ids`, p.EventID, p.ArticleID, now, p.SourceCount, p.SourceNames, p.ID).Scan(&eligible)
 	return eligible, err
+}
+
+// autoApprove promotes a reviewed post for automatic publishing. It re-checks, under lock,
+// that publishing and auto-publish are still on and that the post's current text passed
+// the AI review, so a setting changed during the model calls is always respected.
+func (store *Store) autoApprove(ctx context.Context, id string, now time.Time) (bool, error) {
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	var allowed bool
+	if err = tx.QueryRow(ctx, `SELECT enabled AND auto_publish FROM social_settings WHERE singleton FOR SHARE`).Scan(&allowed); err != nil {
+		return false, err
+	}
+	if !allowed {
+		return false, nil
+	}
+	result, err := tx.Exec(ctx, `UPDATE social_posts SET status='approved',scheduled_for=$2,approved_at=$2
+ WHERE id=$1 AND status='pending_review' AND review_status='passed'`, id, now)
+	if err != nil {
+		return false, err
+	}
+	return result.RowsAffected() == 1, tx.Commit(ctx)
 }

@@ -81,6 +81,19 @@ func (handler socialHandler) serve(w http.ResponseWriter, request *http.Request)
 		err = handler.service.RunSelection(request.Context(), actor)
 		result = map[string]bool{"ok": true}
 		code = http.StatusAccepted
+	case "/api/admin/social/channels":
+		var channels []social.Channel
+		channels, err = handler.service.Channels(request.Context())
+		result = map[string]any{"items": channels}
+	case "/api/admin/social/content":
+		query := request.URL.Query()
+		from, fromErr := time.Parse(time.RFC3339, query.Get("from"))
+		to, toErr := time.Parse(time.RFC3339, query.Get("to"))
+		if fromErr != nil || toErr != nil {
+			writeSocialProblem(w, social.ErrInvalid)
+			return
+		}
+		result, err = handler.service.Store().Content(request.Context(), from, to, query.Get("channel"), query.Get("status"))
 	case "/api/admin/social/posts":
 		if request.Method == http.MethodGet {
 			limit := 30
@@ -127,6 +140,15 @@ func (handler socialHandler) serve(w http.ResponseWriter, request *http.Request)
 					return
 				}
 				result, err = handler.service.Render(request.Context(), id, actor)
+			case "review":
+				var input struct{}
+				if decodeJSON(request, &input) != nil {
+					writeSocialProblem(w, social.ErrInvalid)
+					return
+				}
+				request, cancel := inferenceRequest(w, request)
+				defer cancel()
+				result, err = handler.service.Review(request.Context(), id, actor)
 			case "approve":
 				var input struct {
 					ScheduledFor *time.Time `json:"scheduled_for"`

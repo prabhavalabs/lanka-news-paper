@@ -6,13 +6,16 @@ export function runeLimitError(value: string, limit: number) {
   return !value.trim() ? 'Required.' : runeCount(value.trim()) > limit ? `Use at most ${limit} characters.` : null
 }
 
+// Public reader origins: the Thulawa domain, plus the previous domain while it still serves.
+const publicOrigins = ['https://thulawanews.com', 'https://www.thulawanews.com', 'https://lankanewspaper.prabhavalabs.com']
+
 export function parseSocialSubject(value: string, kind: 'event' | 'article') {
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   const input = value.trim()
   if (uuid.test(input)) return kind === 'event' ? { event_id: input } : { article_id: input }
   try {
-    const url = new URL(input, 'https://lankanewspaper.prabhavalabs.com')
-    if (url.origin !== 'https://lankanewspaper.prabhavalabs.com') return null
+    const url = new URL(input, 'https://thulawanews.com')
+    if (!publicOrigins.includes(url.origin)) return null
     const match = /^\/(e|a)\/([^/]+)\/?$/.exec(url.pathname)
     if (!match || !match[2] || !uuid.test(match[2])) return null
     return match[1] === 'e' ? { event_id: match[2] } : { article_id: match[2] }

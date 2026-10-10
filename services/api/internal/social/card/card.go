@@ -29,16 +29,31 @@ const (
 )
 
 type Spectrum struct{ Left, Center, Right int }
+
+// SourceMark places one credited source on the card's coverage spectrum.
+type SourceMark struct {
+	Name     string
+	Logo     []byte   // optional publisher logo; shown only for allowed image types
+	LogoType string   // MIME type of Logo
+	Lean     *float64 // -1 (left) .. 1 (right); nil when the source's coverage was not analysed
+}
+
 type Card struct {
 	Kind        Kind
 	Kicker      string
 	Headline    string
 	Summary     string
 	Sources     []string
+	Marks       []SourceMark // optional; replaces Sources in the coverage section when set
 	SourceCount int
 	Spectrum    *Spectrum
 	PublishedAt time.Time
+	SiteURL     string // optional footer link; empty shows the brand name instead
 }
+
+// ScaleFactor renders cards at twice their CSS size (2160×2700) so text stays sharp after Facebook recompresses them.
+const ScaleFactor = 2
+
 type Renderer interface {
 	Render(context.Context, Card) ([]byte, error)
 }
@@ -74,6 +89,17 @@ func Validate(c Card) error {
 	for _, s := range c.Sources {
 		if strings.TrimSpace(s) == "" {
 			return fmt.Errorf("source names must not be empty")
+		}
+	}
+	if len(c.Marks) > c.SourceCount {
+		return fmt.Errorf("source count must cover the source marks")
+	}
+	for _, m := range c.Marks {
+		if strings.TrimSpace(m.Name) == "" {
+			return fmt.Errorf("source names must not be empty")
+		}
+		if m.Lean != nil && (*m.Lean < -1 || *m.Lean > 1) {
+			return fmt.Errorf("source lean must be -1..1")
 		}
 	}
 	if c.Spectrum != nil {
@@ -174,7 +200,7 @@ func (r *ChromeRenderer) Render(ctx context.Context, c Card) ([]byte, error) {
 		if _, err := cdp.Call(ctx, t, fetch.Enable, fetch.EnableParams{}); err != nil {
 			return err
 		}
-		if _, err := cdp.Call(ctx, t, emulation.SetDeviceMetricsOverride, emulation.SetDeviceMetricsOverrideParams{Width: 1080, Height: 1350, DeviceScaleFactor: 1, Mobile: false}); err != nil {
+		if _, err := cdp.Call(ctx, t, emulation.SetDeviceMetricsOverride, emulation.SetDeviceMetricsOverrideParams{Width: 1080, Height: 1350, DeviceScaleFactor: ScaleFactor, Mobile: false}); err != nil {
 			return err
 		}
 		tree, err := cdp.Call(ctx, t, page.GetFrameTree, cdp.Empty{})

@@ -232,6 +232,8 @@ type SocialConfig struct {
 	TokenKey      []byte
 	PublicBaseURL string
 	ChromePath    string
+	// IncludeLink adds the public story link to captions and cards. Off until the public domain is ready.
+	IncludeLink bool
 }
 
 func (config SocialConfig) Configured() bool {
@@ -241,11 +243,11 @@ func (config SocialConfig) Configured() bool {
 func loadSocialConfig(lookup LookupFunc, environment, newsletterBaseURL string) (SocialConfig, error) {
 	redirect := "http://127.0.0.1:5174/api/admin/social/facebook/callback"
 	if environment == "production" {
-		redirect = "https://admin.lankanewspaper.prabhavalabs.com/api/admin/social/facebook/callback"
+		redirect = "https://admin.thulawanews.com/api/admin/social/facebook/callback"
 	}
 	base := newsletterBaseURL
 	if base == "" {
-		base = "https://lankanewspaper.prabhavalabs.com"
+		base = "https://thulawanews.com"
 	}
 	configured := SocialConfig{
 		AppID: strings.TrimSpace(lookup("SNAP_META_APP_ID")), AppSecret: strings.TrimSpace(lookup("SNAP_META_APP_SECRET")),
@@ -254,6 +256,13 @@ func loadSocialConfig(lookup LookupFunc, environment, newsletterBaseURL string) 
 		GraphVersion:  valueOrDefault(lookup("SNAP_META_GRAPH_VERSION"), "v26.0"),
 		PublicBaseURL: strings.TrimRight(valueOrDefault(lookup("SNAP_SOCIAL_PUBLIC_BASE_URL"), base), "/"),
 		ChromePath:    strings.TrimSpace(lookup("SNAP_SOCIAL_CHROME_PATH")),
+	}
+	if value := strings.TrimSpace(lookup("SNAP_SOCIAL_INCLUDE_LINK")); value != "" {
+		include, err := strconv.ParseBool(value)
+		if err != nil {
+			return SocialConfig{}, fmt.Errorf("SNAP_SOCIAL_INCLUDE_LINK must be a boolean")
+		}
+		configured.IncludeLink = include
 	}
 	if value := strings.TrimSpace(lookup("SNAP_SOCIAL_TOKEN_KEY")); value != "" {
 		key, err := base64.StdEncoding.DecodeString(value)

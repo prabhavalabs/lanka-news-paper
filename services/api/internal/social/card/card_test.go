@@ -59,12 +59,12 @@ func TestHTML(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"&lt;script&gt;", "&lt;img", "A &amp; B", "&lt;b&gt;credit&lt;/b&gt;", "+7", "BREAKING", "විශේෂ පුවත්", "2026.10.10 · 05:30", "data:font/woff2;base64,", "font-src data:", "වම 25%"} {
+	for _, want := range []string{"&lt;script&gt;", "&lt;img", "A &amp; B", "&lt;b&gt;credit&lt;/b&gt;", "+6", "BREAKING", "විශේෂ පුවත්", "2026.10.10 · 05:30", "data:font/woff2;base64,", "font-src data:", "<b>වම</b>25%", "මධ්‍යම", `<img alt="තුලාව`, "data:image/png;base64,"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	for _, bad := range []string{"<script>", "<img src=", "hidden</span>", "ZgotmplZ"} {
+	for _, bad := range []string{"<script>", `<img src="https://invalid.test"`, "ZgotmplZ", "lankanewspaper"} {
 		if strings.Contains(html, bad) {
 			t.Errorf("unexpected %q", bad)
 		}
@@ -103,7 +103,7 @@ func TestChromeRender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.Width != 1080 || config.Height != 1350 {
+	if config.Width != 1080*ScaleFactor || config.Height != 1350*ScaleFactor {
 		t.Fatalf("dimensions %dx%d", config.Width, config.Height)
 	}
 }
@@ -153,5 +153,60 @@ func TestOptions(t *testing.T) {
 	}
 	if _, err := NewChromeRenderer(Options{ChromePath: "/missing/chrome"}); err == nil {
 		t.Fatal("missing executable accepted")
+	}
+}
+
+func TestCoverageSpectrum(t *testing.T) {
+	lean := func(v float64) *float64 { return &v }
+	c := sampleCard()
+	c.Spectrum = &Spectrum{20, 60, 20}
+	c.Marks = []SourceMark{
+		{Name: "Right", Lean: lean(0.8)},
+		{Name: "Left", Lean: lean(-1)},
+		{Name: "Centre A", Lean: lean(0), Logo: []byte("png"), LogoType: "image/png"},
+		{Name: "Centre B", Lean: lean(0.02)},
+		{Name: "Unknown"},
+		{Name: "Script", Logo: []byte("<svg/>"), LogoType: "text/html"},
+	}
+	c.Sources = nil
+	c.SourceCount = 14
+	view := coverage(c)
+	if len(view.Placed) != 4 || len(view.Unrated) != 2 || view.More != 8 {
+		t.Fatalf("placed=%d unrated=%d more=%d", len(view.Placed), len(view.Unrated), view.More)
+	}
+	names := []string{}
+	for _, m := range view.Placed {
+		names = append(names, m.Name)
+	}
+	if strings.Join(names, ",") != "Left,Centre A,Centre B,Right" {
+		t.Fatalf("order %v", names)
+	}
+	left, a, b, right := view.Placed[0], view.Placed[1], view.Placed[2], view.Placed[3]
+	if left.Target != 0 || left.X != 0 || a.Target != 476 || right.Target != 857 {
+		t.Fatalf("targets %+v", view.Placed)
+	}
+	if b.X-a.X < tileWidth || a.Center > 476 || b.Center < 476 || right.X+tileWidth > spectrumWidth {
+		t.Fatalf("tiles overlap or leave the card: %+v", view.Placed)
+	}
+	if a.Logo != "data:image/png;base64,cG5n" || view.Unrated[1].Logo != "" || view.Unrated[1].Initial != "S" {
+		t.Fatalf("unexpected logos: %+v %+v", view.Placed, view.Unrated)
+	}
+	html, err := renderHTML(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"තුලාව · THULAWA NEWS", "විශ්ලේෂණය නොකළ", `<line x1="`, "+8"} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("missing %q", want)
+		}
+	}
+	c.SiteURL = "thulawa.example/e/1"
+	if html, _ = renderHTML(c); !strings.Contains(html, "thulawa.example/e/1") {
+		t.Fatal("missing site URL")
+	}
+	bad := -1.5
+	c.Marks[0].Lean = &bad
+	if Validate(c) == nil {
+		t.Fatal("out-of-range lean accepted")
 	}
 }

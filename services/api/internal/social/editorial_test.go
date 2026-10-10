@@ -14,6 +14,7 @@ import (
 func TestCaptionCreditsAndHashtags(t *testing.T) {
 	caption := BuildCaption("පුවත මෙන්න.", []string{"A", "B"}, "https://news.invalid/e/one", []string{"#News", "පුවත්", "bad tag", "News", "Extra"})
 	require.Equal(t, "පුවත මෙන්න.\n\nමූලාශ්‍ර: A, B\n\nhttps://news.invalid/e/one\n\n#News #පුවත් #Extra", caption)
+	require.Equal(t, "පුවත මෙන්න.\n\nමූලාශ්‍ර: A, B\n\n#News", BuildCaption("පුවත මෙන්න.", []string{"A", "B"}, "", []string{"News"}))
 }
 
 func TestEditorialValidation(t *testing.T) {
@@ -43,14 +44,24 @@ func TestRankingAndSkippedReevaluation(t *testing.T) {
 }
 
 type editorialModel struct {
-	response   llm.Response
-	err        error
-	request    llm.Request
-	calls      int
-	onComplete func()
+	response    llm.Response
+	err         error
+	request     llm.Request
+	calls       int
+	onComplete  func()
+	review      llm.Response // social_post_review answer; empty means a clean pass
+	reviewErr   error
+	reviewCalls int
 }
 
 func (model *editorialModel) Complete(_ context.Context, request llm.Request) (llm.Response, error) {
+	if request.Task == "social_post_review" {
+		model.reviewCalls++
+		if model.review.Provider == "" && model.reviewErr == nil {
+			return llm.Response{Provider: "codex_cli", Text: `{"pass":true,"score":95,"summary":"Meets the standards.","issues":[]}`}, nil
+		}
+		return model.review, model.reviewErr
+	}
 	model.request = request
 	model.calls++
 	if model.onComplete != nil {

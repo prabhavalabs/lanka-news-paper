@@ -107,6 +107,14 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// Auto-approved posts are uploaded promptly, and refreshed event coverage triggers an
+	// early (debounced) social selection run instead of waiting for the 15-minute schedule.
+	socialService.SetEnqueuers(func(ctx context.Context) error { return jobs.EnqueueSocialSelection(ctx, client) }, func(ctx context.Context) error { return jobs.EnqueueSocialPublisher(ctx, client) })
+	pipelineStore.OnEventSynthesized(func(ctx context.Context, eventID string) {
+		if err := jobs.EnqueueSocialRealtime(ctx, client); err != nil {
+			logger.Warn("social realtime selection not enqueued", "event_id", eventID, "error", err)
+		}
+	})
 	poller.SetArticlePipeline(func(ctx context.Context, articleID string) error {
 		runID, err := pipelineStore.Start(ctx, articleID, "ingestion")
 		if err != nil {

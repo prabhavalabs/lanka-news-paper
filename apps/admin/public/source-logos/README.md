@@ -11,6 +11,7 @@ These local copies avoid low-resolution favicons and third-party hotlink failure
 | `dasatha-lanka-news.webp` | https://dasathalankanews.com/wp-content/uploads/2022/05/Dasatha-Lanka-News-Desktop-Logo.webp |
 | `divaina.png` | https://www.divaina.lk/wp-content/uploads/2025/05/cropped-divaina-favicon.png |
 | `itn-news.png` | https://www.itnnews.lk/wp-content/uploads/2024/03/cropped-Favicon.png |
+| `hiru-news.png` | https://hirunews.lk/revampDesign/assets/logos/logo-3.png |
 | `info-sri-lanka.webp` | https://www.infosrilanka.lk/wp-content/uploads/2025/03/cropped-infosrilanka_favicon.webp |
 | `lnw-sinhala.png` | https://sinhala.lankanewsweb.net/wp-content/uploads/2025/12/lnw-logo-e1631940041581.png |
 | `lankasara.png` | https://lankasara.com/wp-content/uploads/2020/05/cropped-favicon-1-270x270.png |

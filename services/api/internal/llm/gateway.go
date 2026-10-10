@@ -411,6 +411,10 @@ var taskDefinitions = map[string]struct{ name, purpose string }{
 		name:    "Social post editorial",
 		purpose: "Selects public-interest stories and writes original Sinhala Facebook Page posts.",
 	},
+	"social_post_review": {
+		name:    "Social post quality review",
+		purpose: "Checks drafted social posts against the evidence and newsroom standards before automatic publishing.",
+	},
 	"newsletter_editorial": {
 		name:    "Morning newsletter",
 		purpose: "Prepares the last-24-hours email edition from approved published stories.",
@@ -420,7 +424,7 @@ var taskDefinitions = map[string]struct{ name, purpose string }{
 var orderedTasks = []string{
 	"article_analysis", "content_cleaning", "article_summary", "classify", "event_synthesis",
 	"narration_framing", "admin_article_analysis", "watch_tower_retrieval",
-	"watch_tower_answer", "newsletter_editorial", "social_post_editorial",
+	"watch_tower_answer", "newsletter_editorial", "social_post_editorial", "social_post_review",
 }
 
 func (gateway *Gateway) ListProfiles(ctx context.Context) ([]TaskProfile, error) {
@@ -430,7 +434,7 @@ func (gateway *Gateway) ListProfiles(ctx context.Context) ([]TaskProfile, error)
 		WHERE task IN (
 		  'article_analysis', 'content_cleaning', 'article_summary', 'classify', 'event_synthesis',
 		  'narration_framing', 'admin_article_analysis', 'watch_tower_retrieval',
-		  'watch_tower_answer', 'newsletter_editorial', 'social_post_editorial'
+		  'watch_tower_answer', 'newsletter_editorial', 'social_post_editorial', 'social_post_review'
 		)
 		  AND provider_id = 'codex_cli'
 		ORDER BY task

@@ -71,7 +71,17 @@ func (service *Service) RunSelection(ctx context.Context, actor uuid.UUID) error
 	return service.enqueueSelection(ctx)
 }
 
-func (service *Service) Select(ctx context.Context) error {
+// Triggers record why a selection ran: the periodic schedule or new coverage arriving.
+const (
+	TriggerScheduled = "scheduled"
+	TriggerRealtime  = "realtime"
+	TriggerManual    = "manual"
+)
+
+func (service *Service) Select(ctx context.Context, trigger string) error {
+	if trigger != TriggerRealtime {
+		trigger = TriggerScheduled
+	}
 	if err := service.clearExpiredStates(ctx); err != nil {
 		return err
 	}
@@ -79,7 +89,7 @@ func (service *Service) Select(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !settings.Enabled {
+	if !settings.Enabled || (trigger == TriggerRealtime && !settings.RealtimeEnabled) {
 		return nil
 	}
 	candidates, err := service.store.Candidates(ctx, settings, service.now(), service.config.PublicBaseURL, "", "")
@@ -89,7 +99,7 @@ func (service *Service) Select(ctx context.Context) error {
 	if len(candidates) == 0 {
 		return nil
 	}
-	_, err = service.createFromCandidates(ctx, candidates, settings, false, uuid.Nil)
+	_, err = service.createFromCandidates(ctx, candidates, settings, trigger, uuid.Nil)
 	if errors.Is(err, ErrModelUnavailable) {
 		return nil
 	}
@@ -111,7 +121,7 @@ func (service *Service) ManualPost(ctx context.Context, eventID, articleID strin
 	if len(candidates) == 0 {
 		return Post{}, fmt.Errorf("%w: subject is unavailable, has no approved summary, or already has a queued post", ErrConflict)
 	}
-	posts, err := service.createFromCandidates(ctx, candidates, settings, true, actor)
+	posts, err := service.createFromCandidates(ctx, candidates, settings, TriggerManual, actor)
 	if err != nil {
 		return Post{}, err
 	}
@@ -121,7 +131,11 @@ func (service *Service) ManualPost(ctx context.Context, eventID, articleID strin
 	return posts[0], nil
 }
 
-func (service *Service) createFromCandidates(ctx context.Context, candidates []Candidate, settings Settings, manual bool, actor uuid.UUID) ([]Post, error) {
+// createFromCandidates drafts posts and runs each through the AI quality gate. Nothing is
+// approved at insert time: a post becomes approved only when auto-publish is on and its
+// review passes. Every other outcome waits in pending_review for an editor.
+func (service *Service) createFromCandidates(ctx context.Context, candidates []Candidate, settings Settings, trigger string, actor uuid.UUID) ([]Post, error) {
+	manual := trigger == TriggerManual
 	items, callID, err := service.editorial(ctx, candidates)
 	if err != nil {
 		return nil, err
@@ -141,11 +155,8 @@ func (service *Service) createFromCandidates(ctx context.Context, candidates []C
 			status = "pending_review"
 		} else if item.Publish && item.Score >= settings.MinScore {
 			status = "pending_review"
-			if settings.AutoPublish {
-				status = "approved"
-			}
 		}
-		p, err := service.insertPost(ctx, candidate, item, status, callID, manual, actor)
+		p, err := service.insertPost(ctx, candidate, item, status, callID, trigger, actor)
 		if errors.Is(err, ErrConflict) {
 			continue
 		}
@@ -154,6 +165,12 @@ func (service *Service) createFromCandidates(ctx context.Context, candidates []C
 		}
 		if status != "skipped" {
 			_ = service.render(ctx, p.ID, uuid.Nil)
+			_, result, reviewErr := service.review(ctx, p.ID)
+			if reviewErr == nil && !manual && settings.AutoPublish && approvable(result, settings.MinReviewScore) {
+				if approved, err := service.store.autoApprove(ctx, p.ID, service.now()); err == nil && approved && service.enqueuePublisher != nil {
+					_ = service.enqueuePublisher(ctx)
+				}
+			}
 			p, err = service.store.GetPost(ctx, p.ID)
 			if err != nil {
 				return posts, err
@@ -164,7 +181,8 @@ func (service *Service) createFromCandidates(ctx context.Context, candidates []C
 	return posts, nil
 }
 
-func (service *Service) insertPost(ctx context.Context, candidate Candidate, item editorialItem, status string, callID *int64, manual bool, actor uuid.UUID) (Post, error) {
+func (service *Service) insertPost(ctx context.Context, candidate Candidate, item editorialItem, status string, callID *int64, trigger string, actor uuid.UUID) (Post, error) {
+	manual := trigger == TriggerManual
 	tx, err := service.store.pool.Begin(ctx)
 	if err != nil {
 		return Post{}, err
@@ -192,16 +210,6 @@ func (service *Service) insertPost(ctx context.Context, candidate Candidate, ite
 			return Post{}, err
 		}
 	}
-	if status == "approved" && !manual {
-		var autoPublish bool
-		if err = tx.QueryRow(ctx, `SELECT enabled AND auto_publish FROM social_settings WHERE singleton FOR SHARE`).Scan(&autoPublish); err != nil {
-			return Post{}, err
-		}
-		// A long editorial call must not bypass an administrator who has since disabled auto-publish.
-		if !autoPublish {
-			status = "pending_review"
-		}
-	}
 	id := uuid.NewString()
 	kind := "top_story"
 	if candidate.Breaking {
@@ -223,12 +231,16 @@ func (service *Service) insertPost(ctx context.Context, candidate Candidate, ite
 	if manual {
 		creator = actor.String()
 	}
-	caption := BuildCaption(item.CaptionSI, candidate.SourceNames, candidate.LinkURL, item.Hashtags)
+	link := ""
+	if service.config.IncludeLink {
+		link = candidate.LinkURL
+	}
+	caption := BuildCaption(item.CaptionSI, candidate.SourceNames, link, item.Hashtags)
 	_, err = tx.Exec(ctx, `INSERT INTO social_posts (id,subject_kind,event_id,article_id,status,score,selection_reason,kind,
  headline_si,summary_si,caption,hashtags,link_url,source_names,source_count,spectrum,scheduled_for,approved_at,llm_call_id,
- evaluated_source_count,evaluated_breaking,created_by,evidence_article_ids)
- VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$15,$20,$21,$22)`,
-		id, candidate.SubjectKind, eventID, articleID, status, item.Score, item.Reason, kind, item.HeadlineSI, item.SummarySI, caption, item.Hashtags, candidate.LinkURL, candidate.SourceNames, candidate.SourceCount, candidate.Spectrum, scheduled, approved, callID, candidate.Breaking, creator, candidate.EvidenceArticleIDs)
+ evaluated_source_count,evaluated_breaking,created_by,evidence_article_ids,trigger)
+ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$15,$20,$21,$22,$23)`,
+		id, candidate.SubjectKind, eventID, articleID, status, item.Score, item.Reason, kind, item.HeadlineSI, item.SummarySI, caption, item.Hashtags, candidate.LinkURL, candidate.SourceNames, candidate.SourceCount, candidate.Spectrum, scheduled, approved, callID, candidate.Breaking, creator, candidate.EvidenceArticleIDs, trigger)
 	if err != nil {
 		return Post{}, storeError(err)
 	}

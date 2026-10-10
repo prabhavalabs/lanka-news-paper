@@ -161,7 +161,7 @@ func TestSocialSelectionStoreIntegration(t *testing.T) {
 	require.Contains(t, candidates[0].Summary, "සාරාංශය")
 	service := integrationService(t, store, fakeRenderer{}, now)
 	item := editorialItem{ID: event, Score: 30, Reason: "Coverage is limited", Hashtags: []string{}}
-	p, err := service.insertPost(ctx, candidates[0], item, "skipped", nil, false, uuid.Nil)
+	p, err := service.insertPost(ctx, candidates[0], item, "skipped", nil, TriggerScheduled, uuid.Nil)
 	require.NoError(t, err)
 	require.Equal(t, 2, p.EvaluatedSourceCount)
 	candidates, err = store.Candidates(ctx, settings, now, "https://news.invalid", "", "")
@@ -172,7 +172,7 @@ func TestSocialSelectionStoreIntegration(t *testing.T) {
 	candidates, err = store.Candidates(ctx, settings, now, "https://news.invalid", "", "")
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
-	_, err = service.insertPost(ctx, candidates[0], item, "skipped", nil, false, uuid.Nil)
+	_, err = service.insertPost(ctx, candidates[0], item, "skipped", nil, TriggerScheduled, uuid.Nil)
 	require.NoError(t, err)
 	candidates, err = store.Candidates(ctx, settings, now, "https://news.invalid", "", "")
 	require.NoError(t, err)
@@ -184,7 +184,7 @@ func TestSocialSelectionStoreIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 	require.Equal(t, 4, candidates[0].SourceCount)
-	p, err = service.insertPost(ctx, candidates[0], editorialItem{ID: event, Score: 80, Reason: "Public interest", HeadlineSI: "සිංහල පුවත", SummarySI: "පුවත් සාරාංශය", CaptionSI: "පුවත මෙන්න.", Hashtags: []string{}}, "pending_review", nil, false, uuid.Nil)
+	p, err = service.insertPost(ctx, candidates[0], editorialItem{ID: event, Score: 80, Reason: "Public interest", HeadlineSI: "සිංහල පුවත", SummarySI: "පුවත් සාරාංශය", CaptionSI: "පුවත මෙන්න.", Hashtags: []string{}}, "pending_review", nil, TriggerScheduled, uuid.Nil)
 	require.NoError(t, err)
 	candidates, err = store.Candidates(ctx, settings, now, "https://news.invalid", "", "")
 	require.NoError(t, err)
@@ -320,7 +320,7 @@ func publisherFixture(t *testing.T) (*Service, Post, uuid.UUID) {
 	fixtureEvent(t, store, 2, now)
 	candidates, err := store.Candidates(ctx, settings, now, "https://news.invalid", "", "")
 	require.NoError(t, err)
-	p, err := service.insertPost(ctx, candidates[0], editorialItem{Score: 80, Reason: "Important", HeadlineSI: "පුවත", SummarySI: "සාරාංශය", CaptionSI: "පුවත මෙන්න.", Hashtags: []string{}}, "pending_review", nil, false, uuid.Nil)
+	p, err := service.insertPost(ctx, candidates[0], editorialItem{Score: 80, Reason: "Important", HeadlineSI: "පුවත", SummarySI: "සාරාංශය", CaptionSI: "පුවත මෙන්න.", Hashtags: []string{}}, "pending_review", nil, TriggerScheduled, uuid.Nil)
 	require.NoError(t, err)
 	p, err = service.Render(ctx, p.ID, actor)
 	require.NoError(t, err)
@@ -416,7 +416,7 @@ func TestSocialPublisherConcurrencyAndCapsIntegration(t *testing.T) {
 	candidates, err := service.store.Candidates(ctx, settings, service.now(), "https://news.invalid", event, "")
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
-	second, err := service.insertPost(ctx, candidates[0], editorialItem{Score: 90, Reason: "Second story", HeadlineSI: "පුවත", SummarySI: "සාරාංශය", CaptionSI: "පුවත මෙන්න.", Hashtags: []string{}}, "approved", nil, false, uuid.Nil)
+	second, err := service.insertPost(ctx, candidates[0], editorialItem{Score: 90, Reason: "Second story", HeadlineSI: "පුවත", SummarySI: "සාරාංශය", CaptionSI: "පුවත මෙන්න.", Hashtags: []string{}}, "approved", nil, TriggerScheduled, uuid.Nil)
 	require.NoError(t, err)
 	require.NoError(t, service.render(ctx, second.ID, uuid.Nil))
 	require.NoError(t, service.Publish(ctx))
@@ -466,7 +466,7 @@ func TestSocialSelectionBatchAndUnavailableModelIntegration(t *testing.T) {
 	first := fixtureEvent(t, store, 2, now)
 	second := fixtureEvent(t, store, 3, now)
 	service.model = &editorialModel{response: llm.Response{Provider: "none"}}
-	require.NoError(t, service.Select(ctx))
+	require.NoError(t, service.Select(ctx, TriggerScheduled))
 	var count int
 	err = store.pool.QueryRow(ctx, `SELECT count(*)::int FROM social_posts`).Scan(&count)
 	require.NoError(t, err)
@@ -477,12 +477,12 @@ func TestSocialSelectionBatchAndUnavailableModelIntegration(t *testing.T) {
 	settings.Enabled = false
 	_, err = store.UpdateSettings(ctx, settings, actor)
 	require.NoError(t, err)
-	require.NoError(t, service.Select(ctx))
+	require.NoError(t, service.Select(ctx, TriggerScheduled))
 	require.Zero(t, model.calls)
 	settings.Enabled = true
 	_, err = store.UpdateSettings(ctx, settings, actor)
 	require.NoError(t, err)
-	require.NoError(t, service.Select(ctx))
+	require.NoError(t, service.Select(ctx, TriggerScheduled))
 	require.Equal(t, 1, model.calls)
 	var input []Candidate
 	require.NoError(t, json.Unmarshal([]byte(model.request.Input), &input))
@@ -495,7 +495,7 @@ func TestSocialSelectionBatchAndUnavailableModelIntegration(t *testing.T) {
 	skipped, err := store.ListPosts(ctx, "skipped", 10, "")
 	require.NoError(t, err)
 	require.Len(t, skipped.Items, 1)
-	require.NoError(t, service.Select(ctx))
+	require.NoError(t, service.Select(ctx, TriggerScheduled))
 	err = store.pool.QueryRow(ctx, `SELECT count(*)::int FROM social_posts`).Scan(&count)
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
@@ -558,7 +558,7 @@ func TestSocialRateLimitPausesOtherQueuedPostsIntegration(t *testing.T) {
 	candidates, err := service.store.Candidates(ctx, settings, service.now(), "https://news.invalid", "", "")
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
-	p, err := service.insertPost(ctx, candidates[0], editorialItem{Score: 80, Reason: "Important", HeadlineSI: "පුවත", SummarySI: "සාරාංශය", CaptionSI: "පුවත", Hashtags: []string{}}, "pending_review", nil, false, uuid.Nil)
+	p, err := service.insertPost(ctx, candidates[0], editorialItem{Score: 80, Reason: "Important", HeadlineSI: "පුවත", SummarySI: "සාරාංශය", CaptionSI: "පුවත", Hashtags: []string{}}, "pending_review", nil, TriggerScheduled, uuid.Nil)
 	require.NoError(t, err)
 	p, err = service.Render(ctx, p.ID, actor)
 	require.NoError(t, err)
@@ -593,7 +593,7 @@ func TestSocialPublisherChecksEveryEvidenceArticleIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 	require.Len(t, candidates[0].EvidenceArticleIDs, 3)
-	p, err := service.insertPost(ctx, candidates[0], editorialItem{Score: 80, Reason: "Important", HeadlineSI: "පුවත", SummarySI: "සාරාංශය", CaptionSI: "පුවත", Hashtags: []string{}}, "pending_review", nil, false, uuid.Nil)
+	p, err := service.insertPost(ctx, candidates[0], editorialItem{Score: 80, Reason: "Important", HeadlineSI: "පුවත", SummarySI: "සාරාංශය", CaptionSI: "පුවත", Hashtags: []string{}}, "pending_review", nil, TriggerScheduled, uuid.Nil)
 	require.NoError(t, err)
 	_, err = service.Render(ctx, p.ID, actor)
 	require.NoError(t, err)
@@ -629,11 +629,67 @@ func TestSocialAutoPublishDisabledDuringEditorialIntegration(t *testing.T) {
 		_, err := store.UpdateSettings(ctx, settings, actor)
 		require.NoError(t, err)
 	}}
-	require.NoError(t, service.Select(ctx))
+	require.NoError(t, service.Select(ctx, TriggerScheduled))
 	posts, err := store.ListPosts(ctx, "", 10, "")
 	require.NoError(t, err)
 	require.Len(t, posts.Items, 1)
 	require.Equal(t, "pending_review", posts.Items[0].Status)
 	require.Nil(t, posts.Items[0].ApprovedAt)
 	require.Nil(t, posts.Items[0].ScheduledFor)
+}
+
+func TestSocialReviewGateIntegration(t *testing.T) {
+	store := integrationStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	service := integrationService(t, store, fakeRenderer{}, now)
+	actor := adminActor(t, store)
+	settings := testSettings()
+	settings.AutoPublish = true
+	_, err := store.UpdateSettings(ctx, settings, actor)
+	require.NoError(t, err)
+	cases := []struct {
+		name       string
+		review     llm.Response
+		err        error
+		status     string
+		wantReview string
+	}{
+		{"passes", llm.Response{}, nil, "approved", "passed"},
+		{"fails", llm.Response{Provider: "codex_cli", Text: `{"pass":false,"score":40,"summary":"Allegation stated as fact.","issues":[{"severity":"blocker","field":"headline","message":"Attribute the allegation."}]}`}, nil, "pending_review", "failed"},
+		{"low score", llm.Response{Provider: "codex_cli", Text: `{"pass":true,"score":60,"summary":"Weak Sinhala.","issues":[]}`}, nil, "pending_review", "failed"},
+		{"unavailable", llm.Response{Provider: "none"}, nil, "pending_review", "unavailable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			id := fixtureEvent(t, store, 2, now)
+			text := fmt.Sprintf(`{"items":[{"id":%q,"score":90,"publish":true,"reason":"Important","headline_si":"පුවත","summary_si":"සාරාංශය","caption_si":"පුවත මෙන්න.","hashtags":[]}]}`, id)
+			model := &editorialModel{response: llm.Response{Provider: "codex_cli", Text: text}, review: tc.review, reviewErr: tc.err}
+			service.model = model
+			require.NoError(t, service.Select(ctx, TriggerRealtime))
+			require.Equal(t, 1, model.reviewCalls)
+			var postID string
+			require.NoError(t, store.pool.QueryRow(ctx, `SELECT id::text FROM social_posts WHERE event_id=$1`, id).Scan(&postID))
+			p, err := store.GetPost(ctx, postID)
+			require.NoError(t, err)
+			require.Equal(t, tc.status, p.Status)
+			require.Equal(t, tc.wantReview, p.ReviewStatus)
+			require.Equal(t, TriggerRealtime, p.Trigger)
+			require.Equal(t, "facebook", p.Channel)
+			require.NotNil(t, p.ReviewedAt)
+			if tc.status == "approved" {
+				require.NotNil(t, p.ScheduledFor)
+			} else {
+				require.Nil(t, p.ApprovedAt)
+			}
+		})
+	}
+	settings.RealtimeEnabled = false
+	_, err = store.UpdateSettings(ctx, settings, actor)
+	require.NoError(t, err)
+	model := &editorialModel{response: llm.Response{Provider: "codex_cli", Text: `{"items":[]}`}}
+	service.model = model
+	fixtureEvent(t, store, 2, now)
+	require.NoError(t, service.Select(ctx, TriggerRealtime))
+	require.Zero(t, model.calls, "realtime runs are ignored when turned off")
 }

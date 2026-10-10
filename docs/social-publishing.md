@@ -2,7 +2,20 @@
 
 The backend prepares original Sinhala image posts from publishable news evidence. Selection runs every 15 minutes, makes one `social_post_editorial` gateway call for the batch, and writes a review queue. Publishing checks the queue every three minutes and is also enqueued after approval. Both settings `enabled` and `auto_publish` default to false. Enabling selection alone keeps human approval required.
 
-Cards contain our headline, summary, source credits and optional coverage spectrum. Captions credit the sources and link to our `/e/{eventId}` or `/a/{articleId}` page. Publisher images and verbatim publisher text are never used. The card renderer returns a 1080×1350 PNG; media storage saves it as `social/posts/{postId}.png`. Facebook receives the bytes through a multipart `/photos` upload, so media need not be public. The API and worker must share local media storage, or both use the same R2 bucket.
+Cards contain our headline, summary and the credited sources placed on the coverage spectrum (left, centre and right by each source's average analysed lean; unanalysed sources are listed separately). Publisher logos come from the bundled copies in `services/api/internal/social/assets/source-logos` or local media storage; remote logo URLs are not fetched, so those sources show their initial. Captions credit the sources and, when `SNAP_SOCIAL_INCLUDE_LINK` is true, link to our `/e/{eventId}` or `/a/{articleId}` page. Cards render at 2× (2160×2700) so text stays sharp after Facebook recompresses the image. Publisher images and verbatim publisher text are never used. The card renderer returns a 1080×1350 PNG; media storage saves it as `social/posts/{postId}.png`. Facebook receives the bytes through a multipart `/photos` upload, so media need not be public. The API and worker must share local media storage, or both use the same R2 bucket.
+
+## Automated pipeline
+
+The pipeline can run end to end without a person, but nothing publishes unless an AI quality review passes it.
+
+1. **Arrival.** When an article's event synthesis is refreshed, the worker schedules a selection run two minutes later (`trigger: realtime`). Runs are unique per queue, so a burst of coverage produces one run. The 15-minute periodic run continues as a safety net (`trigger: scheduled`). Turn the arrival trigger off with `realtime_enabled`.
+2. **Selection.** Candidates are recent breaking events or events covered by at least two sources. The editorial model (`social_post_editorial`) scores public interest and writes the Sinhala headline, summary and caption. Items below `min_score` are recorded as `skipped`.
+3. **Draft.** Selected items are inserted as `pending_review` and the card is rendered. No post is approved at insert time.
+4. **AI quality review.** A second model call (`social_post_review`) checks the post against the evidence (event synthesis and the evidence articles' summaries) for accuracy, attribution, neutrality, natural Sinhala, legal safety and completeness. It returns pass/fail, a 0–100 score, a summary and issues graded blocker, major or minor. The result is saved on the post (`review_status`, `review_score`, `review_summary`, `review_issues`).
+5. **Decision.** If `auto_publish` is on and the review passes (pass, score ≥ `min_review_score`, no blocker or major issue), the post is approved, scheduled immediately and the publisher is enqueued. `enabled` and `auto_publish` are re-checked under lock at that moment. Every other outcome, including a review that could not run, waits in `pending_review` with the reviewer's notes. Editing a post clears its review; editors can re-run it with **Run AI review**.
+6. **Publishing.** Caps, minimum gap and quiet hours still apply, as described below.
+
+Every post records its `channel` (currently only `facebook`) and its `trigger` (`scheduled`, `realtime` or `manual`). The admin **Content calendar** (`/social/content`) shows posts by the day they published, are scheduled, or were drafted, with a filterable content log and the channel list (Instagram, X, WhatsApp Channel and Telegram are listed as planned).
 
 ## Set up a new Meta Business app
 
@@ -11,7 +24,7 @@ This version is intended for the owner's own Page with a dedicated app kept in D
 1. Open [Meta for Developers](https://developers.facebook.com/apps/) with the Facebook user who manages the Page. Create a new app, select the **Business** app type / **Manage everything on your Page** use case, and enter an app name and contact address. Meta's dashboard may group these choices under use cases.
 2. In the app's basic settings, record the App ID and App Secret in the deployment environment. Keep the app in **Development** mode.
 3. Add **Facebook Login for Business**. In its settings, enable web OAuth login and add this exact **Valid OAuth Redirect URI**:
-   `https://admin.lankanewspaper.prabhavalabs.com/api/admin/social/facebook/callback`.
+   `https://admin.thulawanews.com/api/admin/social/facebook/callback`.
    Register any local callback separately when testing locally; local default is `http://127.0.0.1:5174/api/admin/social/facebook/callback`. Redirect URI, port, scheme and path must match the configured value exactly.
 4. Optionally create a Facebook Login for Business login configuration using a **User access token**, with `pages_show_list`, `pages_read_engagement` and `pages_manage_posts`. Assign the managed Page asset and content creation task. Put its configuration ID in `SNAP_META_LOGIN_CONFIG_ID`. Without this value, the authorization request asks for the three permissions using `scope`.
 5. Add the owner as an **app administrator**, accept any pending app-role invitation, and confirm that the same Facebook user has Page access that includes creating content / managing the Page. A user who only analyzes or advertises on the Page is insufficient.
@@ -33,7 +46,8 @@ All variables are optional. `configured` requires App ID, App Secret and a valid
 | `SNAP_META_LOGIN_CONFIG_ID` | Optional Business Login configuration ID |
 | `SNAP_META_GRAPH_VERSION` | `v26.0` |
 | `SNAP_SOCIAL_TOKEN_KEY` | Base64 encoded, exactly 32 decoded bytes; AES-256-GCM |
-| `SNAP_SOCIAL_PUBLIC_BASE_URL` | `SNAP_NEWSLETTER_BASE_URL`, otherwise `https://lankanewspaper.prabhavalabs.com` |
+| `SNAP_SOCIAL_INCLUDE_LINK` | `false`. When true, captions and cards include the public story link and caption edits must keep it. Leave off until the public domain is live. |
+| `SNAP_SOCIAL_PUBLIC_BASE_URL` | `SNAP_NEWSLETTER_BASE_URL`, otherwise `https://thulawanews.com` |
 | `SNAP_SOCIAL_CHROME_PATH` | Chrome/Chromium executable; production defaults to `/usr/bin/chromium`, local empty uses auto-detection |
 | `SNAP_SOCIAL_CHROME_NO_SANDBOX` | Production defaults to `true`; renderer parses a boolean, root always requires no sandbox |
 
@@ -96,6 +110,9 @@ Except the state-authenticated OAuth callback, all routes use existing admin ses
 - `POST /api/admin/social/posts/{id}/render`: `{}`; rendering errors remain visible on the returned post.
 - `POST /api/admin/social/posts`: exactly one of `{event_id}` or `{article_id}`; runs one editorial call and returns a review item.
 - `POST /api/admin/social/run-selection`: `{}`; returns 202 after enqueueing; disabled settings make the job a no-op.
+- `POST /api/admin/social/posts/{id}/review`: `{}`; re-runs the AI quality review on the current text. Never changes the post status.
+- `GET /api/admin/social/content?from=&to=&channel=&status=`: RFC3339 range (at most 400 days), up to 1,000 posts by calendar time, newest first.
+- `GET /api/admin/social/channels`: publishing channels and their status (`connected`, `needs_reconnect`, `disconnected` or `planned`).
 
 ## Security and verification
 
@@ -103,4 +120,4 @@ OAuth state is 32 random bytes; only SHA-256 is stored. It is bound to the signe
 
 Graph calls that use tokens send `appsecret_proof` (HMAC-SHA256 with the App Secret). Token-bearing redirects are refused; Page pagination uses Graph cursor values on the configured host. Stored/returned diagnostics exclude token values, OAuth codes and proof values. Callback redirects contain only a fixed error code or state row ID, never tokens. Administrator mutations write the existing audit log in the same transaction as the corresponding state change.
 
-Migration `000054_social_publishing` adds settings, encrypted accounts, single-use OAuth states, the post queue and indexes, and the editorial task/workflow profile. Down migration removes those objects and its workflow history. Migration `000055_social_publishing_safety` persists the account-wide rate-limit cooldown and the exact article IDs used as evidence. Posts created before that snapshot must be rejected and prepared again before publishing. Integration tests follow `SNAP_TEST_DATABASE_URL` and create temporary schemas that clone the migrated tables, keeping fixture settings, accounts, articles and posts isolated. Unit tests cover crypto, fake Graph responses/proofs, editorial validation/captions, ranking/dedupe and scheduling. No live Meta app connection or real upload is part of the automated tests.
+Migration `000054_social_publishing` adds settings, encrypted accounts, single-use OAuth states, the post queue and indexes, and the editorial task/workflow profile. Down migration removes those objects and its workflow history. Migration `000056_social_automation` adds `realtime_enabled` and `min_review_score` settings, the post `channel`, `trigger` and review columns, a calendar index, and the `social_post_review` task/workflow profile. Migration `000055_social_publishing_safety` persists the account-wide rate-limit cooldown and the exact article IDs used as evidence. Posts created before that snapshot must be rejected and prepared again before publishing. Integration tests follow `SNAP_TEST_DATABASE_URL` and create temporary schemas that clone the migrated tables, keeping fixture settings, accounts, articles and posts isolated. Unit tests cover crypto, fake Graph responses/proofs, editorial validation/captions, ranking/dedupe and scheduling. No live Meta app connection or real upload is part of the automated tests.

@@ -7,7 +7,7 @@ import (
 )
 
 func testSettings() Settings {
-	return Settings{Enabled: true, MaxPostsPerHour: 2, MaxPostsPerDay: 12, MinGapMinutes: 20, QuietHoursStart: 0, QuietHoursEnd: 6, MinScore: 70, LookbackHours: 6, CandidatesPerRun: 8, Timezone: "Asia/Colombo"}
+	return Settings{Enabled: true, MaxPostsPerHour: 2, MaxPostsPerDay: 12, MinGapMinutes: 20, QuietHoursStart: 0, QuietHoursEnd: 6, MinScore: 70, LookbackHours: 6, CandidatesPerRun: 8, Timezone: "Asia/Colombo", RealtimeEnabled: true, MinReviewScore: 80}
 }
 
 func TestNextEligible(t *testing.T) {

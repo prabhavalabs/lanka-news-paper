@@ -49,8 +49,9 @@ export function NavMain({ items }: { items: NavItem[] }) {
         </SidebarMenu>
         <SidebarMenu>
           {items.map((item) => {
-            const active = location.pathname === item.url
-              || (item.url !== '/' && location.pathname.startsWith(`${item.url}/`))
+            const matches = (url: string) => location.pathname === url || (url !== '/' && location.pathname.startsWith(`${url}/`))
+            // Only the most specific matching item is active (e.g. /social/content, not also /social).
+            const active = matches(item.url) && !items.some((other) => other.url.length > item.url.length && matches(other.url))
 
             return (
               <SidebarMenuItem key={item.title}>
