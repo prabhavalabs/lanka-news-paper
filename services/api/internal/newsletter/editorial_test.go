@@ -34,3 +34,14 @@ func TestApplyEditorialPlanOnlyReordersKnownStories(t *testing.T) {
 	require.Equal(t, []string{"three", "one", "two"}, []string{result.Stories[0].ID, result.Stories[1].ID, result.Stories[2].ID})
 	require.Equal(t, "සුබ උදෑසනක්.", updated.IntroText)
 }
+
+func TestEditorialUnavailableProviderUsesCallerPolicy(t *testing.T) {
+	digest := Digest{Stories: []Story{{ID: "one"}}}
+	settings := defaultSettings()
+	model := editorialCompleter{provider: "none", response: `{"intro":"untrusted fallback","story_ids":[]}`}
+	_, _, _, err := applyEditorialPlanStrict(context.Background(), model, digest, settings)
+	require.ErrorContains(t, err, "no model provider responded")
+	result, updated := applyEditorialPlan(context.Background(), model, digest, settings)
+	require.Equal(t, digest, result)
+	require.Equal(t, settings, updated)
+}

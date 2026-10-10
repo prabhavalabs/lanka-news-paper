@@ -278,3 +278,22 @@ func (completer *fakeCompleter) CompleteWithModel(_ context.Context, request llm
 	completer.request = request
 	return completer.response, completer.err
 }
+
+func TestServiceAskDoesNotRetryUnavailableProvider(t *testing.T) {
+	repository := &fakeRepository{
+		settings:     Settings{ResponseLanguage: LanguageSinhala},
+		conversation: Conversation{Thread: Thread{ID: uuid.New(), UserID: uuid.New()}},
+		articles:     []ArticleEvidence{{ID: uuid.New(), Headline: "Policy report"}},
+	}
+	model := &fakeCompleter{response: llm.Response{Provider: "none"}}
+	_, err := NewService(repository, model, time.Now).Ask(context.Background(), uuid.New(), uuid.New(), "What happened today?")
+	require.ErrorIs(t, err, ErrModelUnavailable)
+	answerCalls := 0
+	for _, request := range model.requests {
+		if request.Task == "watch_tower_answer" {
+			answerCalls++
+		}
+	}
+	require.Equal(t, 1, answerCalls)
+	require.Empty(t, repository.savedQuestion)
+}

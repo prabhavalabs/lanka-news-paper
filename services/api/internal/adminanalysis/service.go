@@ -38,6 +38,9 @@ func (service *Service) Analyze(ctx context.Context, runID, articleID, provider,
 	if err != nil {
 		return fmt.Errorf("run %s article analysis: %w", provider, err)
 	}
+	if response.Provider == "none" {
+		return fmt.Errorf("run %s article analysis: no model provider responded", provider)
+	}
 	insight, err := ParseInsight(response.Text)
 	if err != nil {
 		return err

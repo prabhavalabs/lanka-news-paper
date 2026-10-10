@@ -170,6 +170,8 @@ func (handler watchTowerHandler) model(w http.ResponseWriter, request *http.Requ
 
 func (handler watchTowerHandler) writeError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, watchtower.ErrModelUnavailable):
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Watch Tower model unavailable", "The model is unavailable or in cooldown. Try again later.")
 	case errors.Is(err, watchtower.ErrNotFound):
 		writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Conversation not found", "This Watch Tower conversation does not exist.")
 	case errors.Is(err, watchtower.ErrInvalidQuestion):
