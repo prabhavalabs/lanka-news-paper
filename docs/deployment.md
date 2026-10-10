@@ -190,7 +190,8 @@ SNAP_META_LOGIN_CONFIG_ID=
 SNAP_META_GRAPH_VERSION=v26.0
 SNAP_SOCIAL_TOKEN_KEY=
 SNAP_SOCIAL_PUBLIC_BASE_URL=https://lankanewspaper.prabhavalabs.com
-SNAP_SOCIAL_CHROME_PATH=
+SNAP_SOCIAL_CHROME_PATH=/usr/bin/chromium
+SNAP_SOCIAL_CHROME_NO_SANDBOX=true
 ```
 
 Generate `SNAP_SOCIAL_TOKEN_KEY` once as base64 encoded 32 bytes and preserve it with deployment secrets. Both processes must have the same key and use shared media storage (the Compose worker now also mounts `media-data`). Chrome/Chromium and Sinhala fonts are included by the image renderer's Docker configuration. If renderer initialization fails, queue/review still work and publishing waits for a rendered image. No app configuration automatically enables selection or auto-publish; both default to off in migration 54.

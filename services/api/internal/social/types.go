@@ -110,17 +110,18 @@ type Status struct {
 }
 
 type Candidate struct {
-	ID              string    `json:"id"`
-	SubjectKind     string    `json:"subject_kind"`
-	Title           string    `json:"title"`
-	Category        string    `json:"category"`
-	SourceNames     []string  `json:"source_names"`
-	SourceCount     int       `json:"source_count"`
-	ArticleCount    int       `json:"article_count"`
-	Breaking        bool      `json:"breaking"`
-	LatestAt        time.Time `json:"latest_at"`
-	Summary         string    `json:"synthesis_summary"`
-	MemberSummaries []string  `json:"member_summaries"`
-	Spectrum        *Spectrum `json:"spectrum"`
-	LinkURL         string    `json:"link_url"`
+	EvidenceArticleIDs []string  `json:"-"`
+	ID                 string    `json:"id"`
+	SubjectKind        string    `json:"subject_kind"`
+	Title              string    `json:"title"`
+	Category           string    `json:"category"`
+	SourceNames        []string  `json:"source_names"`
+	SourceCount        int       `json:"source_count"`
+	ArticleCount       int       `json:"article_count"`
+	Breaking           bool      `json:"breaking"`
+	LatestAt           time.Time `json:"latest_at"`
+	Summary            string    `json:"synthesis_summary"`
+	MemberSummaries    []string  `json:"member_summaries"`
+	Spectrum           *Spectrum `json:"spectrum"`
+	LinkURL            string    `json:"link_url"`
 }

@@ -250,7 +250,7 @@ func publishablePost(ctx context.Context, tx pgx.Tx, p Post, now time.Time) (boo
 	var eligible bool
 	err := tx.QueryRow(ctx, `
  WITH permitted AS (
- SELECT DISTINCT source.id,source.name FROM articles article
+ SELECT DISTINCT article.id,source.id AS source_id,source.name FROM articles article
  JOIN sources source ON source.id=article.source_id
  JOIN rights_profiles rights ON rights.id=article.rights_profile_id
  LEFT JOIN categories category ON category.id=article.category_id
@@ -263,7 +263,9 @@ func publishablePost(ctx context.Context, tx pgx.Tx, p Post, now time.Time) (boo
  AND (category.id IS NULL OR NOT category.held)
  AND (event_category.id IS NULL OR NOT event_category.held)
  )
- SELECT count(DISTINCT id)>=$4 AND COALESCE(array_agg(DISTINCT name),'{}'::text[]) @> $5::text[]
- FROM permitted`, p.EventID, p.ArticleID, now, p.SourceCount, p.SourceNames).Scan(&eligible)
+ SELECT count(DISTINCT source_id)>=$4 AND COALESCE(array_agg(DISTINCT name),'{}'::text[]) @> $5::text[]
+ AND cardinality(post.evidence_article_ids)>0
+ AND COALESCE(array_agg(DISTINCT permitted.id) FILTER (WHERE permitted.id IS NOT NULL),'{}'::uuid[]) @> post.evidence_article_ids
+ FROM social_posts post LEFT JOIN permitted ON true WHERE post.id=$6 GROUP BY post.evidence_article_ids`, p.EventID, p.ArticleID, now, p.SourceCount, p.SourceNames, p.ID).Scan(&eligible)
 	return eligible, err
 }

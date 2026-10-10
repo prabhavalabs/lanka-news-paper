@@ -76,6 +76,7 @@ func (store *Store) Candidates(ctx context.Context, s Settings, now time.Time, b
  COALESCE(category.name_si,'වෙනත්') AS category,e.is_breaking AS breaking,e.last_update_at AS latest_at,
  count(DISTINCT a.id)::int AS article_count,count(DISTINCT a.source_id)::int AS source_count,
  array_agg(DISTINCT a.source_name ORDER BY a.source_name) AS source_names,
+ array_agg(DISTINCT a.id ORDER BY a.id) AS evidence_article_ids,
  COALESCE(CASE WHEN NOT EXISTS (SELECT 1 FROM articles member WHERE member.event_id=e.id
  AND NOT EXISTS (SELECT 1 FROM qualifying permitted WHERE permitted.id=member.id))
  THEN NULLIF(trim(analysis.summary),'') END,min(a.summary_text)) AS summary,
@@ -96,7 +97,7 @@ func (store *Store) Candidates(ctx context.Context, s Settings, now time.Time, b
  THEN NULLIF(trim(analysis.summary),'') END,min(a.summary_text)) IS NOT NULL
  UNION ALL
  SELECT a.id,'article',a.headline,COALESCE(category.name_si,'වෙනත්'),false,a.published_at,
- 1,1,ARRAY[a.source_name],a.summary_text,ARRAY[a.summary_text],NULL::jsonb
+ 1,1,ARRAY[a.source_name],ARRAY[a.id],a.summary_text,ARRAY[a.summary_text],NULL::jsonb
  FROM qualifying a LEFT JOIN categories category ON category.id=a.category_id
  WHERE a.summary_text IS NOT NULL
  AND (($2 AND a.id::text=$4) OR (NOT $2 AND $6::boolean AND a.event_id IS NULL AND a.published_at >= $5))
@@ -123,15 +124,17 @@ func (store *Store) Candidates(ctx context.Context, s Settings, now time.Time, b
 		if err := rows.Scan(&data); err != nil {
 			return nil, err
 		}
-		// Database column names differ only for the synthesis field.
+		// Keep the evidence snapshot out of the model input.
 		var record struct {
 			Candidate
-			Summary string `json:"summary"`
+			Summary            string   `json:"summary"`
+			EvidenceArticleIDs []string `json:"evidence_article_ids"`
 		}
 		if err := json.Unmarshal(data, &record); err != nil {
 			return nil, err
 		}
 		candidate := record.Candidate
+		candidate.EvidenceArticleIDs = record.EvidenceArticleIDs
 		candidate.Summary = truncate(record.Summary, 1400)
 		for i := range candidate.MemberSummaries {
 			candidate.MemberSummaries[i] = truncate(candidate.MemberSummaries[i], 650)

@@ -34,11 +34,12 @@ All variables are optional. `configured` requires App ID, App Secret and a valid
 | `SNAP_META_GRAPH_VERSION` | `v26.0` |
 | `SNAP_SOCIAL_TOKEN_KEY` | Base64 encoded, exactly 32 decoded bytes; AES-256-GCM |
 | `SNAP_SOCIAL_PUBLIC_BASE_URL` | `SNAP_NEWSLETTER_BASE_URL`, otherwise `https://lankanewspaper.prabhavalabs.com` |
-| `SNAP_SOCIAL_CHROME_PATH` | Chrome/Chromium executable; empty uses renderer auto-detection |
+| `SNAP_SOCIAL_CHROME_PATH` | Chrome/Chromium executable; production defaults to `/usr/bin/chromium`, local empty uses auto-detection |
+| `SNAP_SOCIAL_CHROME_NO_SANDBOX` | Production defaults to `true`; renderer parses a boolean, root always requires no sandbox |
 
 Generate the encryption key once with `openssl rand -base64 32` and save it privately. API and worker must use the same key. Preserve it across redeployments. Key version is currently `v1`; changing the key requires reconnecting the Page. Never place these secrets in client configuration or source control.
 
-Production Compose forwards the variables to API and worker and shares `/data/media` with both. The admin Vite proxy forwards `/api` to port 8090. The admin frontend nginx forwards `/api/` to the API; the host nginx forwards the admin origin to that frontend. The callback therefore stays on the admin origin. The session cookie uses `SameSite=Lax` for Meta's top-level GET return. Sign out and sign in after the first deployment so an existing Strict cookie is replaced. Existing authenticated-session, administrator-role and write-CSRF checks still apply.
+Production Compose forwards the variables to API and worker and shares `/data/media` with both. The admin Vite proxy forwards `/api` to port 8090. The admin frontend nginx forwards `/api/` to the API; the host nginx forwards the admin origin to that frontend. The callback therefore stays on the admin origin. The session cookie remains `SameSite=Strict`. The rate-limited OAuth callback authenticates only the single-use state and uses its stored initiating admin as the actor. The SPA's subsequent same-origin requests carry the session cookie; pending Page lookup and selection require the administrator session and matching state owner, with write-CSRF protection on selection.
 
 ## Selection and review
 
@@ -48,7 +49,7 @@ The model scores public interest from 0 to 100, supplies an English selection re
 
 A subject with a queued, published or ambiguous post cannot be selected again. Rejected and failed subjects can be reselected. Skipped subjects qualify again only after newly becoming breaking or gaining at least two sources since the last skipped evaluation. Manual creation ignores lookback, the multi-source threshold and minimum score, keeps rights/category restrictions and dedupe, and always creates a review item.
 
-Review the source evidence, headline, summary, caption and card. Edits are permitted for `pending_review`, `approved` and `failed` posts and invalidate/re-render the image. Captions are the complete text sent to Facebook; keep source attribution and the site link when editing. A render failure saves `last_error` without removing the post. Use Render again once Chrome/storage is available. An approved post without a readable image remains approved and does not upload. Rights and category availability are checked again before upload; changed eligibility leaves the post approved with a diagnostic so it can be rejected and prepared again from current evidence.
+Review the source evidence, headline, summary, caption and card. Edits are permitted for `pending_review`, `approved` and `failed` posts and invalidate/re-render the image. Captions are the complete text sent to Facebook; edits must retain the source credit line and site link. A render failure saves `last_error` without removing the post. Use Render again once Chrome/storage is available. An approved post without a readable image remains approved and does not upload. Rights and category availability for every snapshotted evidence article are checked again before upload; changed eligibility leaves the post approved with a diagnostic so it can be rejected and prepared again from current evidence.
 
 ## Caps and scheduling
 
@@ -66,7 +67,7 @@ Defaults: two posts per rolling hour, twelve per local calendar day, at least tw
 | `published` | Facebook post ID, publication time and optional permalink saved |
 | `rejected` / `skipped` | No upload; reason/history retained |
 | Authentication/permission error | Account becomes `needs_reconnect`; post returns to approved |
-| Rate limit | Post returns to approved with a 30-minute delay |
+| Rate limit | Post returns to approved with a 30-minute account-wide cooldown |
 | Transport failure before send | Post returns to approved with a five-minute delay |
 | Timeout/network failure after send, malformed success, missing post ID | `needs_attention`; no automatic retry |
 | Worker stopped while uploading | After ten minutes the claim becomes `needs_attention` |
@@ -77,7 +78,7 @@ Before retrying `needs_attention`, check the actual Page for the post. Retry req
 
 ## Admin API
 
-All routes use existing admin sessions, require the administrator role, and mutations require `X-SNAP-CSRF: 1` and a JSON object body, including `{}` for actions without fields. Unknown JSON fields are rejected.
+Except the state-authenticated OAuth callback, all routes use existing admin sessions, require the administrator role, and mutations require `X-SNAP-CSRF: 1` and a JSON object body, including `{}` for actions without fields. Unknown JSON fields are rejected.
 
 - `GET /api/admin/social/status`: configuration, account metadata, settings, status counts, next eligible time.
 - `GET` / `POST /api/admin/social/settings`: complete settings object.
@@ -102,4 +103,4 @@ OAuth state is 32 random bytes; only SHA-256 is stored. It is bound to the signe
 
 Graph calls that use tokens send `appsecret_proof` (HMAC-SHA256 with the App Secret). Token-bearing redirects are refused; Page pagination uses Graph cursor values on the configured host. Stored/returned diagnostics exclude token values, OAuth codes and proof values. Callback redirects contain only a fixed error code or state row ID, never tokens. Administrator mutations write the existing audit log in the same transaction as the corresponding state change.
 
-Migration `000054_social_publishing` adds settings, encrypted accounts, single-use OAuth states, the post queue and indexes, and the editorial task/workflow profile. Down migration removes those objects and its workflow history. Integration tests follow `SNAP_TEST_DATABASE_URL` and create temporary schemas that clone the migrated tables, keeping fixture settings, accounts, articles and posts isolated. Unit tests cover crypto, fake Graph responses/proofs, editorial validation/captions, ranking/dedupe and scheduling. No live Meta app connection or real upload is part of the automated tests.
+Migration `000054_social_publishing` adds settings, encrypted accounts, single-use OAuth states, the post queue and indexes, and the editorial task/workflow profile. Down migration removes those objects and its workflow history. Migration `000055_social_publishing_safety` persists the account-wide rate-limit cooldown and the exact article IDs used as evidence. Posts created before that snapshot must be rejected and prepared again before publishing. Integration tests follow `SNAP_TEST_DATABASE_URL` and create temporary schemas that clone the migrated tables, keeping fixture settings, accounts, articles and posts isolated. Unit tests cover crypto, fake Graph responses/proofs, editorial validation/captions, ranking/dedupe and scheduling. No live Meta app connection or real upload is part of the automated tests.

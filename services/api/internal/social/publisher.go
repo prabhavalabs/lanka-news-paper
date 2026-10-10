@@ -73,7 +73,15 @@ func (service *Service) Status(ctx context.Context) (Status, error) {
 		if err != nil {
 			return result, err
 		}
-		next, err := NextEligible(service.now(), result.Settings, history)
+		start := service.now()
+		var retryAt *time.Time
+		if err = service.store.pool.QueryRow(ctx, `SELECT (SELECT publish_retry_at FROM social_accounts WHERE status='connected')`).Scan(&retryAt); err != nil {
+			return result, err
+		}
+		if retryAt != nil && retryAt.After(start) {
+			start = *retryAt
+		}
+		next, err := NextEligible(start, result.Settings, history)
 		if err != nil {
 			return result, err
 		}
@@ -146,13 +154,16 @@ func (service *Service) Publish(ctx context.Context) error {
 	defer tx.Rollback(ctx)
 	var accountID, pageID, keyVersion string
 	var encrypted, nonce []byte
-	var expires *time.Time
-	err = tx.QueryRow(ctx, `SELECT id::text,page_id,token_ciphertext,token_nonce,COALESCE(key_version,''),token_expires_at FROM social_accounts WHERE status='connected' FOR UPDATE SKIP LOCKED`).Scan(&accountID, &pageID, &encrypted, &nonce, &keyVersion, &expires)
+	var expires, retryAt *time.Time
+	err = tx.QueryRow(ctx, `SELECT id::text,page_id,token_ciphertext,token_nonce,COALESCE(key_version,''),token_expires_at,publish_retry_at FROM social_accounts WHERE status='connected' FOR UPDATE SKIP LOCKED`).Scan(&accountID, &pageID, &encrypted, &nonce, &keyVersion, &expires, &retryAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
+	}
+	if retryAt != nil && retryAt.After(service.now()) {
+		return nil
 	}
 	if expires != nil && !expires.After(service.now()) {
 		if _, err = tx.Exec(ctx, `UPDATE social_accounts SET status='needs_reconnect',last_error='Facebook Page token has expired; reconnect' WHERE id=$1`, accountID); err != nil {
@@ -182,21 +193,21 @@ func (service *Service) Publish(ctx context.Context) error {
 		return err
 	}
 	if !rightsEligible {
-		if _, err = tx.Exec(ctx, `UPDATE social_posts SET last_error='Source rights or category availability changed; reject this post and prepare it again from current evidence' WHERE id=$1`, p.ID); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE social_posts SET status='failed',last_error='Source rights or category availability changed; reject this post and prepare it again from current evidence' WHERE id=$1`, p.ID); err != nil {
 			return err
 		}
 		return tx.Commit(ctx)
 	}
 
 	if p.ImageKey == nil || service.media == nil {
-		if _, err = tx.Exec(ctx, `UPDATE social_posts SET last_error='A rendered image is required before publishing; render this post again' WHERE id=$1`, p.ID); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE social_posts SET status='failed',last_error='A rendered image is required before publishing; render this post again and retry' WHERE id=$1`, p.ID); err != nil {
 			return err
 		}
 		return tx.Commit(ctx)
 	}
 	file, _, err := service.media.Open(ctx, *p.ImageKey)
 	if err != nil {
-		if _, err = tx.Exec(ctx, `UPDATE social_posts SET image_key=NULL,last_error='Rendered image could not be read; render this post again' WHERE id=$1`, p.ID); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE social_posts SET status='failed',image_key=NULL,last_error='Rendered image could not be read; render this post again and retry' WHERE id=$1`, p.ID); err != nil {
 			return err
 		}
 		return tx.Commit(ctx)
@@ -204,7 +215,11 @@ func (service *Service) Publish(ctx context.Context) error {
 	png, readErr := io.ReadAll(io.LimitReader(file, (20<<20)+1))
 	closeErr := file.Close()
 	if readErr != nil || closeErr != nil || len(png) == 0 || len(png) > 20<<20 {
-		return errors.New("social image could not be read or exceeds 20 MB")
+		// Fail the post rather than the job so one bad image cannot hold up the queue.
+		if _, err = tx.Exec(ctx, `UPDATE social_posts SET status='failed',last_error='Rendered image could not be read or exceeds 20 MB; render this post again and retry' WHERE id=$1`, p.ID); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
 	}
 	if _, err = tx.Exec(ctx, `UPDATE social_posts SET status='publishing',account_id=$2,attempts=attempts+1,last_error=NULL WHERE id=$1`, p.ID, accountID); err != nil {
 		return err
@@ -217,7 +232,10 @@ func (service *Service) Publish(ctx context.Context) error {
 	resultContext, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if publishErr == nil {
-		permalink, linkErr := service.graph.Permalink(resultContext, photo.PostID, string(token))
+		// Reserve time to save a confirmed upload even if the optional lookup times out.
+		linkContext, cancelLink := context.WithTimeout(resultContext, 10*time.Second)
+		permalink, linkErr := service.graph.Permalink(linkContext, photo.PostID, string(token))
+		cancelLink()
 		var lastError *string
 		if linkErr != nil {
 			value := "Published successfully; permalink lookup failed"
@@ -242,6 +260,10 @@ func (service *Service) Publish(ctx context.Context) error {
 			status = "approved"
 			value := service.now().Add(30 * time.Minute)
 			scheduled = &value
+			// Meta limits apply to the account, including other queued and newly selected posts.
+			if _, err = connection.Exec(resultContext, `UPDATE social_accounts SET publish_retry_at=$2,last_error=$3 WHERE id=$1 AND status='connected' AND token_ciphertext=$4`, accountID, value, message, encrypted); err != nil {
+				return err
+			}
 		}
 	} else if errors.As(publishErr, &transport) {
 		if transport.Sent {

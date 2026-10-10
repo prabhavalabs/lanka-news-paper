@@ -14,16 +14,6 @@ type socialHandler struct{ service *social.Service }
 
 func (handler socialHandler) serve(w http.ResponseWriter, request *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if request.URL.Path == "/api/admin/social/facebook/callback" {
-		if currentUser(request).Role != "administrator" {
-			http.Redirect(w, request, "/social?error=administrator_required", http.StatusSeeOther)
-			return
-		}
-		if handler.service == nil {
-			http.Redirect(w, request, "/social?error=not_configured", http.StatusSeeOther)
-			return
-		}
-	}
 	if !requireAdministrator(w, request) {
 		return
 	}
@@ -59,27 +49,6 @@ func (handler socialHandler) serve(w http.ResponseWriter, request *http.Request)
 		var authorize string
 		authorize, err = handler.service.Connect(request.Context(), actor)
 		result = map[string]string{"authorize_url": authorize}
-	case "/api/admin/social/facebook/callback":
-		outcome, stateID, callbackErr := handler.service.Callback(request.Context(), request.URL.Query().Get("code"), request.URL.Query().Get("state"), request.URL.Query().Get("error"), actor)
-		query := url.Values{}
-		if callbackErr != nil {
-			errorCode := "connection_failed"
-			if errors.Is(callbackErr, social.ErrOAuthState) {
-				errorCode = "invalid_state"
-			} else if errors.Is(callbackErr, social.ErrNotConfigured) {
-				errorCode = "not_configured"
-			} else if errors.Is(callbackErr, social.ErrInvalid) {
-				errorCode = "authorization_failed"
-			}
-			query.Set("error", errorCode)
-		} else {
-			query.Set("facebook", outcome)
-			if stateID != "" {
-				query.Set("state_id", stateID)
-			}
-		}
-		http.Redirect(w, request, "/social?"+query.Encode(), http.StatusSeeOther)
-		return
 	case "/api/admin/social/facebook/pending-pages":
 		var pages []social.PendingPage
 		pages, err = handler.service.PendingPages(request.Context(), request.URL.Query().Get("state_id"), actor)
@@ -194,6 +163,38 @@ func (handler socialHandler) serve(w http.ResponseWriter, request *http.Request)
 		return
 	}
 	writeJSON(w, code, result)
+}
+
+// The OAuth state authenticates this cross-site return; Strict session cookies are absent.
+func (handler socialHandler) callback(w http.ResponseWriter, request *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	if handler.service == nil {
+		http.Redirect(w, request, "/social?error=not_configured", http.StatusSeeOther)
+		return
+	}
+	request, cancel := inferenceRequest(w, request)
+	defer cancel()
+	outcome, stateID, callbackErr := handler.service.Callback(request.Context(), request.URL.Query().Get("code"), request.URL.Query().Get("state"), request.URL.Query().Get("error"))
+	query := url.Values{}
+	if callbackErr != nil {
+		errorCode := "connection_failed"
+		if errors.Is(callbackErr, social.ErrOAuthState) {
+			errorCode = "invalid_state"
+		} else if errors.Is(callbackErr, social.ErrNotConfigured) {
+			errorCode = "not_configured"
+		} else if errors.Is(callbackErr, social.ErrInvalid) {
+			errorCode = "authorization_failed"
+		}
+		query.Set("error", errorCode)
+	} else {
+		query.Set("facebook", outcome)
+		if stateID != "" {
+			query.Set("state_id", stateID)
+		}
+	}
+	http.Redirect(w, request, "/social?"+query.Encode(), http.StatusSeeOther)
+	return
 }
 
 func writeSocialProblem(w http.ResponseWriter, err error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -120,7 +121,12 @@ func (service *Service) editorial(ctx context.Context, candidates []Candidate) (
 	var result struct {
 		Items []editorialItem `json:"items"`
 	}
-	if err := json.Unmarshal([]byte(response.Text), &result); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(response.Text))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
+		return nil, nil, fmt.Errorf("%w: invalid social editorial response", ErrModelUnavailable)
+	}
+	if decoder.Decode(new(any)) != io.EOF {
 		return nil, nil, fmt.Errorf("%w: invalid social editorial response", ErrModelUnavailable)
 	}
 	var callID *int64

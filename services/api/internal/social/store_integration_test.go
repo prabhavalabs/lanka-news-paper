@@ -230,6 +230,9 @@ func TestSocialRightsAndManualIntegration(t *testing.T) {
 	require.NotNil(t, p.ImageKey)
 	require.Contains(t, p.ImageURL, "/api/admin/media/social/posts/")
 	caption := "නව පාඨය."
+	_, err = service.Edit(ctx, p.ID, EditInput{Caption: &caption}, actor)
+	require.ErrorIs(t, err, ErrInvalid)
+	caption = BuildCaption(caption, p.SourceNames, p.LinkURL, p.Hashtags)
 	p, err = service.Edit(ctx, p.ID, EditInput{Caption: &caption}, actor)
 	require.NoError(t, err)
 	require.Equal(t, caption, p.Caption)
@@ -256,12 +259,10 @@ func TestSocialOAuthIntegration(t *testing.T) {
 	authorize, err := service.Connect(ctx, actor)
 	require.NoError(t, err)
 	state := strings.Split(authorize, "state=")[1]
-	_, _, err = service.Callback(ctx, "code", state, "", other)
-	require.ErrorIs(t, err, ErrOAuthState)
-	outcome, stateID, err := service.Callback(ctx, "code", state, "", actor)
+	outcome, stateID, err := service.Callback(ctx, "code", state, "")
 	require.NoError(t, err)
 	require.Equal(t, "choose_page", outcome)
-	_, _, err = service.Callback(ctx, "code", state, "", actor)
+	_, _, err = service.Callback(ctx, "code", state, "")
 	require.ErrorIs(t, err, ErrOAuthState)
 	pages, err := service.PendingPages(ctx, stateID, actor)
 	require.NoError(t, err)
@@ -271,6 +272,7 @@ func TestSocialOAuthIntegration(t *testing.T) {
 	require.NotContains(t, string(data), "token-one")
 	_, err = service.PendingPages(ctx, stateID, other)
 	require.ErrorIs(t, err, ErrOAuthState)
+	require.ErrorIs(t, service.SelectPage(ctx, stateID, "one", other), ErrOAuthState)
 	require.NoError(t, service.SelectPage(ctx, stateID, "one", actor))
 	require.ErrorIs(t, service.SelectPage(ctx, stateID, "one", actor), ErrOAuthState)
 	account, err := store.Account(ctx)
@@ -291,15 +293,16 @@ func TestSocialOAuthIntegration(t *testing.T) {
 	authorize, err = service.Connect(ctx, actor)
 	require.NoError(t, err)
 	state = strings.Split(authorize, "state=")[1]
-	service.now = func() time.Time { return now.Add(11 * time.Minute) }
-	_, _, err = service.Callback(ctx, "code", state, "", actor)
+	_, err = store.pool.Exec(ctx, `UPDATE social_oauth_states SET expires_at=now()-interval '1 minute' WHERE admin_user_id=$1 AND used_at IS NULL`, actor)
+	require.NoError(t, err)
+	_, _, err = service.Callback(ctx, "code", state, "")
 	require.ErrorIs(t, err, ErrOAuthState)
 	service.now = func() time.Time { return now }
 	service.graph = &fakeGraph{pages: []meta.Page{{ID: "only", Name: "Only Page", AccessToken: "only-token"}}}
 	authorize, err = service.Connect(ctx, actor)
 	require.NoError(t, err)
 	state = strings.Split(authorize, "state=")[1]
-	outcome, _, err = service.Callback(ctx, "code", state, "", actor)
+	outcome, _, err = service.Callback(ctx, "code", state, "")
 	require.NoError(t, err)
 	require.Equal(t, "connected", outcome)
 }
@@ -379,7 +382,7 @@ func TestSocialPublisherRefusesMissingImageIntegration(t *testing.T) {
 	require.NoError(t, service.Publish(ctx))
 	p, err = service.store.GetPost(ctx, p.ID)
 	require.NoError(t, err)
-	require.Equal(t, "approved", p.Status)
+	require.Equal(t, "failed", p.Status)
 	require.Equal(t, 0, p.Attempts)
 	require.NotNil(t, p.LastError)
 	require.Equal(t, 0, service.graph.(*fakeGraph).uploads)
@@ -428,7 +431,7 @@ func TestSocialPublisherRightsAndStaleClaimsIntegration(t *testing.T) {
 	require.NoError(t, service.Publish(ctx))
 	p, err = service.store.GetPost(ctx, p.ID)
 	require.NoError(t, err)
-	require.Equal(t, "approved", p.Status)
+	require.Equal(t, "failed", p.Status)
 	require.Equal(t, 0, p.Attempts)
 	require.Contains(t, *p.LastError, "rights")
 	_, err = service.store.pool.Exec(ctx, `ALTER TABLE social_posts DISABLE TRIGGER social_set_updated_at`)
@@ -471,7 +474,16 @@ func TestSocialSelectionBatchAndUnavailableModelIntegration(t *testing.T) {
 	output := fmt.Sprintf(`{"items":[{"id":%q,"score":80,"publish":true,"reason":"Important","headline_si":"පුවත","summary_si":"සාරාංශය","caption_si":"පුවත මෙන්න. වැඩිදුර කියවන්න.","hashtags":[]},{"id":%q,"score":20,"publish":false,"reason":"Not urgent","headline_si":"පුවත","summary_si":"සාරාංශය","caption_si":"පුවත මෙන්න.","hashtags":[]}]}`, first, second)
 	model := &editorialModel{response: llm.Response{Provider: "codex_cli", Text: output}}
 	service.model = model
+	settings.Enabled = false
+	_, err = store.UpdateSettings(ctx, settings, actor)
+	require.NoError(t, err)
 	require.NoError(t, service.Select(ctx))
+	require.Zero(t, model.calls)
+	settings.Enabled = true
+	_, err = store.UpdateSettings(ctx, settings, actor)
+	require.NoError(t, err)
+	require.NoError(t, service.Select(ctx))
+	require.Equal(t, 1, model.calls)
 	var input []Candidate
 	require.NoError(t, json.Unmarshal([]byte(model.request.Input), &input))
 	require.Len(t, input, 2)
@@ -487,4 +499,141 @@ func TestSocialSelectionBatchAndUnavailableModelIntegration(t *testing.T) {
 	err = store.pool.QueryRow(ctx, `SELECT count(*)::int FROM social_posts`).Scan(&count)
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
+}
+
+func TestSocialOAuthAtomicConsumptionIntegration(t *testing.T) {
+	store := integrationStore(t)
+	ctx := context.Background()
+	service := integrationService(t, store, nil, time.Now().UTC())
+	actor := adminActor(t, store)
+	authorize, err := service.Connect(ctx, actor)
+	require.NoError(t, err)
+	state := strings.Split(authorize, "state=")[1]
+	type outcome struct {
+		id    string
+		actor uuid.UUID
+		err   error
+	}
+	results := make(chan outcome, 8)
+	var group sync.WaitGroup
+	for range 8 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			id, owner, err := service.consumeState(ctx, state)
+			results <- outcome{id, owner, err}
+		}()
+	}
+	group.Wait()
+	close(results)
+	consumed := 0
+	for result := range results {
+		if result.err == nil {
+			consumed++
+			require.NotEmpty(t, result.id)
+			require.Equal(t, actor, result.actor)
+		} else {
+			require.ErrorIs(t, result.err, ErrOAuthState)
+		}
+	}
+	require.Equal(t, 1, consumed)
+	authorize, err = service.Connect(ctx, actor)
+	require.NoError(t, err)
+	state = strings.Split(authorize, "state=")[1]
+	_, err = store.pool.Exec(ctx, `UPDATE admin_users SET role='editor' WHERE id=$1`, actor)
+	require.NoError(t, err)
+	_, _, err = service.Callback(ctx, "code", state, "")
+	require.ErrorIs(t, err, ErrOAuthState)
+}
+
+func TestSocialRateLimitPausesOtherQueuedPostsIntegration(t *testing.T) {
+	service, first, actor := publisherFixture(t)
+	ctx := context.Background()
+	graph := &fakeGraph{publishErr: &meta.Error{Code: 4}}
+	service.graph = graph
+	require.NoError(t, service.Publish(ctx))
+	fixtureEvent(t, service.store, 2, service.now())
+	settings, err := service.store.GetSettings(ctx)
+	require.NoError(t, err)
+	candidates, err := service.store.Candidates(ctx, settings, service.now(), "https://news.invalid", "", "")
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	p, err := service.insertPost(ctx, candidates[0], editorialItem{Score: 80, Reason: "Important", HeadlineSI: "පුවත", SummarySI: "සාරාංශය", CaptionSI: "පුවත", Hashtags: []string{}}, "pending_review", nil, false, uuid.Nil)
+	require.NoError(t, err)
+	p, err = service.Render(ctx, p.ID, actor)
+	require.NoError(t, err)
+	_, err = service.Transition(ctx, p.ID, "approve", actor, nil, false)
+	require.NoError(t, err)
+	graph.publishErr = nil
+	require.NoError(t, service.Publish(ctx))
+	require.Equal(t, 1, graph.uploads)
+	status, err := service.Status(ctx)
+	require.NoError(t, err)
+	require.True(t, service.now().Add(30*time.Minute).Equal(*status.NextPublishEligibleAt))
+	now := service.now().Add(31 * time.Minute)
+	service.now = func() time.Time { return now }
+	require.NoError(t, service.Publish(ctx))
+	require.Equal(t, 2, graph.uploads)
+	published, err := service.store.GetPost(ctx, first.ID)
+	require.NoError(t, err)
+	require.Equal(t, "published", published.Status)
+}
+
+func TestSocialPublisherChecksEveryEvidenceArticleIntegration(t *testing.T) {
+	service, _, actor := publisherFixture(t)
+	ctx := context.Background()
+	// The same source has one permitted and one now-restricted article. Source totals alone still match.
+	event := fixtureEvent(t, service.store, 2, service.now())
+	extra := fixtureArticle(t, service.store, event, "discovery_only", service.now())
+	_, err := service.store.pool.Exec(ctx, `UPDATE articles SET source_id=(SELECT source_id FROM articles WHERE event_id=$2 AND id<>$1 LIMIT 1) WHERE id=$1`, extra, event)
+	require.NoError(t, err)
+	settings, err := service.store.GetSettings(ctx)
+	require.NoError(t, err)
+	candidates, err := service.store.Candidates(ctx, settings, service.now(), "https://news.invalid", event, "")
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Len(t, candidates[0].EvidenceArticleIDs, 3)
+	p, err := service.insertPost(ctx, candidates[0], editorialItem{Score: 80, Reason: "Important", HeadlineSI: "පුවත", SummarySI: "සාරාංශය", CaptionSI: "පුවත", Hashtags: []string{}}, "pending_review", nil, false, uuid.Nil)
+	require.NoError(t, err)
+	_, err = service.Render(ctx, p.ID, actor)
+	require.NoError(t, err)
+	_, err = service.Transition(ctx, p.ID, "approve", actor, nil, false)
+	require.NoError(t, err)
+	// Remove the older fixture from the queue to exercise the new post.
+	_, err = service.store.pool.Exec(ctx, `UPDATE social_posts SET status='rejected' WHERE id<>$1`, p.ID)
+	require.NoError(t, err)
+	_, err = service.store.pool.Exec(ctx, `UPDATE rights_profiles SET mode='disabled' WHERE id=(SELECT rights_profile_id FROM articles WHERE id=$1)`, extra)
+	require.NoError(t, err)
+	require.NoError(t, service.Publish(ctx))
+	require.Zero(t, service.graph.(*fakeGraph).uploads)
+	p, err = service.store.GetPost(ctx, p.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", p.Status)
+	require.Contains(t, *p.LastError, "rights")
+}
+
+func TestSocialAutoPublishDisabledDuringEditorialIntegration(t *testing.T) {
+	store := integrationStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	service := integrationService(t, store, fakeRenderer{}, now)
+	actor := adminActor(t, store)
+	settings := testSettings()
+	settings.AutoPublish = true
+	_, err := store.UpdateSettings(ctx, settings, actor)
+	require.NoError(t, err)
+	id := fixtureEvent(t, store, 2, now)
+	text := fmt.Sprintf(`{"items":[{"id":%q,"score":90,"publish":true,"reason":"Important","headline_si":"පුවත","summary_si":"සාරාංශය","caption_si":"පුවත","hashtags":[]}]}`, id)
+	service.model = &editorialModel{response: llm.Response{Provider: "codex_cli", Text: text}, onComplete: func() {
+		settings.AutoPublish = false
+		_, err := store.UpdateSettings(ctx, settings, actor)
+		require.NoError(t, err)
+	}}
+	require.NoError(t, service.Select(ctx))
+	posts, err := store.ListPosts(ctx, "", 10, "")
+	require.NoError(t, err)
+	require.Len(t, posts.Items, 1)
+	require.Equal(t, "pending_review", posts.Items[0].Status)
+	require.Nil(t, posts.Items[0].ApprovedAt)
+	require.Nil(t, posts.Items[0].ScheduledFor)
 }

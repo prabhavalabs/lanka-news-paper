@@ -43,13 +43,19 @@ func TestRankingAndSkippedReevaluation(t *testing.T) {
 }
 
 type editorialModel struct {
-	response llm.Response
-	err      error
-	request  llm.Request
+	response   llm.Response
+	err        error
+	request    llm.Request
+	calls      int
+	onComplete func()
 }
 
 func (model *editorialModel) Complete(_ context.Context, request llm.Request) (llm.Response, error) {
 	model.request = request
+	model.calls++
+	if model.onComplete != nil {
+		model.onComplete()
+	}
 	return model.response, model.err
 }
 func (model *editorialModel) CompleteWithModel(ctx context.Context, request llm.Request, _, _ string) (llm.Response, error) {
@@ -67,4 +73,12 @@ func TestEditorialDropsUnknownAndDuplicateItems(t *testing.T) {
 	model.response.Provider = "none"
 	_, _, err = service.editorial(context.Background(), []Candidate{{ID: "one"}})
 	require.ErrorIs(t, err, ErrModelUnavailable)
+}
+
+func TestEditorialRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {
+	for _, text := range []string{`{"items":[],"unexpected":true}`, `{"items":[{"id":"one","reason":"skip","unexpected":true}]}`, `{"items":[]} {}`} {
+		service := &Service{model: &editorialModel{response: llm.Response{Provider: "codex_cli", Text: text}}}
+		_, _, err := service.editorial(context.Background(), []Candidate{{ID: "one"}})
+		require.ErrorIs(t, err, ErrModelUnavailable)
+	}
 }

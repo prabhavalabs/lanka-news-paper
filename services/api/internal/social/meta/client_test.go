@@ -182,3 +182,15 @@ func TestCancellationAndRedaction(t *testing.T) {
 	require.NotContains(t, (&Error{Code: 190, Type: "token=private", TraceID: strings.Repeat("t", 100)}).Error(), "private")
 	require.False(t, errors.Is(err, context.Canceled)) // transport details deliberately stay private
 }
+
+func TestPublishServerErrorEnvelopeIsAmbiguous(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"error":{"code":1,"message":"temporary server error"}}`)
+	}))
+	defer server.Close()
+	_, err := testClient(server).PublishPhoto(context.Background(), "one", "page-token", []byte("png"), "caption")
+	var transport *TransportError
+	require.ErrorAs(t, err, &transport)
+	require.True(t, transport.Sent)
+}

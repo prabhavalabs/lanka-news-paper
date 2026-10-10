@@ -57,24 +57,27 @@ func (service *Service) Connect(ctx context.Context, actor uuid.UUID) (string, e
 	return service.graph.AuthorizeURL(state), nil
 }
 
-func (service *Service) consumeState(ctx context.Context, state string, actor uuid.UUID) (string, error) {
+func (service *Service) consumeState(ctx context.Context, state string) (string, uuid.UUID, error) {
 	hash := sha256.Sum256([]byte(state))
 	var id string
-	err := service.store.pool.QueryRow(ctx, `UPDATE social_oauth_states SET used_at=$3 WHERE state_hash=$1 AND admin_user_id=$2 AND used_at IS NULL AND expires_at>$3 RETURNING id::text`, hash[:], actor, service.now()).Scan(&id)
+	var actor uuid.UUID
+	err := service.store.pool.QueryRow(ctx, `UPDATE social_oauth_states SET used_at=now() WHERE state_hash=$1 AND used_at IS NULL AND expires_at>now()
+ AND EXISTS (SELECT 1 FROM admin_users WHERE id=admin_user_id AND role='administrator' AND status='active')
+ RETURNING id::text,admin_user_id`, hash[:]).Scan(&id, &actor)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrOAuthState
+		return "", uuid.Nil, ErrOAuthState
 	}
-	return id, err
+	return id, actor, err
 }
 
-func (service *Service) Callback(ctx context.Context, code, state, providerError string, actor uuid.UUID) (string, string, error) {
+func (service *Service) Callback(ctx context.Context, code, state, providerError string) (string, string, error) {
 	if !service.config.Configured() {
 		return "", "", ErrNotConfigured
 	}
 	if err := service.clearExpiredStates(ctx); err != nil {
 		return "", "", err
 	}
-	id, err := service.consumeState(ctx, state, actor)
+	id, actor, err := service.consumeState(ctx, state)
 	if err != nil {
 		return "", "", err
 	}
@@ -303,7 +306,7 @@ func (service *Service) savePage(ctx context.Context, tx pgx.Tx, page meta.Page,
  ON CONFLICT (page_id) DO UPDATE SET page_name=EXCLUDED.page_name,page_picture_url=EXCLUDED.page_picture_url,
  token_ciphertext=EXCLUDED.token_ciphertext,token_nonce=EXCLUDED.token_nonce,key_version=EXCLUDED.key_version,
  granted_scopes=EXCLUDED.granted_scopes,status='connected',connected_by=EXCLUDED.connected_by,
- connected_at=EXCLUDED.connected_at,last_verified_at=EXCLUDED.last_verified_at,token_expires_at=EXCLUDED.token_expires_at,last_error=NULL`,
+ connected_at=EXCLUDED.connected_at,last_verified_at=EXCLUDED.last_verified_at,token_expires_at=EXCLUDED.token_expires_at,publish_retry_at=NULL,last_error=NULL`,
 		page.ID, page.Name, page.Picture.Data.URL, encrypted, nonce, info.Scopes, actor, service.now(), expires); err != nil {
 		return err
 	}

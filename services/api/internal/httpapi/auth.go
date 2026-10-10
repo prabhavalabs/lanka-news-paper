@@ -62,7 +62,7 @@ func (handler *authHandler) login(w http.ResponseWriter, request *http.Request) 
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   handler.secureCookies,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   int(handler.ttl.Seconds()),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": userJSON(user)})
@@ -78,7 +78,7 @@ func (handler *authHandler) logout(w http.ResponseWriter, request *http.Request)
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   handler.secureCookies,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -100,20 +100,12 @@ func (handler *authHandler) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		cookie, err := request.Cookie("snap_session")
 		if err != nil {
-			if request.URL.Path == "/api/admin/social/facebook/callback" {
-				http.Redirect(w, request, "/social?error=session_required", http.StatusSeeOther)
-			} else {
-				writeProblem(w, http.StatusUnauthorized, "https://snap.local/problems/auth", "Unauthorized", "Sign in required.")
-			}
+			writeProblem(w, http.StatusUnauthorized, "https://snap.local/problems/auth", "Unauthorized", "Sign in required.")
 			return
 		}
 		user, err := handler.users.LookupSession(request.Context(), cookie.Value)
 		if err != nil {
-			if request.URL.Path == "/api/admin/social/facebook/callback" {
-				http.Redirect(w, request, "/social?error=session_required", http.StatusSeeOther)
-			} else {
-				writeProblem(w, http.StatusUnauthorized, "https://snap.local/problems/auth", "Unauthorized", "Sign in required.")
-			}
+			writeProblem(w, http.StatusUnauthorized, "https://snap.local/problems/auth", "Unauthorized", "Sign in required.")
 			return
 		}
 		next.ServeHTTP(w, request.WithContext(context.WithValue(request.Context(), userContextKey{}, user)))

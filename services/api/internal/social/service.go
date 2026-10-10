@@ -192,6 +192,16 @@ func (service *Service) insertPost(ctx context.Context, candidate Candidate, ite
 			return Post{}, err
 		}
 	}
+	if status == "approved" && !manual {
+		var autoPublish bool
+		if err = tx.QueryRow(ctx, `SELECT enabled AND auto_publish FROM social_settings WHERE singleton FOR SHARE`).Scan(&autoPublish); err != nil {
+			return Post{}, err
+		}
+		// A long editorial call must not bypass an administrator who has since disabled auto-publish.
+		if !autoPublish {
+			status = "pending_review"
+		}
+	}
 	id := uuid.NewString()
 	kind := "top_story"
 	if candidate.Breaking {
@@ -216,9 +226,9 @@ func (service *Service) insertPost(ctx context.Context, candidate Candidate, ite
 	caption := BuildCaption(item.CaptionSI, candidate.SourceNames, candidate.LinkURL, item.Hashtags)
 	_, err = tx.Exec(ctx, `INSERT INTO social_posts (id,subject_kind,event_id,article_id,status,score,selection_reason,kind,
  headline_si,summary_si,caption,hashtags,link_url,source_names,source_count,spectrum,scheduled_for,approved_at,llm_call_id,
- evaluated_source_count,evaluated_breaking,created_by)
- VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$15,$20,$21)`,
-		id, candidate.SubjectKind, eventID, articleID, status, item.Score, item.Reason, kind, item.HeadlineSI, item.SummarySI, caption, item.Hashtags, candidate.LinkURL, candidate.SourceNames, candidate.SourceCount, candidate.Spectrum, scheduled, approved, callID, candidate.Breaking, creator)
+ evaluated_source_count,evaluated_breaking,created_by,evidence_article_ids)
+ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$15,$20,$21,$22)`,
+		id, candidate.SubjectKind, eventID, articleID, status, item.Score, item.Reason, kind, item.HeadlineSI, item.SummarySI, caption, item.Hashtags, candidate.LinkURL, candidate.SourceNames, candidate.SourceCount, candidate.Spectrum, scheduled, approved, callID, candidate.Breaking, creator, candidate.EvidenceArticleIDs)
 	if err != nil {
 		return Post{}, storeError(err)
 	}

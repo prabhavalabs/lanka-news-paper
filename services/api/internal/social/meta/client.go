@@ -295,6 +295,13 @@ func (client *Client) do(request *http.Request, result any, write bool) error {
 	if err != nil {
 		return &TransportError{Sent: write}
 	}
+	if response.StatusCode == http.StatusTooManyRequests {
+		return &Error{Code: 4}
+	}
+	// A server failure after an upload is ambiguous even when Graph supplies an error envelope.
+	if write && response.StatusCode >= 500 {
+		return &TransportError{Sent: true}
+	}
 	var envelope struct {
 		Error *Error `json:"error"`
 	}
@@ -302,12 +309,6 @@ func (client *Client) do(request *http.Request, result any, write bool) error {
 		return envelope.Error
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		if response.StatusCode == 429 {
-			return &Error{Code: 4}
-		}
-		if write && response.StatusCode >= 500 {
-			return &TransportError{Sent: true}
-		}
 		return fmt.Errorf("Meta returned HTTP %d", response.StatusCode)
 	}
 	if err := json.Unmarshal(data, result); err != nil {

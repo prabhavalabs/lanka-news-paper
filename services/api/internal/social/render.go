@@ -60,6 +60,9 @@ func (service *Service) Edit(ctx context.Context, id string, input EditInput, ac
 	if p.HeadlineSI == "" || utf8.RuneCountInString(p.HeadlineSI) > 90 || p.SummarySI == "" || utf8.RuneCountInString(p.SummarySI) > 280 || p.Caption == "" || utf8.RuneCountInString(p.Caption) > 5000 {
 		return p, ErrInvalid
 	}
+	if !strings.Contains(p.Caption, "මූලාශ්‍ර: "+strings.Join(p.SourceNames, ", ")) || !strings.Contains(p.Caption, p.LinkURL) {
+		return p, fmt.Errorf("%w: caption must retain the source credits and site link", ErrInvalid)
+	}
 	if _, err = tx.Exec(ctx, `UPDATE social_posts SET headline_si=$2,summary_si=$3,caption=$4,hashtags=$5,image_key=NULL,image_rendered_at=NULL,last_error=NULL WHERE id=$1`, id, p.HeadlineSI, p.SummarySI, p.Caption, p.Hashtags); err != nil {
 		return p, err
 	}
