@@ -50,8 +50,9 @@ sessions, user config/rules ignored, read-only sandboxing, web search and
 shell/browser/computer/app/multi-agent tools disabled. It sends input as data
 and writes private instruction/schema files in the temporary directory. Child
 environment variables are allowlisted, excluding database and provider secrets.
-The workspace is removed after completion. The CLI retains only its managed
-authentication in `CODEX_HOME`.
+The workspace is removed after completion. The CLI manages authentication in `CODEX_HOME` and may update its caches and
+logs there even for ephemeral runs. See deployment documentation for the shared
+credential-volume refresh risk.
 
 JSON events supply the completed response and usage. Pipeline completion details
 include `input_tokens`, `output_tokens`, `cached_input_tokens`, and
@@ -63,7 +64,10 @@ streaming records and legacy provider labels remain visible.
 ## Readiness and cooldown
 
 Provider readiness checks installation, CLI version and confirmed ChatGPT login.
-API-key authentication does not satisfy readiness. Provider status can be
+API-key authentication does not satisfy readiness. Successful ChatGPT login
+confirmation is cached for five minutes and invalidated on auth failure. Every
+completion also enforces the CLI's `forced_login_method="chatgpt"` policy, so an
+API-key switch during the cache interval cannot execute API-key inference. Provider status can be
 `ready`, `unavailable`, `disabled`, `auth_expired`, or `quota_exhausted`.
 `SNAP_CODEX_QUOTA_COOLDOWN` defaults to 15 minutes and applies to both auth and
 quota errors. Persisted status coordinates pipeline blocking; blocked requests
