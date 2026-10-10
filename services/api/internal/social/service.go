@@ -175,6 +175,13 @@ func (service *Service) createFromCandidates(ctx context.Context, candidates []C
 		if status != "skipped" {
 			_ = service.render(ctx, p.ID, uuid.Nil)
 			_, result, reviewErr := service.review(ctx, p.ID)
+			// One automatic rewrite fixes most review findings; the rewrite must pass a fresh review.
+			if reviewErr == nil && !approvable(result, settings.MinReviewScore) && revisable(result) {
+				if revised, err := service.revise(ctx, p.ID, result); err == nil && revised {
+					_ = service.render(ctx, p.ID, uuid.Nil)
+					_, result, reviewErr = service.review(ctx, p.ID)
+				}
+			}
 			if reviewErr == nil && !manual && settings.AutoPublish && approvable(result, settings.MinReviewScore) {
 				if hold := topicHold(candidate, recent, service.now()); hold != "" {
 					if _, err := service.store.pool.Exec(ctx, `UPDATE social_posts SET hold_reason=$2 WHERE id=$1`, p.ID, hold); err != nil {
@@ -246,11 +253,8 @@ func (service *Service) insertPost(ctx context.Context, candidate Candidate, ite
 	if manual {
 		creator = actor.String()
 	}
-	link := ""
-	if service.config.IncludeLink {
-		link = candidate.LinkURL
-	}
-	caption := BuildCaption(item.CaptionSI, candidate.SourceNames, link, item.Hashtags)
+	// Captions never carry a URL; the card shows the website name instead.
+	caption := BuildCaption(item.CaptionSI, candidate.SourceNames, "", item.Hashtags)
 	_, err = tx.Exec(ctx, `INSERT INTO social_posts (id,subject_kind,event_id,article_id,status,score,selection_reason,kind,
  headline_si,summary_si,caption,hashtags,link_url,source_names,source_count,spectrum,scheduled_for,approved_at,llm_call_id,
  evaluated_source_count,evaluated_breaking,created_by,evidence_article_ids,trigger)

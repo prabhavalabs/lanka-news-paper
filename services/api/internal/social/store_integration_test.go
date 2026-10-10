@@ -688,6 +688,30 @@ func TestSocialReviewGateIntegration(t *testing.T) {
 			}
 		})
 	}
+	t.Run("revised after review", func(t *testing.T) {
+		id := fixtureEvent(t, store, 2, now)
+		text := fmt.Sprintf(`{"items":[{"id":%q,"score":90,"publish":true,"reason":"Important","headline_si":"මාතර","summary_si":"මාතර","caption_si":"පුවත මෙන්න.","hashtags":[]}]}`, id)
+		model := &editorialModel{
+			response: llm.Response{Provider: "codex_cli", Text: text},
+			reviews:  []llm.Response{{Provider: "codex_cli", Text: `{"pass":false,"score":55,"summary":"Unattributed accusation.","issues":[{"severity":"major","field":"caption","message":"Attribute the accusation to the police."}]}`}},
+			revision: llm.Response{Provider: "codex_cli", Text: `{"headline_si":"මාතර සිද්ධිය","summary_si":"පොලිසිය පවසයි","caption_si":"පොලිසිය පවසන පරිදි පුවත මෙන්න.","hashtags":[]}`},
+		}
+		service.model = model
+		require.NoError(t, service.Select(ctx, TriggerRealtime))
+		require.Equal(t, 1, model.revisions)
+		require.Equal(t, 2, model.reviewCalls)
+		var postID string
+		require.NoError(t, store.pool.QueryRow(ctx, `SELECT id::text FROM social_posts WHERE event_id=$1`, id).Scan(&postID))
+		p, err := store.GetPost(ctx, postID)
+		require.NoError(t, err)
+		require.Equal(t, "approved", p.Status)
+		require.Equal(t, "passed", p.ReviewStatus)
+		require.Equal(t, 1, p.ReviewRevisions)
+		require.Equal(t, "මාතර සිද්ධිය", p.HeadlineSI)
+		require.Contains(t, p.Caption, "පොලිසිය පවසන පරිදි")
+		require.Contains(t, p.Caption, "මූලාශ්‍ර:")
+		require.NotContains(t, p.Caption, "https://")
+	})
 	settings.RealtimeEnabled = false
 	_, err = store.UpdateSettings(ctx, settings, actor)
 	require.NoError(t, err)

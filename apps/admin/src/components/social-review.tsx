@@ -25,6 +25,7 @@ export function ReviewPanel({ post }: { post: SocialPost }) {
   return <div className={`space-y-2 rounded-xl border p-3 text-sm ${tone}`}>
     <p className="font-medium">AI quality review{post.reviewed_at ? <span className="font-normal text-muted-foreground"> · {formatDateTime(post.reviewed_at)}</span> : null}</p>
     {reviewMeaning[post.review_status] ? <p className="text-xs">{reviewMeaning[post.review_status]}</p> : null}
+    {post.review_revisions > 0 ? <p className="text-xs text-muted-foreground">The first draft failed review, so the AI rewrote it to fix the issues{post.review_revisions > 1 ? ` (${post.review_revisions} times)` : ''}. This is the review of the rewritten post.</p> : null}
     {post.review_summary ? <p className="text-muted-foreground">{post.review_summary}</p> : null}
     {post.review_issues?.length ? <ul className="space-y-1">{post.review_issues.map((issue, i) => <li key={i} className="flex gap-2"><Badge variant={issue.severity === 'minor' ? 'secondary' : 'destructive'} className="shrink-0 capitalize">{issue.severity}</Badge><span><span className="text-muted-foreground">{issue.field}:</span> {issue.message}</span></li>)}</ul> : null}
   </div>

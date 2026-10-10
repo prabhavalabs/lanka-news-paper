@@ -95,6 +95,7 @@ type Post struct {
 	ReviewLLMCallID      *int64        `json:"review_llm_call_id"`
 	ReviewedAt           *time.Time    `json:"reviewed_at"`
 	HoldReason           *string       `json:"hold_reason"`
+	ReviewRevisions      int           `json:"review_revisions"`
 	Plan                 *PublishPlan  `json:"plan,omitempty"`
 	CreatedAt            time.Time     `json:"created_at"`
 	UpdatedAt            time.Time     `json:"updated_at"`

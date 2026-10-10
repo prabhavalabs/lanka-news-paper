@@ -953,7 +953,7 @@ export type SocialPost = {
   created_by: string; created_at: string; updated_at: string;
   channel: SocialChannelKey; trigger: SocialTrigger; review_status: SocialReviewStatus; review_score: number | null;
   review_summary: string; review_issues: SocialReviewIssue[]; reviewed_at: string | null;
-  hold_reason: string | null; plan?: SocialPublishPlan;
+  hold_reason: string | null; review_revisions: number; plan?: SocialPublishPlan;
 };
 /** Whether and when a post goes out; `at` is an estimate when `estimated` is true. */
 export type SocialPublishPlan = {

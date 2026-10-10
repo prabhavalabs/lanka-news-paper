@@ -63,11 +63,23 @@ type editorialModel struct {
 	review      llm.Response // social_post_review answer; empty means a clean pass
 	reviewErr   error
 	reviewCalls int
+	reviews     []llm.Response // successive review answers, used before review
+	revision    llm.Response   // answer to the rewrite request after a failed review
+	revisions   int
 }
 
 func (model *editorialModel) Complete(_ context.Context, request llm.Request) (llm.Response, error) {
+	if request.System == revisionPrompt {
+		model.revisions++
+		return model.revision, nil
+	}
 	if request.Task == "social_post_review" {
 		model.reviewCalls++
+		if len(model.reviews) > 0 {
+			next := model.reviews[0]
+			model.reviews = model.reviews[1:]
+			return next, nil
+		}
 		if model.review.Provider == "" && model.reviewErr == nil {
 			return llm.Response{Provider: "codex_cli", Text: `{"pass":true,"score":95,"summary":"Meets the standards.","issues":[]}`}, nil
 		}

@@ -49,3 +49,10 @@ func TestPlanFor(t *testing.T) {
 	paused := planFor(Post{ID: "a", Status: "approved"}, Settings{}, true, nil)
 	require.Equal(t, "paused", paused.State)
 }
+
+func TestRevisionHelpers(t *testing.T) {
+	require.Equal(t, "පුවත.", captionBody(BuildCaption("පුවත.", []string{"Hiru News"}, "", []string{"දුම්රිය"})))
+	require.True(t, revisable(reviewResult{Issues: []ReviewIssue{{Severity: "major"}}}))
+	require.False(t, revisable(reviewResult{Score: 60, Issues: []ReviewIssue{{Severity: "minor"}}}))
+	require.Equal(t, "thulawanews.com", siteName("https://www.thulawanews.com/"))
+}

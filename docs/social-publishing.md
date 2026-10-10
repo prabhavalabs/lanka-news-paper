@@ -2,7 +2,7 @@
 
 The backend prepares original Sinhala image posts from publishable news evidence. Selection runs every 15 minutes, makes one `social_post_editorial` gateway call for the batch, and writes a review queue. Publishing checks the queue every three minutes and is also enqueued after approval. Both settings `enabled` and `auto_publish` default to false. Enabling selection alone keeps human approval required.
 
-Cards contain our headline, summary and the credited sources placed on the coverage spectrum (left, centre and right by each source's average analysed lean; unanalysed sources are listed separately). Publisher logos come from the bundled copies in `services/api/internal/social/assets/source-logos` or local media storage; remote logo URLs are not fetched, so those sources show their initial. Captions credit the sources and, when `SNAP_SOCIAL_INCLUDE_LINK` is true, link to our `/e/{eventId}` or `/a/{articleId}` page. Cards render at 2× (2160×2700) so text stays sharp after Facebook recompresses the image. Publisher images and verbatim publisher text are never used. The card renderer returns a 1080×1350 PNG; media storage saves it as `social/posts/{postId}.png`. Facebook receives the bytes through a multipart `/photos` upload, so media need not be public. The API and worker must share local media storage, or both use the same R2 bucket.
+Cards contain our headline, summary and the credited sources placed on the coverage spectrum (left, centre and right by each source's average analysed lean; unanalysed sources are listed separately). Publisher logos come from the bundled copies in `services/api/internal/social/assets/source-logos` or local media storage; remote logo URLs are not fetched, so those sources show their initial. Captions credit the sources and never contain a URL; when `SNAP_SOCIAL_INCLUDE_LINK` is true the card footer shows the website name (for example `thulawanews.com`). Cards render at 2× (2160×2700) so text stays sharp after Facebook recompresses the image. Publisher images and verbatim publisher text are never used. The card renderer returns a 1080×1350 PNG; media storage saves it as `social/posts/{postId}.png`. Facebook receives the bytes through a multipart `/photos` upload, so media need not be public. The API and worker must share local media storage, or both use the same R2 bucket.
 
 ## Automated pipeline
 
@@ -19,7 +19,7 @@ The pipeline can run end to end without a person, but nothing publishes unless a
 
 Post lists from `GET /api/admin/social/posts` and `GET /api/admin/social/content` include a `plan` for each post: whether it will publish (`published`, `publishing`, `scheduled`, `paused`, `needs_editor`, `not_publishing`), the time (an estimate for `scheduled`, replaying the queue against the caps, gap and quiet hours) and a plain-English note. The calendar and review queue show it. A failed or unavailable AI review never publishes automatically; an editor can fix the post and re-run the review, or approve it anyway.
 
-The story link (`SNAP_SOCIAL_INCLUDE_LINK`) is removed from the caption before the AI review, because the system adds it and the reviewer cannot verify it.
+The reviewer sees each evidence article's summary and up to 1,800 characters of its stored full text, accepts reasonable editorial inference (for example the month of a date from the reports' publication dates) and fails a post only for blocker or major issues: legal or safety risk, contradiction of the evidence, invented or wrong names, numbers, dates or outcomes, unattributed accusations, partisan wording or unclear Sinhala. Wording preferences and missing detail are minor. When a review fails with a blocker or major issue, the editor model rewrites the draft once to fix the listed issues (`review_revisions`), the card is re-rendered and the rewrite is reviewed again; only that fresh review decides.
 
 Every post records its `channel` (currently only `facebook`) and its `trigger` (`scheduled`, `realtime` or `manual`). The admin **Content calendar** (`/social/content`) shows posts by the day they published, are scheduled, or were drafted, with a filterable content log and the channel list (Instagram, X, WhatsApp Channel and Telegram are listed as planned).
 
@@ -52,7 +52,7 @@ All variables are optional. `configured` requires App ID, App Secret and a valid
 | `SNAP_META_LOGIN_CONFIG_ID` | Optional Business Login configuration ID |
 | `SNAP_META_GRAPH_VERSION` | `v26.0` |
 | `SNAP_SOCIAL_TOKEN_KEY` | Base64 encoded, exactly 32 decoded bytes; AES-256-GCM |
-| `SNAP_SOCIAL_INCLUDE_LINK` | `false`. When true, captions and cards include the public story link and caption edits must keep it. Leave off until the public domain is live. |
+| `SNAP_SOCIAL_INCLUDE_LINK` | `false`. When true, the card footer shows the website name from `SNAP_SOCIAL_PUBLIC_BASE_URL`. Captions never contain a URL. |
 | `SNAP_SOCIAL_PUBLIC_BASE_URL` | `SNAP_NEWSLETTER_BASE_URL`, otherwise `https://thulawanews.com` |
 | `SNAP_SOCIAL_CHROME_PATH` | Chrome/Chromium executable; production defaults to `/usr/bin/chromium`, local empty uses auto-detection |
 | `SNAP_SOCIAL_CHROME_NO_SANDBOX` | Production defaults to `true`; renderer parses a boolean, root always requires no sandbox |
