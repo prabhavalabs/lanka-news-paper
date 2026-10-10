@@ -13,12 +13,14 @@ FROM alpine:3.22
 
 ARG CODEX_CLI_VERSION=0.162.1
 
-RUN apk add --no-cache ca-certificates nodejs npm su-exec tzdata \
+RUN apk add --no-cache ca-certificates nodejs npm su-exec tzdata chromium font-noto-sinhala \
     && npm install --global "@openai/codex@${CODEX_CLI_VERSION}" \
     && npm cache clean --force \
     && addgroup -S app \
     && adduser -S -G app -h /app app \
     && install -d -o app -g app /data/media /data/codex
+ENV SNAP_SOCIAL_CHROME_PATH=/usr/bin/chromium
+ENV SNAP_SOCIAL_CHROME_NO_SANDBOX=true
 WORKDIR /app
 COPY --from=build /out/ ./
 COPY services/api/migrations ./migrations
