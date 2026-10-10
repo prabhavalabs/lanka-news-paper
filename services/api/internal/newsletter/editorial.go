@@ -61,6 +61,9 @@ func applyEditorialPlanStrict(ctx context.Context, model llm.Completer, digest D
 	if err != nil {
 		return digest, settings, editorialOutcome{}, fmt.Errorf("generate newsletter editorial plan: %w", err)
 	}
+	if response.Provider == "none" {
+		return digest, settings, editorialOutcome{}, errors.New("generate newsletter editorial plan: no model provider responded")
+	}
 	if strings.TrimSpace(response.Text) == "" {
 		return digest, settings, editorialOutcome{}, errors.New("generate newsletter editorial plan: model returned an empty response")
 	}

@@ -9,9 +9,10 @@ import (
 )
 
 var (
-	ErrInvalidQuestion = errors.New("question is required")
-	ErrInvalidSettings = errors.New("watch tower settings are invalid")
-	ErrNotFound        = errors.New("watch tower conversation not found")
+	ErrInvalidQuestion  = errors.New("question is required")
+	ErrInvalidSettings  = errors.New("watch tower settings are invalid")
+	ErrModelUnavailable = errors.New("watch tower model is unavailable")
+	ErrNotFound         = errors.New("watch tower conversation not found")
 )
 
 const (

@@ -137,12 +137,14 @@ func (service *Service) Ask(ctx context.Context, userID, threadID uuid.UUID, que
 			Input:            buildPrompt(question, conversation.Messages, scope, articles),
 			JSONSchema:       watchTowerSchema,
 			MaxTokens:        3200,
-			ProviderSort:     "throughput",
 			DisableReasoning: true,
 		}
 		response, completeErr := service.model.Complete(ctx, answerRequest)
 		if completeErr != nil {
 			return Exchange{}, fmt.Errorf("answer with newsroom evidence: %w", completeErr)
+		}
+		if response.Provider == "none" {
+			return Exchange{}, ErrModelUnavailable
 		}
 		answer, parseErr := parseModelAnswer(response.Text)
 		if response.FinishReason == "length" || parseErr != nil {
@@ -151,6 +153,9 @@ func (service *Service) Ask(ctx context.Context, userID, threadID uuid.UUID, que
 			response, completeErr = service.model.Complete(ctx, answerRequest)
 			if completeErr != nil {
 				return Exchange{}, fmt.Errorf("retry compact newsroom answer: %w", completeErr)
+			}
+			if response.Provider == "none" {
+				return Exchange{}, ErrModelUnavailable
 			}
 			answer, parseErr = parseModelAnswer(response.Text)
 		}
@@ -208,9 +213,9 @@ func (service *Service) expandRetrieval(ctx context.Context, question string, me
 	}
 	response, err := service.model.Complete(ctx, llm.Request{
 		Task: "watch_tower_retrieval", System: retrievalSystemPrompt, Input: input.String(),
-		JSONSchema: retrievalSchema, DisableReasoning: true, MaxTokens: 300, ProviderSort: "throughput",
+		JSONSchema: retrievalSchema, DisableReasoning: true, MaxTokens: 300,
 	})
-	if err != nil || strings.TrimSpace(response.Text) == "" {
+	if err != nil || response.Provider == "none" || strings.TrimSpace(response.Text) == "" {
 		return scope
 	}
 	var plan retrievalPlan

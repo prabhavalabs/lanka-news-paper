@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"time"
 )
 
 type requestIDContextKey struct{}
@@ -93,4 +94,15 @@ func newRequestID() string {
 		return "request-id-unavailable"
 	}
 	return hex.EncodeToString(buffer)
+}
+
+// Long inference routes need time for slot waiting, retrieval and answer retries.
+// Other endpoints retain the server's ordinary 75-second write timeout.
+func inferenceRequest(w http.ResponseWriter, request *http.Request) (*http.Request, context.CancelFunc) {
+	const budget = 20 * time.Minute
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(budget + time.Minute)); err != nil && err != http.ErrNotSupported {
+		slog.WarnContext(request.Context(), "extend inference response deadline", "error", err)
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), budget)
+	return request.WithContext(ctx), cancel
 }

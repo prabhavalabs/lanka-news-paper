@@ -22,6 +22,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/jobs"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm/codex"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/media"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/newsletter"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
@@ -63,11 +64,11 @@ func run(logger *slog.Logger) error {
 	}
 
 	clusters := cluster.NewStore(pool)
-	gateway := llm.NewGateway(pool)
+	codexClient := codex.NewClient(nil)
+	gateway := llm.NewGateway(pool, codexClient)
 	analysisStore := adminanalysis.NewStore(pool)
-	codex := adminanalysis.NewCodexClient(nil)
-	model := llm.NewRouter(gateway, adminanalysis.NewCodexProvider(analysisStore, codex))
-	adminAnalysis := adminanalysis.NewService(analysisStore, model, codex)
+	model := gateway
+	adminAnalysis := adminanalysis.NewService(analysisStore, model, codexClient)
 	politicsStore := politics.NewStore(pool, model)
 	pipelineStore := pipeline.NewStore(pool, model, clusters, politicsStore)
 	watchTower := watchtower.NewService(watchtower.NewStore(pool), model, time.Now)

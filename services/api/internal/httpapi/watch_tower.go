@@ -94,6 +94,8 @@ func (handler watchTowerHandler) messages(w http.ResponseWriter, request *http.R
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "A question is required.")
 		return
 	}
+	request, cancel := inferenceRequest(w, request)
+	defer cancel()
 	exchange, err := handler.service.Ask(request.Context(), currentUser(request).ID, threadID, body.Content)
 	if err != nil {
 		handler.writeError(w, err)
@@ -143,14 +145,15 @@ func (handler watchTowerHandler) model(w http.ResponseWriter, request *http.Requ
 		return
 	}
 	var body struct {
-		ProviderID string `json:"provider_id"`
-		Model      string `json:"model"`
+		ProviderID      string `json:"provider_id"`
+		Model           string `json:"model"`
+		ReasoningEffort string `json:"reasoning_effort"`
 	}
 	if err := decodeJSON(request, &body); err != nil {
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "A provider and model are required.")
 		return
 	}
-	if err := handler.llm.UpdateWatchTowerModel(request.Context(), currentUser(request).ID, body.ProviderID, body.Model); err != nil {
+	if err := handler.llm.UpdateWatchTowerModel(request.Context(), currentUser(request).ID, body.ProviderID, body.Model, body.ReasoningEffort); err != nil {
 		switch {
 		case errors.Is(err, llm.ErrWatchTowerModelInvalid):
 			writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid model", err.Error())
@@ -167,6 +170,8 @@ func (handler watchTowerHandler) model(w http.ResponseWriter, request *http.Requ
 
 func (handler watchTowerHandler) writeError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, watchtower.ErrModelUnavailable):
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Watch Tower model unavailable", "The model is unavailable or in cooldown. Try again later.")
 	case errors.Is(err, watchtower.ErrNotFound):
 		writeProblem(w, http.StatusNotFound, "https://snap.local/problems/not-found", "Conversation not found", "This Watch Tower conversation does not exist.")
 	case errors.Is(err, watchtower.ErrInvalidQuestion):

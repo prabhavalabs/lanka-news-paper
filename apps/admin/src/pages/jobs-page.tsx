@@ -1,3 +1,4 @@
+import { providerLabel } from '@/lib/llm'
 import {
   createClient,
   type CronJobHealth,
@@ -870,6 +871,7 @@ function formatArtifactDate(value: unknown, dateOnly = false) {
 }
 
 function formatArtifactValue(key: string, value: unknown) {
+  if (key === 'provider' || key === 'provider_id') return providerLabel(textValue(value))
   if (key.endsWith('_at') || key === 'date') return formatArtifactDate(value, key === 'date')
   if (key === 'duration_ms') return formatDuration(typeof value === 'number' ? value : null)
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'

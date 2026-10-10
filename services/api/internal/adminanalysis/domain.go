@@ -33,8 +33,8 @@ func ValidateCreateRequest(request CreateRequest) error {
 	if workflow != "single_pass" && workflow != "full_pipeline" {
 		return errors.New("workflow must be single_pass or full_pipeline")
 	}
-	if request.Provider != "openrouter" && request.Provider != "codex_cli" {
-		return errors.New("provider must be openrouter or codex_cli")
+	if request.Provider != "codex_cli" {
+		return errors.New("provider must be codex_cli")
 	}
 	request.Model = strings.TrimSpace(request.Model)
 	if request.Model == "" {

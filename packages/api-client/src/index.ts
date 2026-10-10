@@ -242,33 +242,28 @@ export type SourcePerformance = {
   }[];
 };
 
+export type ReasoningEffort = "low" | "medium" | "high";
+
 export type LlmProvider = {
   id: string;
   name: string;
-  base_url: string;
   enabled: boolean;
   available: boolean;
   status: string;
   status_detail: string;
-  key_set: boolean;
-  latency_ms: number;
   checked_at: string;
-  free_tier: boolean;
-  limit_usd: number | null;
-  limit_remaining_usd: number | null;
-  expires_at: string | null;
+  installed: boolean;
+  authenticated: boolean;
+  ready: boolean;
+  version: string;
+  auth_method: string;
 };
 
 export type LlmModel = {
   id: string;
   name: string;
-  context_length: number;
-  input_price_per_million: number;
-  output_price_per_million: number;
-  input_modalities: string[];
-  output_modalities: string[];
-  supported_parameters: string[];
   compatible_tasks: string[];
+  reasoning_efforts: ReasoningEffort[];
 };
 
 export type LlmProfile = {
@@ -279,6 +274,7 @@ export type LlmProfile = {
   model: string;
   timeout_seconds: number;
   enabled: boolean;
+  reasoning_effort: ReasoningEffort | "";
 };
 
 export type CodexStatus = {
@@ -295,7 +291,7 @@ export type CodexStatus = {
 
 export type AnalysisBackfillScope = "date_range" | "catalog" | "article";
 export type AnalysisBackfillWorkflow = "single_pass" | "full_pipeline";
-export type AnalysisBackfillProvider = "openrouter" | "codex_cli" | "pipeline";
+export type AnalysisBackfillProvider = "codex_cli";
 
 export type AnalysisBackfillRequest = {
   scope: AnalysisBackfillScope;
@@ -312,7 +308,7 @@ export type AnalysisBackfillRun = {
   id: string;
   scope: AnalysisBackfillScope;
   workflow: AnalysisBackfillWorkflow;
-  provider: AnalysisBackfillProvider;
+  provider: string; // Historical runs can retain legacy providers.
   model: string;
   from: string | null;
   to: string | null;
@@ -877,11 +873,12 @@ export type AgentWorkflow = {
   revision: number;
   provider_id: string;
   model: string;
+  reasoning_effort: ReasoningEffort | "";
   updated_at: string;
 };
 
 export type AgentWorkflowInput = Pick<AgentWorkflow,
-  "custom_instructions" | "personality" | "tone" | "response_language" | "audience" | "enabled" | "provider_id" | "model"
+  "custom_instructions" | "personality" | "tone" | "response_language" | "audience" | "enabled" | "provider_id" | "model" | "reasoning_effort"
 >;
 
 export type AgentFeedback = {
@@ -1203,7 +1200,7 @@ export function createClient(baseUrl = "") {
       request<{ items: LlmModel[] }>(url("/api/admin/llm/models")),
     llmProfiles: () =>
       request<{ items: LlmProfile[] }>(url("/api/admin/llm/profiles")),
-    updateLlmProfile: (body: { task: string; model: string }) =>
+    updateLlmProfile: (body: { task: string; provider_id: "codex_cli"; model: string; reasoning_effort?: ReasoningEffort | "" }) =>
       request<{ ok: boolean }>(url("/api/admin/llm/profiles"), {
         method: "POST",
         body: JSON.stringify(body)
@@ -1267,7 +1264,7 @@ export function createClient(baseUrl = "") {
         method: "POST",
         body: JSON.stringify(body)
       }),
-    updateWatchTowerModel: (body: { provider_id: "openrouter"; model: string }) =>
+    updateWatchTowerModel: (body: { provider_id: "codex_cli"; model: string; reasoning_effort?: ReasoningEffort | "" }) =>
       request<{ ok: boolean }>(url("/api/admin/settings/watch-tower/model"), {
         method: "POST",
         body: JSON.stringify(body)

@@ -96,7 +96,7 @@ func (service *Service) RunTest(ctx context.Context, raw TestInput, actor uuid.U
 	if len(digest.Stories) > settings.MaxStories {
 		digest.Stories = digest.Stories[:settings.MaxStories]
 	}
-	modelContext, cancel := context.WithTimeout(ctx, 45*time.Second)
+	modelContext, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	digest, settings, outcome, err := applyEditorialPlanStrict(modelContext, service.model, digest, settings)
 	cancel()
 	run := TestRun{

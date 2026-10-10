@@ -53,7 +53,7 @@ func TestServiceAskPersistsAGroundedAnswer(t *testing.T) {
 	}
 	model := &fakeCompleter{response: llm.Response{
 		Text:     `{"answer_markdown":"## Economy\n\nThe central bank held policy rates steady [1].","cited_indices":[1],"follow_up_questions":["How did markets respond?"]}`,
-		Provider: "openrouter",
+		Provider: "codex_cli",
 		Model:    "test-model",
 	}}
 	service := NewService(repository, model, func() time.Time {
@@ -88,7 +88,7 @@ func TestServiceAskRetriesATruncatedAnswerWithACompactBrief(t *testing.T) {
 	}
 	model := &fakeCompleter{responses: []llm.Response{
 		{Text: `{"answer_markdown":"An unfinished`, FinishReason: "length"},
-		{Text: `{"answer_markdown":"## කෙටි සාරාංශය\n\nප්‍රතිපත්ති පොලී අනුපාත නොවෙනස්ව පවතී [1].","cited_indices":[1],"follow_up_questions":[]}`, Provider: "openrouter", Model: "test-model", FinishReason: "stop"},
+		{Text: `{"answer_markdown":"## කෙටි සාරාංශය\n\nප්‍රතිපත්ති පොලී අනුපාත නොවෙනස්ව පවතී [1].","cited_indices":[1],"follow_up_questions":[]}`, Provider: "codex_cli", Model: "test-model", FinishReason: "stop"},
 	}}
 	service := NewService(repository, model, time.Now)
 
@@ -100,7 +100,7 @@ func TestServiceAskRetriesATruncatedAnswerWithACompactBrief(t *testing.T) {
 	require.Equal(t, 4000, model.requests[1].MaxTokens)
 	require.Contains(t, model.requests[1].System, "COMPACT RETRY")
 	require.Contains(t, result.Assistant.Content, "කෙටි සාරාංශය")
-	require.Equal(t, "openrouter", repository.savedAssistant.Provider)
+	require.Equal(t, "codex_cli", repository.savedAssistant.Provider)
 }
 
 func TestServiceAskRejectsBlankQuestions(t *testing.T) {
@@ -277,4 +277,23 @@ func (completer *fakeCompleter) Complete(_ context.Context, request llm.Request)
 func (completer *fakeCompleter) CompleteWithModel(_ context.Context, request llm.Request, _, _ string) (llm.Response, error) {
 	completer.request = request
 	return completer.response, completer.err
+}
+
+func TestServiceAskDoesNotRetryUnavailableProvider(t *testing.T) {
+	repository := &fakeRepository{
+		settings:     Settings{ResponseLanguage: LanguageSinhala},
+		conversation: Conversation{Thread: Thread{ID: uuid.New(), UserID: uuid.New()}},
+		articles:     []ArticleEvidence{{ID: uuid.New(), Headline: "Policy report"}},
+	}
+	model := &fakeCompleter{response: llm.Response{Provider: "none"}}
+	_, err := NewService(repository, model, time.Now).Ask(context.Background(), uuid.New(), uuid.New(), "What happened today?")
+	require.ErrorIs(t, err, ErrModelUnavailable)
+	answerCalls := 0
+	for _, request := range model.requests {
+		if request.Task == "watch_tower_answer" {
+			answerCalls++
+		}
+	}
+	require.Equal(t, 1, answerCalls)
+	require.Empty(t, repository.savedQuestion)
 }

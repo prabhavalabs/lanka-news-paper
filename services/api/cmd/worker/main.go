@@ -17,6 +17,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/jobs"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm/codex"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/newsletter"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
@@ -56,17 +57,14 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	news := publish.NewStore(pool)
-	gateway := llm.NewGateway(pool)
+	codexClient := codex.NewClient(nil)
+	gateway := llm.NewGateway(pool, codexClient)
 	analysisStore := adminanalysis.NewStore(pool)
-	codex := adminanalysis.NewCodexClient(nil)
-	model := llm.NewRouter(gateway, adminanalysis.NewCodexProvider(analysisStore, codex))
-	adminAnalysis := adminanalysis.NewService(analysisStore, model, codex)
+	model := gateway
+	adminAnalysis := adminanalysis.NewService(analysisStore, model, codexClient)
 	clusters := cluster.NewStore(pool)
 	politicsStore := politics.NewStore(pool, model)
-	pipelineStore := pipeline.NewStore(
-		pool, model, clusters, politicsStore,
-		pipeline.WithAdminProviderSort(os.Getenv("SNAP_ADMIN_ANALYSIS_PROVIDER_SORT")),
-	)
+	pipelineStore := pipeline.NewStore(pool, model, clusters, politicsStore)
 	contentStore := content.NewStore(pool)
 	newsletterStore := newsletter.NewStore(pool)
 	if err := newsletterStore.SyncSettings(processContext, newsletter.Settings{

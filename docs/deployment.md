@@ -29,8 +29,9 @@ Keep `SNAP_BOOTSTRAP_ADMIN_PASSWORD_HASH` inside single quotes in that file.
 Bcrypt hashes contain `$`, which Docker Compose otherwise treats as environment
 variable interpolation.
 
-`OPENROUTER_API_KEY` must be present in that file. Both API and worker containers
-receive it; the database stores only the environment-variable reference.
+For migration, delete `OPENROUTER_API_KEY` from `/opt/lanka-news-paper/.env`
+and revoke the retired key in the OpenRouter dashboard. Remove the obsolete
+`CODEX_BACKFILL_MODELS` and `SNAP_ADMIN_ANALYSIS_PROVIDER_SORT` settings too.
 
 ### Morning newsletter
 
@@ -68,26 +69,72 @@ The DNS value must contain a literal `@`, without a backslash. Ensure
 aggregate reports are received. Begin with `p=none`; move to quarantine or
 reject only after the reports show that all legitimate senders align.
 
-## Codex CLI administrative backfills
+## Codex CLI authentication and capacity
 
-The API image contains a pinned Codex CLI, but Codex is not used by regular
-workflows. Its authentication is stored in a dedicated Docker volume shared by
-the API readiness check and the isolated administrative-analysis worker.
+Codex CLI is the only LLM provider. The pinned API image contains the CLI;
+API (Watch Tower) and worker both mount `codex-data` at `CODEX_HOME=/data/codex`.
+Treat `auth.json` and volume backups as secrets: never log, commit, or copy them
+into images. Use one owner-controlled ChatGPT account on this trusted private server.
 
-After the first deployment (and whenever authentication expires), authenticate
-the volume interactively on the VPS:
+After first deployment, authentication expiry, or account rotation, run on the VPS:
 
 ```sh
 cd /opt/lanka-news-paper
 docker compose --profile tools run --rm codex-login
 ```
 
-Follow the device-login URL shown by the command, then confirm the Settings page
-reports Codex CLI as ready. The application runs Codex in an empty temporary
-workspace, disables interactive tools, strips database and provider secrets from
-the child environment, enforces structured output, and processes only one
-administrative article at a time. `CODEX_BACKFILL_MODELS` in `.env` can restrict
-the model choices exposed to administrators.
+Follow the device-login URL and authenticate as the intended owner. For rotation,
+first revoke the old account session using its account security controls, then
+stop both API and worker, repeat this login with the replacement owner account,
+then restart both processes to discard cached login confirmation. The CLI manages credential
+refresh; expired or revoked credentials require this interactive login again.
+Never print the credential file to diagnose readiness.
+
+Check **AI routing** for provider status, version, authentication method, and
+cooldown, or **Settings** for CLI readiness. Authenticated administrators can
+also request `GET /api/admin/llm/providers` and
+`GET /api/admin/settings/codex` using their existing authenticated session.
+The latter is a login probe; provider status also includes quota/auth cooldown.
+A successful login probe cannot establish that quota has recovered.
+
+```dotenv
+SNAP_CODEX_CONCURRENCY=2
+SNAP_CODEX_QUOTA_COOLDOWN=15m
+SNAP_CODEX_MODELS=gpt-6-luna,gpt-6.1-sol,gpt-6-sol,gpt-5.6-luna,gpt-5.6-terra
+```
+
+Concurrency limits CLI executions per process (API and worker have independent
+limits). Auth or quota failures pause pipeline dispatch during the cooldown;
+blocked retries do not renew the cooldown. After it expires, a new request can
+retry; this does not guarantee restored quota. Reauthenticate on `auth_expired`.
+Configure models actually available to the owner account; the catalog is a
+configured allowlist, not an account entitlement check.
+
+The worker retains its 2 GB ceiling. API memory is 1 GB to accommodate the CLI
+processes alongside the Go service and request buffers. These ceilings are
+configuration, not measured capacity; measure peak usage before increasing concurrency.
+
+### Shared credential-volume refresh risk
+
+API and worker currently share a writable credential volume, and each can run
+multiple independent CLI processes. In pinned CLI 0.162.1, the refresh semaphore
+is local to an AuthManager; file storage truncates and rewrites `auth.json`
+without a cross-process lock. Concurrent refreshes can race or expose a partial
+write. This remains a runtime risk; the application semaphore does not coordinate
+containers. See the pinned upstream [refresh implementation](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/login/src/auth/manager.rs)
+and [file storage](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/login/src/auth/storage.rs).
+
+Stop API and worker before interactive login or account rotation. Setting
+`SNAP_CODEX_CONCURRENCY=1` reduces refresh contention within each process but
+does not serialize API against worker. A complete fix needs either one
+credential-owning execution service or an advisory lock around every CLI
+invocation sharing the volume, including login tools; the latter also serializes
+inference. Do not mount a worker-owned home read-only in API and assume refresh
+will work: API-side refresh would fail to persist its credentials.
+
+The local worker compose file also mounts the host's entire `~/.codex` home.
+Host CLI sessions can refresh the same account file concurrently; use a separately
+logged-in, dedicated CLI home when isolating development from personal sessions.
 
 ## DNS and TLS
 

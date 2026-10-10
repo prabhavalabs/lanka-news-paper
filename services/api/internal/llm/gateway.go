@@ -1,24 +1,20 @@
 package llm
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/classify"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm/codex"
 )
+
+var ErrProviderBlocked = errors.New("Codex provider is in cooldown")
 
 type Request struct {
 	Task             string
@@ -26,14 +22,14 @@ type Request struct {
 	Input            string
 	JSONSchema       map[string]any
 	DisableReasoning bool
-	MaxTokens        int
+	MaxTokens        int // Retained for callers; Codex has no output-token limit option.
 	ArticleID        string
 	PipelineRunID    string
 	PipelineStepID   string
-	ProviderSort     string
 }
 
 type Response struct {
+	CallID       int64
 	Text         string
 	Provider     string
 	Model        string
@@ -41,66 +37,71 @@ type Response struct {
 }
 
 type providerProfile struct {
-	id, kind, baseURL, keyRef, model string
+	id, kind, model, reasoningEffort string
 	timeout                          int
 }
 
 type providerResult struct {
-	Text         string
-	InputTokens  *int
-	OutputTokens *int
-	FirstTokenMS *int
-	FinishReason string
+	Text              string
+	InputTokens       *int
+	OutputTokens      *int
+	FirstTokenMS      *int
+	FinishReason      string
+	CachedInputTokens int
+	ReasoningTokens   int
+}
+
+type CodexClient interface {
+	Complete(context.Context, codex.CallOptions) (codex.Result, error)
+	Probe(context.Context) codex.Status
 }
 
 type Gateway struct {
-	pool   *pgxpool.Pool
-	client *http.Client
+	pool     *pgxpool.Pool
+	client   CodexClient
+	cooldown time.Duration
 }
 
-func NewGateway(pool *pgxpool.Pool) *Gateway {
-	return &Gateway{pool: pool, client: &http.Client{}}
+func NewGateway(pool *pgxpool.Pool, clients ...CodexClient) *Gateway {
+	var client CodexClient = codex.NewClient(nil)
+	if len(clients) > 0 && clients[0] != nil {
+		client = clients[0]
+	}
+	cooldown, err := time.ParseDuration(os.Getenv("SNAP_CODEX_QUOTA_COOLDOWN"))
+	if err != nil || cooldown <= 0 {
+		cooldown = 15 * time.Minute
+	}
+	return &Gateway{pool: pool, client: client, cooldown: cooldown}
 }
 
 func (gateway *Gateway) Complete(ctx context.Context, request Request) (Response, error) {
 	request = gateway.applyWorkflow(ctx, request)
 	var profile providerProfile
 	err := gateway.pool.QueryRow(ctx, `
-		SELECT p.id, p.kind, COALESCE(p.base_url, ''), COALESCE(p.api_key_ref, ''), t.model, t.timeout_seconds
-		FROM llm_task_profiles t
-		JOIN llm_providers p ON p.id = t.provider_id
+		SELECT p.id, p.kind, t.model, t.timeout_seconds, COALESCE(t.reasoning_effort, '')
+		FROM llm_task_profiles t JOIN llm_providers p ON p.id = t.provider_id
 		WHERE t.task = $1 AND t.enabled AND p.enabled
-	`, request.Task).Scan(&profile.id, &profile.kind, &profile.baseURL, &profile.keyRef, &profile.model, &profile.timeout)
-	if err != nil && err != pgx.ErrNoRows {
-		return gateway.fallback(request), nil
-	}
-	if err == pgx.ErrNoRows {
+	`, request.Task).Scan(&profile.id, &profile.kind, &profile.model, &profile.timeout, &profile.reasoningEffort)
+	if err != nil {
 		return gateway.fallback(request), nil
 	}
 	return gateway.completeWithProfile(ctx, request, profile, true)
 }
 
-// CompleteWithModel performs one strict, explicitly configured OpenRouter call.
-// Administrative backfills use this path so a failed provider request remains
-// visible and retryable instead of silently falling back to keyword rules.
+// CompleteWithModel is strict so administrative failures remain retryable.
+// The task's timeout and reasoning effort still apply to a pinned model.
 func (gateway *Gateway) CompleteWithModel(ctx context.Context, request Request, providerID, model string) (Response, error) {
+	providerID, model = strings.TrimSpace(providerID), strings.TrimSpace(model)
+	if err := validateProfile(request.Task, providerID, model, ""); err != nil {
+		return Response{}, err
+	}
 	request = gateway.applyWorkflow(ctx, request)
-	providerID = strings.TrimSpace(providerID)
-	model = strings.TrimSpace(model)
-	if providerID != "openrouter" {
-		return Response{}, fmt.Errorf("unsupported explicit provider %q", providerID)
-	}
-	if model == "" {
-		return Response{}, fmt.Errorf("model is required")
-	}
 	var profile providerProfile
 	err := gateway.pool.QueryRow(ctx, `
-		SELECT id, kind, COALESCE(base_url, ''), COALESCE(api_key_ref, ''), $2::text, 600
-		FROM llm_providers
-		WHERE id = $1 AND enabled
-	`, providerID, model).Scan(
-		&profile.id, &profile.kind, &profile.baseURL, &profile.keyRef, &profile.model, &profile.timeout,
-	)
+		SELECT p.id, p.kind, $2::text, t.timeout_seconds, COALESCE(t.reasoning_effort, '')
+		FROM llm_providers p JOIN llm_task_profiles t ON t.provider_id = p.id
+		WHERE p.id = $1 AND p.enabled AND t.task = $3
+	`, providerID, model, request.Task).Scan(&profile.id, &profile.kind, &profile.model, &profile.timeout, &profile.reasoningEffort)
 	if err != nil {
 		return Response{}, fmt.Errorf("load explicit provider %s: %w", providerID, err)
 	}
@@ -112,47 +113,69 @@ func (gateway *Gateway) completeWithProfile(ctx context.Context, request Request
 	callID := gateway.startCall(ctx, request, profile)
 	gateway.logPipeline(ctx, request, "info", "provider_request_started", "Provider request started", map[string]any{
 		"call_id": callID, "provider": profile.id, "model": profile.model,
-		"task": request.Task, "timeout_seconds": profile.timeout, "streamed": true,
+		"task": request.Task, "timeout_seconds": profile.timeout, "streamed": false,
 	}, started)
-
-	callContext, cancelCall := context.WithTimeout(ctx, time.Duration(profile.timeout)*time.Second)
-	result, callErr := gateway.callProvider(callContext, profile.kind, profile.baseURL, profile.keyRef, profile.model, request, func(firstTokenMS int) {
-		gateway.recordFirstToken(ctx, callID, firstTokenMS)
-		gateway.logPipeline(ctx, request, "info", "provider_first_token", "First token received", map[string]any{
-			"call_id": callID, "provider": profile.id, "model": profile.model, "first_token_ms": firstTokenMS,
-		}, time.Now())
-	})
-	cancelCall()
+	var result providerResult
+	blockedErr := gateway.providerBlockError(ctx)
+	callErr := blockedErr
+	if callErr == nil {
+		result, callErr = gateway.callProvider(ctx, profile, request)
+	}
 	latencyMS := time.Since(started).Milliseconds()
-	recordContext, cancelRecord := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancelRecord()
+	recordContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 	if callErr != nil {
+		// Fast failures do not extend the cooldown; only an attempted call does.
+		if blockedErr == nil && !errors.Is(callErr, ErrProviderBlocked) {
+			gateway.recordCallStatus(recordContext, callErr, started)
+		}
 		outcome := "failed"
 		if allowFallback {
 			outcome = "fallback"
 		}
 		gateway.finishCall(recordContext, callID, outcome, latencyMS, result, callErr)
 		gateway.logPipeline(recordContext, request, "error", "provider_request_failed", "Provider request failed", map[string]any{
-			"call_id": callID, "provider": profile.id, "model": profile.model,
-			"latency_ms": latencyMS, "error": callErr.Error(),
+			"call_id": callID, "provider": profile.id, "model": profile.model, "latency_ms": latencyMS, "error": callErr.Error(),
 		}, time.Now())
 		if allowFallback {
-			return gateway.fallback(request), nil
+			response := gateway.fallback(request)
+			response.CallID = callID
+			return response, nil
 		}
 		return Response{}, callErr
 	}
-	outcome := "ok"
-	if result.FinishReason == "length" {
-		outcome = "truncated"
-	}
-	gateway.finishCall(recordContext, callID, outcome, latencyMS, result, nil)
+	gateway.recordCallStatus(recordContext, nil, started)
+	gateway.finishCall(recordContext, callID, "ok", latencyMS, result, nil)
 	gateway.logPipeline(recordContext, request, "info", "provider_response_completed", "Structured response completed", map[string]any{
-		"call_id": callID, "provider": profile.id, "model": profile.model,
-		"latency_ms": latencyMS, "first_token_ms": result.FirstTokenMS,
+		"call_id": callID, "provider": profile.id, "model": profile.model, "latency_ms": latencyMS,
 		"input_tokens": result.InputTokens, "output_tokens": result.OutputTokens,
+		"cached_input_tokens": result.CachedInputTokens, "reasoning_tokens": result.ReasoningTokens,
 		"finish_reason": result.FinishReason,
 	}, time.Now())
-	return Response{Text: result.Text, Provider: profile.id, Model: profile.model, FinishReason: result.FinishReason}, nil
+	return Response{CallID: callID, Text: result.Text, Provider: profile.id, Model: profile.model, FinishReason: result.FinishReason}, nil
+}
+
+func (gateway *Gateway) callProvider(ctx context.Context, profile providerProfile, request Request) (providerResult, error) {
+	if profile.kind != "codex_cli" {
+		return providerResult{}, fmt.Errorf("unsupported provider kind %q", profile.kind)
+	}
+	effort := profile.reasoningEffort
+	if effort == "" && request.DisableReasoning {
+		effort = "low"
+	}
+	result, err := gateway.client.Complete(ctx, codex.CallOptions{
+		Model: profile.model, ReasoningEffort: effort, System: request.System, Input: request.Input,
+		JSONSchema: request.JSONSchema, Timeout: time.Duration(profile.timeout) * time.Second, BeforeRun: gateway.providerBlockError,
+	})
+	if err != nil && result.InputTokens == 0 && result.OutputTokens == 0 {
+		return providerResult{Text: result.Text}, err
+	}
+	finish := ""
+	if err == nil {
+		finish = "stop"
+	}
+	return providerResult{Text: result.Text, InputTokens: intPointer(result.InputTokens), OutputTokens: intPointer(result.OutputTokens),
+		CachedInputTokens: result.CachedInputTokens, ReasoningTokens: result.ReasoningTokens, FirstTokenMS: result.FirstTokenMS, FinishReason: finish}, err
 }
 
 func (gateway *Gateway) fallback(request Request) Response {
@@ -160,167 +183,57 @@ func (gateway *Gateway) fallback(request Request) Response {
 		result := classify.From(nil, request.Input, "")
 		return Response{Text: result.Slug, Provider: "keyword-rules", Model: result.Model}
 	}
-	return Response{Text: "", Provider: "none", Model: "none"}
+	return Response{Provider: "none", Model: "none"}
 }
 
-func (gateway *Gateway) callProvider(ctx context.Context, kind, baseURL, keyRef, model string, request Request, onFirstToken func(int)) (providerResult, error) {
-	if kind != "openai_api" {
-		return providerResult{}, fmt.Errorf("unsupported provider kind %q", kind)
-	}
-	if baseURL == "" {
-		return providerResult{}, fmt.Errorf("missing base_url")
-	}
-	apiKey := ""
-	if keyRef != "" {
-		apiKey = os.Getenv(keyRef)
-	}
-	if keyRef == "" {
-		return providerResult{}, fmt.Errorf("missing api key reference")
-	}
-	if keyRef != "" && apiKey == "" {
-		return providerResult{}, fmt.Errorf("missing secret %s", keyRef)
-	}
-	payloadValue := map[string]any{
-		"model":          model,
-		"stream":         true,
-		"stream_options": map[string]any{"include_usage": true},
-		"temperature":    0,
-		"messages": []map[string]string{
-			{"role": "system", "content": request.System},
-			{"role": "user", "content": request.Input},
-		},
-	}
-	isOpenRouter := strings.HasPrefix(strings.TrimRight(baseURL, "/"), "https://openrouter.ai/api/v1")
-	providerOptions := make(map[string]any)
-	if request.JSONSchema != nil {
-		payloadValue["response_format"] = map[string]any{
-			"type": "json_schema",
-			"json_schema": map[string]any{
-				"name":   request.Task,
-				"strict": true,
-				"schema": request.JSONSchema,
-			},
-		}
-		if isOpenRouter {
-			providerOptions["require_parameters"] = true
-		}
-	}
-	if isOpenRouter && validProviderSort(request.ProviderSort) {
-		providerOptions["sort"] = request.ProviderSort
-	}
-	if len(providerOptions) > 0 {
-		payloadValue["provider"] = providerOptions
-	}
-	if request.DisableReasoning {
-		if isOpenRouter {
-			payloadValue["reasoning"] = map[string]any{"effort": "none"}
-		} else {
-			payloadValue["reasoning_effort"] = "none"
-		}
-	}
-	if request.MaxTokens > 0 {
-		payloadValue["max_tokens"] = request.MaxTokens
-	}
-	payload, err := json.Marshal(payloadValue)
-	if err != nil {
-		return providerResult{}, fmt.Errorf("encode provider request: %w", err)
-	}
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/chat/completions", bytes.NewReader(payload))
-	if err != nil {
-		return providerResult{}, err
-	}
-	if apiKey != "" {
-		httpRequest.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	httpRequest.Header.Set("Content-Type", "application/json")
-	started := time.Now()
-	response, err := gateway.client.Do(httpRequest)
-	if err != nil {
-		return providerResult{}, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode >= 400 {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		detail := strings.TrimSpace(string(body))
-		if detail == "" {
-			return providerResult{}, fmt.Errorf("provider status %d", response.StatusCode)
-		}
-		return providerResult{}, fmt.Errorf("provider status %d: %s", response.StatusCode, detail)
-	}
+func intPointer(value int) *int { return &value }
 
-	var result providerResult
-	scanner := bufio.NewScanner(response.Body)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, ":") || !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "[DONE]" {
-			break
-		}
-		var chunk struct {
-			Choices []struct {
-				Delta struct {
-					Content string `json:"content"`
-				} `json:"delta"`
-				FinishReason *string `json:"finish_reason"`
-			} `json:"choices"`
-			Usage *struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-			} `json:"usage"`
-			Error *struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			return result, fmt.Errorf("decode provider stream: %w", err)
-		}
-		if chunk.Error != nil && chunk.Error.Message != "" {
-			return result, fmt.Errorf("provider stream: %s", chunk.Error.Message)
-		}
-		if chunk.Usage != nil {
-			result.InputTokens = intPointer(chunk.Usage.PromptTokens)
-			result.OutputTokens = intPointer(chunk.Usage.CompletionTokens)
-		}
-		for _, choice := range chunk.Choices {
-			if choice.Delta.Content != "" {
-				if result.FirstTokenMS == nil {
-					elapsed := int(time.Since(started).Milliseconds())
-					result.FirstTokenMS = &elapsed
-					if onFirstToken != nil {
-						onFirstToken(elapsed)
-					}
-				}
-				result.Text += choice.Delta.Content
-			}
-			if choice.FinishReason != nil {
-				result.FinishReason = *choice.FinishReason
-			}
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return result, fmt.Errorf("read provider stream: %w", err)
-	}
-	if result.Text == "" {
-		return result, fmt.Errorf("empty completion")
-	}
-	return result, nil
+func blockedStatus(status string, checkedAt *time.Time, now time.Time, cooldown time.Duration) bool {
+	return (status == "auth_expired" || status == "quota_exhausted") && checkedAt != nil && now.Sub(*checkedAt) < cooldown
 }
 
-func validProviderSort(value string) bool {
-	switch value {
-	case "price", "throughput", "latency":
-		return true
-	default:
-		return false
+func (gateway *Gateway) providerBlockError(ctx context.Context) error {
+	var status, detail string
+	var checkedAt *time.Time
+	err := gateway.pool.QueryRow(ctx, `SELECT status, COALESCE(status_detail, ''), checked_at FROM llm_providers WHERE id = 'codex_cli'`).Scan(&status, &detail, &checkedAt)
+	if err != nil {
+		return fmt.Errorf("load provider cooldown: %w", err)
 	}
+	if !blockedStatus(status, checkedAt, time.Now(), gateway.cooldown) {
+		return nil
+	}
+	kind := codex.ErrQuota
+	if status == "auth_expired" {
+		kind = codex.ErrAuth
+	}
+	return fmt.Errorf("%w: %w: %s", ErrProviderBlocked, kind, detail)
 }
 
-func intPointer(value int) *int {
-	return &value
+func (gateway *Gateway) ProviderBlocked(ctx context.Context) (bool, error) {
+	err := gateway.providerBlockError(ctx)
+	if errors.Is(err, codex.ErrAuth) || errors.Is(err, codex.ErrQuota) {
+		return true, nil
+	}
+	return false, err
+}
+
+func (gateway *Gateway) recordCallStatus(ctx context.Context, callErr error, started time.Time) {
+	status, detail := "operational", "Codex completion succeeded."
+	if callErr != nil {
+		detail = callErr.Error()
+		switch {
+		case errors.Is(callErr, codex.ErrAuth):
+			status = "auth_expired"
+		case errors.Is(callErr, codex.ErrQuota):
+			status = "quota_exhausted"
+		default:
+			return
+		}
+	}
+	// An older in-flight success must not erase a newer quota/auth failure.
+	_, _ = gateway.pool.Exec(ctx, `UPDATE llm_providers SET status=$1,status_detail=$2,checked_at=clock_timestamp()
+		WHERE id='codex_cli' AND ($1 <> 'operational' OR status NOT IN ('auth_expired','quota_exhausted')
+		  OR checked_at IS NULL OR checked_at <= $3)`, status, detail, started)
 }
 
 func (gateway *Gateway) startCall(ctx context.Context, request Request, profile providerProfile) int64 {
@@ -338,17 +251,10 @@ func (gateway *Gateway) startCall(ctx context.Context, request Request, profile 
 		INSERT INTO llm_calls (
 		  task, provider_id, model, outcome, article_id, pipeline_run_id, pipeline_step_id, streamed
 		)
-		VALUES ($1, $2, $3, 'running', NULLIF($4, '')::uuid, NULLIF($5, '')::uuid, NULLIF($6, '')::uuid, true)
+		VALUES ($1, $2, $3, 'running', NULLIF($4, '')::uuid, NULLIF($5, '')::uuid, NULLIF($6, '')::uuid, false)
 		RETURNING id
 	`, request.Task, profile.id, profile.model, request.ArticleID, request.PipelineRunID, request.PipelineStepID).Scan(&id)
 	return id
-}
-
-func (gateway *Gateway) recordFirstToken(ctx context.Context, callID int64, firstTokenMS int) {
-	if callID == 0 {
-		return
-	}
-	_, _ = gateway.pool.Exec(ctx, `UPDATE llm_calls SET first_token_ms = $2 WHERE id = $1`, callID, firstTokenMS)
 }
 
 func (gateway *Gateway) finishCall(ctx context.Context, callID int64, outcome string, latencyMS int64, result providerResult, callErr error) {
@@ -384,231 +290,64 @@ func (gateway *Gateway) logPipeline(ctx context.Context, request Request, level,
 }
 
 type Provider struct {
-	ID                string     `json:"id"`
-	Name              string     `json:"name"`
-	BaseURL           string     `json:"base_url"`
-	Enabled           bool       `json:"enabled"`
-	Available         bool       `json:"available"`
-	Status            string     `json:"status"`
-	StatusDetail      string     `json:"status_detail"`
-	KeySet            bool       `json:"key_set"`
-	LatencyMS         int64      `json:"latency_ms"`
-	CheckedAt         time.Time  `json:"checked_at"`
-	FreeTier          bool       `json:"free_tier"`
-	LimitUSD          *float64   `json:"limit_usd"`
-	LimitRemainingUSD *float64   `json:"limit_remaining_usd"`
-	ExpiresAt         *time.Time `json:"expires_at"`
-}
-
-type providerConfig struct {
-	id, baseURL, keyRef string
-	enabled             bool
-}
-
-type openRouterKeyStatus struct {
-	FreeTier          bool       `json:"is_free_tier"`
-	LimitUSD          *float64   `json:"limit"`
-	LimitRemainingUSD *float64   `json:"limit_remaining"`
-	ExpiresAt         *time.Time `json:"expires_at"`
-	LatencyMS         int64      `json:"-"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Enabled       bool      `json:"enabled"`
+	Available     bool      `json:"available"`
+	Status        string    `json:"status"`
+	StatusDetail  string    `json:"status_detail"`
+	CheckedAt     time.Time `json:"checked_at"`
+	Installed     bool      `json:"installed"`
+	Authenticated bool      `json:"authenticated"`
+	Ready         bool      `json:"ready"`
+	Version       string    `json:"version"`
+	AuthMethod    string    `json:"auth_method"`
 }
 
 func (gateway *Gateway) ProviderStatus(ctx context.Context) (Provider, error) {
-	config, err := gateway.openRouterConfig(ctx)
+	var item Provider
+	var storedStatus, storedDetail string
+	var storedCheckedAt *time.Time
+	err := gateway.pool.QueryRow(ctx, `
+		SELECT id, enabled, status, COALESCE(status_detail, ''), checked_at
+		FROM llm_providers WHERE id = 'codex_cli' AND kind = 'codex_cli'
+	`).Scan(&item.ID, &item.Enabled, &storedStatus, &storedDetail, &storedCheckedAt)
 	if err != nil {
-		return Provider{}, err
+		return Provider{}, fmt.Errorf("load Codex provider: %w", err)
 	}
-	item := Provider{
-		ID: config.id, Name: "OpenRouter", BaseURL: config.baseURL, Enabled: config.enabled,
-		Status: "disabled", CheckedAt: time.Now().UTC(),
+	probe := gateway.client.Probe(ctx)
+	item.Name, item.CheckedAt = "Codex CLI", probe.CheckedAt
+	item.Installed, item.Authenticated, item.Version, item.AuthMethod = probe.Installed, probe.Authenticated, probe.Version, probe.AuthMethod
+	item.Status, item.StatusDetail = "unavailable", probe.Detail
+	if probe.Ready {
+		item.Status = "ready"
 	}
-	key := os.Getenv(config.keyRef)
-	item.KeySet = key != ""
-	if !config.enabled {
-		item.StatusDetail = "Provider is disabled."
-		return item, nil
+	if !item.Enabled {
+		item.Status, item.StatusDetail = "disabled", "Provider is disabled."
 	}
-	if key == "" {
-		item.Status = "misconfigured"
-		item.StatusDetail = "OPENROUTER_API_KEY is not configured."
-		gateway.recordProviderStatus(ctx, item)
-		return item, nil
+	if item.Enabled && blockedStatus(storedStatus, storedCheckedAt, time.Now(), gateway.cooldown) {
+		item.Status, item.StatusDetail, item.CheckedAt = storedStatus, storedDetail, *storedCheckedAt
 	}
-
-	checkContext, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	status, checkErr := gateway.checkOpenRouter(checkContext, config.baseURL, key)
-	item.LatencyMS = status.LatencyMS
-	item.FreeTier = status.FreeTier
-	item.LimitUSD = status.LimitUSD
-	item.LimitRemainingUSD = status.LimitRemainingUSD
-	item.ExpiresAt = status.ExpiresAt
-	if checkErr != nil {
-		item.Status = "unavailable"
-		item.StatusDetail = checkErr.Error()
-		gateway.recordProviderStatus(ctx, item)
-		return item, nil
-	}
-	item.Available = true
-	item.Status = "operational"
-	item.StatusDetail = "OpenRouter accepted the configured API key."
-	gateway.recordProviderStatus(ctx, item)
+	item.Ready = item.Enabled && probe.Ready && item.Status == "ready"
+	item.Available = item.Ready
+	// A local login probe cannot establish that quota is restored. It must never
+	// overwrite a call failure or renew its cooldown timestamp.
 	return item, nil
 }
 
-func (gateway *Gateway) checkOpenRouter(ctx context.Context, baseURL, key string) (openRouterKeyStatus, error) {
-	var status openRouterKeyStatus
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/key", nil)
-	if err != nil {
-		return status, err
-	}
-	request.Header.Set("Authorization", "Bearer "+key)
-	started := time.Now()
-	response, err := gateway.client.Do(request)
-	status.LatencyMS = time.Since(started).Milliseconds()
-	if err != nil {
-		return status, fmt.Errorf("OpenRouter health check failed: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return status, fmt.Errorf("OpenRouter health check returned HTTP %d", response.StatusCode)
-	}
-	var payload struct {
-		Data openRouterKeyStatus `json:"data"`
-	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 256*1024)).Decode(&payload); err != nil {
-		return status, fmt.Errorf("decode OpenRouter health response: %w", err)
-	}
-	payload.Data.LatencyMS = status.LatencyMS
-	return payload.Data, nil
-}
-
-func (gateway *Gateway) recordProviderStatus(ctx context.Context, item Provider) {
-	_, _ = gateway.pool.Exec(ctx, `
-		UPDATE llm_providers
-		SET status = $2, status_detail = NULLIF($3, ''), checked_at = $4
-		WHERE id = $1
-	`, item.ID, item.Status, item.StatusDetail, item.CheckedAt)
-}
-
-func (gateway *Gateway) openRouterConfig(ctx context.Context) (providerConfig, error) {
-	var config providerConfig
-	err := gateway.pool.QueryRow(ctx, `
-		SELECT id, COALESCE(base_url, ''), COALESCE(api_key_ref, ''), enabled
-		FROM llm_providers
-		WHERE id = 'openrouter' AND kind = 'openai_api'
-	`).Scan(&config.id, &config.baseURL, &config.keyRef, &config.enabled)
-	if err != nil {
-		return providerConfig{}, fmt.Errorf("load OpenRouter configuration: %w", err)
-	}
-	return config, nil
-}
-
 type Model struct {
-	ID                    string   `json:"id"`
-	Name                  string   `json:"name"`
-	ContextLength         int      `json:"context_length"`
-	InputPricePerMillion  float64  `json:"input_price_per_million"`
-	OutputPricePerMillion float64  `json:"output_price_per_million"`
-	InputModalities       []string `json:"input_modalities"`
-	OutputModalities      []string `json:"output_modalities"`
-	SupportedParameters   []string `json:"supported_parameters"`
-	CompatibleTasks       []string `json:"compatible_tasks"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	CompatibleTasks  []string `json:"compatible_tasks"`
+	ReasoningEfforts []string `json:"reasoning_efforts"`
 }
 
-func (gateway *Gateway) ListModels(ctx context.Context) ([]Model, error) {
-	config, err := gateway.openRouterConfig(ctx)
-	if err != nil {
-		return nil, err
+func (gateway *Gateway) ListModels(context.Context) ([]Model, error) {
+	models := make([]Model, 0)
+	for _, id := range codex.Models() {
+		models = append(models, Model{ID: id, Name: id, CompatibleTasks: append([]string{}, orderedTasks...), ReasoningEfforts: []string{"low", "medium", "high"}})
 	}
-	key := os.Getenv(config.keyRef)
-	if !config.enabled || key == "" {
-		return nil, fmt.Errorf("OpenRouter is not configured")
-	}
-	requestContext, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(requestContext, http.MethodGet, strings.TrimRight(config.baseURL, "/")+"/models?output_modalities=text", nil)
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Authorization", "Bearer "+key)
-	response, err := gateway.client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("fetch OpenRouter models: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("OpenRouter models returned HTTP %d", response.StatusCode)
-	}
-	return decodeOpenRouterModels(io.LimitReader(response.Body, 8*1024*1024))
-}
-
-func decodeOpenRouterModels(reader io.Reader) ([]Model, error) {
-	var payload struct {
-		Data []struct {
-			ID            string `json:"id"`
-			Name          string `json:"name"`
-			ContextLength int    `json:"context_length"`
-			Pricing       struct {
-				Prompt     string `json:"prompt"`
-				Completion string `json:"completion"`
-			} `json:"pricing"`
-			Architecture struct {
-				InputModalities  []string `json:"input_modalities"`
-				OutputModalities []string `json:"output_modalities"`
-			} `json:"architecture"`
-			SupportedParameters []string `json:"supported_parameters"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(reader).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("decode OpenRouter models: %w", err)
-	}
-	models := make([]Model, 0, len(payload.Data))
-	for _, value := range payload.Data {
-		inputPrice, err := perMillionPrice(value.Pricing.Prompt)
-		if err != nil {
-			return nil, fmt.Errorf("decode input price for %s: %w", value.ID, err)
-		}
-		outputPrice, err := perMillionPrice(value.Pricing.Completion)
-		if err != nil {
-			return nil, fmt.Errorf("decode output price for %s: %w", value.ID, err)
-		}
-		model := Model{
-			ID: value.ID, Name: value.Name, ContextLength: value.ContextLength,
-			InputPricePerMillion: inputPrice, OutputPricePerMillion: outputPrice,
-			InputModalities: append([]string{}, value.Architecture.InputModalities...), OutputModalities: append([]string{}, value.Architecture.OutputModalities...),
-			SupportedParameters: append([]string{}, value.SupportedParameters...), CompatibleTasks: make([]string, 0, len(orderedTasks)),
-		}
-		for _, task := range orderedTasks {
-			if modelSupportsTask(model, task) {
-				model.CompatibleTasks = append(model.CompatibleTasks, task)
-			}
-		}
-		models = append(models, model)
-	}
-	sort.Slice(models, func(left, right int) bool { return models[left].Name < models[right].Name })
 	return models, nil
-}
-
-func perMillionPrice(value string) (float64, error) {
-	if value == "" {
-		return 0, nil
-	}
-	price, err := strconv.ParseFloat(value, 64)
-	if err != nil {
-		return 0, err
-	}
-	return price * 1_000_000, nil
-}
-
-func modelSupportsTask(model Model, task string) bool {
-	if !contains(model.OutputModalities, "text") || !contains(model.SupportedParameters, "max_tokens") {
-		return false
-	}
-	if _, ok := taskDefinitions[task]; !ok {
-		return false
-	}
-	return task == "classify" || contains(model.SupportedParameters, "structured_outputs") || contains(model.SupportedParameters, "response_format")
 }
 
 func contains(values []string, expected string) bool {
@@ -621,16 +360,21 @@ func contains(values []string, expected string) bool {
 }
 
 type TaskProfile struct {
-	Task     string `json:"task"`
-	Name     string `json:"name"`
-	Purpose  string `json:"purpose"`
-	Provider string `json:"provider_id"`
-	Model    string `json:"model"`
-	Timeout  int    `json:"timeout_seconds"`
-	Enabled  bool   `json:"enabled"`
+	Task            string `json:"task"`
+	Name            string `json:"name"`
+	Purpose         string `json:"purpose"`
+	Provider        string `json:"provider_id"`
+	Model           string `json:"model"`
+	Timeout         int    `json:"timeout_seconds"`
+	Enabled         bool   `json:"enabled"`
+	ReasoningEffort string `json:"reasoning_effort"`
 }
 
 var taskDefinitions = map[string]struct{ name, purpose string }{
+	"article_analysis": {
+		name:    "Article analysis",
+		purpose: "Cleans, summarizes, categorizes and evaluates narration for one article in a single call.",
+	},
 	"content_cleaning": {
 		name:    "Content cleaning",
 		purpose: "Turns captured publisher pages into faithful, readable Markdown.",
@@ -670,21 +414,21 @@ var taskDefinitions = map[string]struct{ name, purpose string }{
 }
 
 var orderedTasks = []string{
-	"content_cleaning", "article_summary", "classify", "event_synthesis",
+	"article_analysis", "content_cleaning", "article_summary", "classify", "event_synthesis",
 	"narration_framing", "admin_article_analysis", "watch_tower_retrieval",
 	"watch_tower_answer", "newsletter_editorial",
 }
 
 func (gateway *Gateway) ListProfiles(ctx context.Context) ([]TaskProfile, error) {
 	rows, err := gateway.pool.Query(ctx, `
-		SELECT task, provider_id, model, timeout_seconds, enabled
+		SELECT task, provider_id, model, timeout_seconds, enabled, COALESCE(reasoning_effort, '')
 		FROM llm_task_profiles
 		WHERE task IN (
-		  'content_cleaning', 'article_summary', 'classify', 'event_synthesis',
+		  'article_analysis', 'content_cleaning', 'article_summary', 'classify', 'event_synthesis',
 		  'narration_framing', 'admin_article_analysis', 'watch_tower_retrieval',
 		  'watch_tower_answer', 'newsletter_editorial'
 		)
-		  AND provider_id = 'openrouter'
+		  AND provider_id = 'codex_cli'
 		ORDER BY task
 	`)
 	if err != nil {
@@ -694,7 +438,7 @@ func (gateway *Gateway) ListProfiles(ctx context.Context) ([]TaskProfile, error)
 	items := make([]TaskProfile, 0, len(taskDefinitions))
 	for rows.Next() {
 		var item TaskProfile
-		if err := rows.Scan(&item.Task, &item.Provider, &item.Model, &item.Timeout, &item.Enabled); err != nil {
+		if err := rows.Scan(&item.Task, &item.Provider, &item.Model, &item.Timeout, &item.Enabled, &item.ReasoningEffort); err != nil {
 			return nil, fmt.Errorf("scan LLM profile: %w", err)
 		}
 		definition := taskDefinitions[item.Task]
@@ -707,38 +451,36 @@ func (gateway *Gateway) ListProfiles(ctx context.Context) ([]TaskProfile, error)
 	return items, nil
 }
 
-func (gateway *Gateway) UpdateProfile(ctx context.Context, task, modelID string) error {
-	if _, ok := taskDefinitions[task]; !ok {
-		return fmt.Errorf("unsupported task %q", task)
-	}
-	modelID = strings.TrimSpace(modelID)
-	if modelID == "" {
-		return fmt.Errorf("model is required")
-	}
-	models, err := gateway.ListModels(ctx)
-	if err != nil {
+func (gateway *Gateway) UpdateProfile(ctx context.Context, task, providerID, modelID, effort string) error {
+	if err := validateProfile(task, providerID, modelID, effort); err != nil {
 		return err
-	}
-	valid := false
-	for _, model := range models {
-		if model.ID == modelID && contains(model.CompatibleTasks, task) {
-			valid = true
-			break
-		}
-	}
-	if !valid {
-		return fmt.Errorf("model %q is unavailable or incompatible with %s", modelID, task)
 	}
 	tag, err := gateway.pool.Exec(ctx, `
 		UPDATE llm_task_profiles
-		SET provider_id = 'openrouter', model = $2, enabled = true
-		WHERE task = $1 AND provider_id = 'openrouter'
-	`, task, modelID)
+		SET provider_id = $2, model = $3, reasoning_effort = NULLIF($4, ''), enabled = true
+		WHERE task = $1
+	`, task, providerID, modelID, effort)
 	if err != nil {
 		return fmt.Errorf("update LLM profile: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("task profile %q was not found", task)
+	}
+	return nil
+}
+
+func validateProfile(task, providerID, modelID, effort string) error {
+	if _, ok := taskDefinitions[task]; !ok {
+		return fmt.Errorf("unsupported task %q", task)
+	}
+	if providerID != "codex_cli" {
+		return fmt.Errorf("unsupported provider %q", providerID)
+	}
+	if !codex.ValidModel(modelID) {
+		return fmt.Errorf("model %q is unavailable", modelID)
+	}
+	if !codex.ValidReasoningEffort(effort) {
+		return fmt.Errorf("invalid reasoning effort %q", effort)
 	}
 	return nil
 }

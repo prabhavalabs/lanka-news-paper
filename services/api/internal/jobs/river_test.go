@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -8,7 +9,9 @@ import (
 	"github.com/riverqueue/river/rivertype"
 	"github.com/stretchr/testify/require"
 
-	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/adminanalysis"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm/codex"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
 )
 
 func TestQueueHistoryCutoff(t *testing.T) {
@@ -62,6 +65,7 @@ func TestDailyScheduleAdvancesAfterEightInColombo(t *testing.T) {
 }
 
 func TestQueueCatalog(t *testing.T) {
+	t.Setenv("SNAP_CODEX_CONCURRENCY", "")
 	t.Setenv("SNAP_ADMIN_ANALYSIS_WORKERS", "")
 	catalog := QueueCatalog()
 
@@ -69,7 +73,7 @@ func TestQueueCatalog(t *testing.T) {
 	require.Equal(t, "default", catalog[0].Name)
 	require.Equal(t, 2, catalog[0].MaxWorkers)
 	require.Equal(t, "analysis", catalog[1].Name)
-	require.Equal(t, 5, catalog[1].MaxWorkers)
+	require.Equal(t, 2, catalog[1].MaxWorkers)
 	require.Equal(t, "crawl", catalog[2].Name)
 	require.Equal(t, 1, catalog[2].MaxWorkers)
 	require.Equal(t, "admin-analysis-dispatch", catalog[3].Name)
@@ -79,6 +83,7 @@ func TestQueueCatalog(t *testing.T) {
 }
 
 func TestQueueCatalogUsesConfiguredAdministrativeConcurrency(t *testing.T) {
+	t.Setenv("SNAP_CODEX_CONCURRENCY", "64")
 	t.Setenv("SNAP_ADMIN_ANALYSIS_WORKERS", "48")
 
 	catalog := QueueCatalog()
@@ -88,6 +93,7 @@ func TestQueueCatalogUsesConfiguredAdministrativeConcurrency(t *testing.T) {
 }
 
 func TestQueueCatalogBoundsAdministrativeConcurrency(t *testing.T) {
+	t.Setenv("SNAP_CODEX_CONCURRENCY", "64")
 	t.Setenv("SNAP_ADMIN_ANALYSIS_WORKERS", "999")
 
 	catalog := QueueCatalog()
@@ -107,7 +113,7 @@ func TestAdminAnalysisJobsSeparateDispatchFromArticleExecution(t *testing.T) {
 }
 
 func TestMissingCodexFailsAdministrativeAnalysisWithoutRetryBackoff(t *testing.T) {
-	err := errors.Join(errors.New("clean article"), adminanalysis.ErrCodexUnavailable)
+	err := errors.Join(errors.New("clean article"), codex.ErrUnavailable)
 
 	require.True(t, adminAnalysisFailureIsTerminal(err, 1, 5))
 	require.False(t, adminAnalysisFailureIsTerminal(errors.New("temporary provider error"), 1, 5))
@@ -123,4 +129,32 @@ func TestArticleContentBackfillIsUnique(t *testing.T) {
 func TestArticleContentBackfillUsesBoundedLowPriorityBatches(t *testing.T) {
 	require.Equal(t, 25, articleContentBackfillBatchSize)
 	require.Equal(t, 4, articleContentBackfillInsertOpts().Priority)
+}
+
+type blockedCompleter struct{ err error }
+
+func (*blockedCompleter) Complete(context.Context, llm.Request) (llm.Response, error) {
+	return llm.Response{}, nil
+}
+func (*blockedCompleter) CompleteWithModel(context.Context, llm.Request, string, string) (llm.Response, error) {
+	return llm.Response{}, nil
+}
+func (model *blockedCompleter) ProviderBlocked(context.Context) (bool, error) { return true, model.err }
+
+func TestPipelineDispatchDoesNotReadBacklogOrEnqueueWhenBlocked(t *testing.T) {
+	model := &blockedCompleter{}
+	worker := &PipelineDispatchWorker{Pipeline: pipeline.NewStore(nil, model, nil, nil)}
+	require.NoError(t, worker.Work(context.Background(), nil))
+	model.err = errors.New("provider status unavailable")
+	require.ErrorIs(t, worker.Work(context.Background(), nil), model.err)
+}
+
+func TestCodexQueueCapacityAndTimeouts(t *testing.T) {
+	t.Setenv("SNAP_CODEX_CONCURRENCY", "1")
+	t.Setenv("SNAP_ADMIN_ANALYSIS_WORKERS", "16")
+	catalog := QueueCatalog()
+	require.Equal(t, 1, catalog[1].MaxWorkers)
+	require.Equal(t, 1, catalog[4].MaxWorkers)
+	require.Equal(t, 45*time.Minute, (&ArticlePipelineWorker{}).Timeout(nil))
+	require.Equal(t, 45*time.Minute, (&AdminArticleAnalysisWorker{}).Timeout(nil))
 }

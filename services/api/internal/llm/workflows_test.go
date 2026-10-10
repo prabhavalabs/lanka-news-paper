@@ -30,7 +30,7 @@ func TestValidateWorkflowInputRejectsMissingBehavior(t *testing.T) {
 func TestValidateWorkflowInputRequiresProviderAndModelTogether(t *testing.T) {
 	t.Parallel()
 	_, err := validateWorkflowInput(WorkflowInput{
-		Tone: "neutral", ResponseLanguage: "si", Audience: "readers", Provider: "openrouter",
+		Tone: "neutral", ResponseLanguage: "si", Audience: "readers", Provider: "codex_cli",
 	})
 	require.ErrorIs(t, err, ErrWorkflowInvalid)
 }

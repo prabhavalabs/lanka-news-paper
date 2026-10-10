@@ -1,6 +1,7 @@
 package adminanalysis
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ func TestValidateCreateRequestAcceptsDateRange(t *testing.T) {
 	to := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
 
 	err := ValidateCreateRequest(CreateRequest{
-		Scope: "date_range", Provider: "openrouter", Model: "deepseek/deepseek-v3.1-terminus",
+		Scope: "date_range", Provider: "codex_cli", Model: "gpt-6-luna",
 		From: &from, To: &to,
 	})
 
@@ -33,7 +34,7 @@ func TestValidateCreateRequestRejectsUnsupportedProvider(t *testing.T) {
 		Scope: "article", Provider: "unknown", Model: "model", ArticleID: "4dc5d133-073d-40a8-95ac-7d9871991b4a",
 	})
 
-	require.EqualError(t, err, "provider must be openrouter or codex_cli")
+	require.EqualError(t, err, "provider must be codex_cli")
 }
 
 func TestValidateCreateRequestAcceptsFullEditorialPipeline(t *testing.T) {
@@ -51,7 +52,7 @@ func TestValidateCreateRequestRejectsPipelineProviderForSinglePass(t *testing.T)
 		Model: "configured-profiles", ArticleID: "4dc5d133-073d-40a8-95ac-7d9871991b4a",
 	})
 
-	require.EqualError(t, err, "provider must be openrouter or codex_cli")
+	require.EqualError(t, err, "provider must be codex_cli")
 }
 
 func TestParseInsightAcceptsStrictStructuredOutput(t *testing.T) {
@@ -91,4 +92,11 @@ func TestBuildArticleInputPrefersFullContentAndLimitsSize(t *testing.T) {
 	require.Contains(t, input, `"headline":"Headline"`)
 	require.NotContains(t, input, "Excerpt")
 	require.LessOrEqual(t, len([]rune(input)), maxArticleCharacters+200)
+}
+
+func TestStoreCreateRejectsUnconfiguredModelBeforeDatabaseAccess(t *testing.T) {
+	_, err := NewStore(nil).Create(context.Background(), CreateRequest{
+		Scope: "article", Provider: "codex_cli", Model: "--config", ArticleID: "4dc5d133-073d-40a8-95ac-7d9871991b4a",
+	}, "test")
+	require.ErrorContains(t, err, "configured Codex allowlist")
 }

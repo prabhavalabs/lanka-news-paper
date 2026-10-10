@@ -44,7 +44,7 @@ func TestNewsletterPreviewRecordsPerformanceIntegration(t *testing.T) {
 	})
 	service := NewService(NewStore(pool), nil, editorialCompleter{
 		response: `{"intro":"පරීක්ෂණ හැඳින්වීම.","story_ids":[]}`,
-		provider: "openrouter", model: "test/model",
+		provider: "codex_cli", model: "test/model",
 	}, RuntimeConfig{BaseURL: "https://example.invalid"}, func() time.Time {
 		return time.Date(2026, time.August, 28, 12, 0, 0, 0, time.UTC)
 	})

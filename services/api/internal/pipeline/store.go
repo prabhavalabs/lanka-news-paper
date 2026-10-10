@@ -30,33 +30,29 @@ latest, politics, economy, world, crime, health, environment, sport, education, 
 Use the article meaning, not isolated keywords. Return only the lowercase slug and nothing else.`
 
 type Store struct {
-	pool              *pgxpool.Pool
-	model             llm.Completer
-	clusters          *cluster.Store
-	politics          *politics.Store
-	adminProviderSort string
+	pool     *pgxpool.Pool
+	model    llm.Completer
+	clusters *cluster.Store
+	politics *politics.Store
 }
 
 type modelSelection struct {
-	provider     string
-	model        string
-	providerSort string
+	provider string
+	model    string
 }
 
-type Option func(*Store)
-
-func WithAdminProviderSort(value string) Option {
-	return func(store *Store) {
-		store.adminProviderSort = normalizeProviderSort(value)
-	}
+func NewStore(pool *pgxpool.Pool, model llm.Completer, clusters *cluster.Store, politicsStore *politics.Store) *Store {
+	return &Store{pool: pool, model: model, clusters: clusters, politics: politicsStore}
 }
 
-func NewStore(pool *pgxpool.Pool, model llm.Completer, clusters *cluster.Store, politicsStore *politics.Store, options ...Option) *Store {
-	store := &Store{pool: pool, model: model, clusters: clusters, politics: politicsStore}
-	for _, option := range options {
-		option(store)
+func (store *Store) ProviderBlocked(ctx context.Context) (bool, error) {
+	blocker, ok := store.model.(interface {
+		ProviderBlocked(context.Context) (bool, error)
+	})
+	if !ok {
+		return false, nil
 	}
-	return store
+	return blocker.ProviderBlocked(ctx)
 }
 
 func (store *Store) Start(ctx context.Context, articleID, trigger string) (string, error) {
@@ -225,7 +221,7 @@ func (store *Store) QueuedRuns(ctx context.Context, limit int) ([]string, error)
 		WITH stale AS (
 		  UPDATE article_pipeline_runs
 		  SET status = 'queued', last_error = 'Recovered after an interrupted worker.', updated_at = clock_timestamp()
-		  WHERE status = 'running' AND updated_at < clock_timestamp() - interval '20 minutes'
+		  WHERE status = 'running' AND updated_at < clock_timestamp() - interval '50 minutes'
 		  RETURNING id
 		)
 		UPDATE article_pipeline_steps step
@@ -305,7 +301,6 @@ type stepResult struct {
 
 func (store *Store) complete(ctx context.Context, request llm.Request, selection modelSelection) (llm.Response, error) {
 	if selection.provider != "" {
-		request.ProviderSort = selection.providerSort
 		return store.model.CompleteWithModel(ctx, request, selection.provider, selection.model)
 	}
 	return store.model.Complete(ctx, request)
@@ -331,7 +326,6 @@ func (store *Store) Process(ctx context.Context, runID string) error {
 	`, runID).Scan(&articleID, &trigger, &selection.provider, &selection.model); err != nil {
 		return fmt.Errorf("start pipeline run %s: %w", runID, err)
 	}
-	selection = store.routeSelection(trigger, selection)
 
 	rows, err := store.pool.Query(ctx, `
 		SELECT id::text, name, position, status, attempt, max_attempts
@@ -506,30 +500,27 @@ func (store *Store) execute(ctx context.Context, articleID, runID string, item s
 	case "event_clustering":
 		return store.cluster(ctx, articleID)
 	case "stance_evaluation", "narration_analysis":
-		result, err := store.politics.AnalyzeArticleWithRouting(
-			ctx, articleID, runID, item.id, selection.provider, selection.model, selection.providerSort,
+		combined, err := store.loadCombinedAnalysis(ctx, runID)
+		if err != nil {
+			return stepResult{}, err
+		}
+		var narration *llm.Response
+		if combined != nil {
+			if response, valid := combined.response("narration"); valid {
+				narration = &response
+			}
+		}
+		result, reused, err := store.politics.AnalyzeArticleWithCombined(
+			ctx, articleID, runID, item.id, selection.provider, selection.model, narration,
 		)
+		if reused {
+			store.logCombinedReuse(ctx, runID, item.id, "narration", *narration)
+		}
 		return stepResult{output: result}, err
 	case "event_synthesis":
 		return store.synthesizeEvent(ctx, articleID, runID, item.id, selection)
 	default:
 		return stepResult{}, fmt.Errorf("unknown pipeline step %q", item.name)
-	}
-}
-
-func (store *Store) routeSelection(trigger string, selection modelSelection) modelSelection {
-	if trigger == "admin_backfill" && selection.provider == "openrouter" {
-		selection.providerSort = store.adminProviderSort
-	}
-	return selection
-}
-
-func normalizeProviderSort(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "price", "throughput", "latency":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return ""
 	}
 }
 
@@ -551,19 +542,33 @@ func (store *Store) categorize(ctx context.Context, articleID, runID, stepID str
 	result := classify.From(categories, headline, description)
 	provider, model := "keyword-rules", result.Model
 	if result.Confidence < 0.55 && store.model != nil {
-		response, err := store.complete(ctx, llm.Request{
-			Task: "classify", System: classificationPrompt,
-			Input:            headline + "\n\n" + truncate(description, 3000),
-			DisableReasoning: true, MaxTokens: 64, ArticleID: articleID,
-			PipelineRunID: runID, PipelineStepID: stepID,
-		}, selection)
+		combined, err := store.loadCombinedAnalysis(ctx, runID)
 		if err != nil {
 			return stepResult{}, err
 		}
-		slug, valid := completionSlug(response.Text)
-		if response.Provider != "none" && valid {
-			result.Slug, result.Confidence = slug, 0.7
-			provider, model = response.Provider, response.Model
+		if combined != nil {
+			if response, valid := combined.response("category"); valid {
+				category, _ := parseArticleCategory(response.Text)
+				result.Slug, result.Confidence = category.Slug, *category.Confidence
+				provider, model = response.Provider, response.Model
+				store.logCombinedReuse(ctx, runID, stepID, "category", response)
+			}
+		}
+		if provider == "keyword-rules" {
+			response, err := store.complete(ctx, llm.Request{
+				Task: "classify", System: classificationPrompt,
+				Input:            headline + "\n\n" + truncate(description, 3000),
+				DisableReasoning: true, MaxTokens: 64, ArticleID: articleID,
+				PipelineRunID: runID, PipelineStepID: stepID,
+			}, selection)
+			if err != nil {
+				return stepResult{}, err
+			}
+			slug, valid := completionSlug(response.Text)
+			if response.Provider != "none" && valid {
+				result.Slug, result.Confidence = slug, 0.7
+				provider, model = response.Provider, response.Model
+			}
 		}
 	}
 	tag, err := store.pool.Exec(ctx, `

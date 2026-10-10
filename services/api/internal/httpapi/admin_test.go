@@ -37,7 +37,7 @@ func TestParseTrendDays(t *testing.T) {
 
 func TestNewAnalysisBackfillRequestUsesInclusiveEndDate(t *testing.T) {
 	request, err := newAnalysisBackfillRequest(
-		"date_range", "single_pass", "openrouter", "test-model", "2026-08-17", "2026-08-23", "", "",
+		"date_range", "single_pass", "codex_cli", "test-model", "2026-08-17", "2026-08-23", "", "",
 	)
 
 	require.NoError(t, err)
@@ -47,7 +47,7 @@ func TestNewAnalysisBackfillRequestUsesInclusiveEndDate(t *testing.T) {
 
 func TestNewAnalysisBackfillRequestRejectsInvalidDate(t *testing.T) {
 	_, err := newAnalysisBackfillRequest(
-		"date_range", "single_pass", "openrouter", "test-model", "last-week", "2026-08-23", "", "",
+		"date_range", "single_pass", "codex_cli", "test-model", "last-week", "2026-08-23", "", "",
 	)
 
 	require.EqualError(t, err, "from must use YYYY-MM-DD")

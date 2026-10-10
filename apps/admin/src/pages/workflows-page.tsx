@@ -37,6 +37,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
+import { ReasoningEffortSelect } from '@/components/reasoning-effort-select'
+
 const client = createClient()
 
 type View = 'configuration' | 'feedback'
@@ -59,6 +61,7 @@ function workflowDraftFrom(workflow: AgentWorkflow): WorkflowDraft {
     enabled: workflow.enabled,
     provider_id: workflow.provider_id,
     model: workflow.model,
+    reasoning_effort: workflow.reasoning_effort,
   }
 }
 
@@ -391,10 +394,10 @@ function AIConfiguration({ task, draft, onChange, provider, models, loading, err
         <Field>
           <FieldLabel htmlFor="workflow-provider">Provider</FieldLabel>
           <Select value={draft.provider_id} disabled={loading || error} onValueChange={(value) => value && onChange({ ...draft, provider_id: value })}>
-            <SelectTrigger id="workflow-provider"><SelectValue>{() => provider?.name ?? 'OpenRouter'}</SelectValue></SelectTrigger>
-            <SelectContent><SelectItem value="openrouter">OpenRouter</SelectItem></SelectContent>
+            <SelectTrigger id="workflow-provider"><SelectValue>{() => provider?.name ?? 'Codex CLI (ChatGPT)'}</SelectValue></SelectTrigger>
+            <SelectContent><SelectItem value="codex_cli">Codex CLI (ChatGPT)</SelectItem></SelectContent>
           </Select>
-          <p className="text-xs text-muted-foreground">{provider?.key_set ? 'API key configured' : 'API key missing'}</p>
+          <p className="text-xs text-muted-foreground">{provider?.ready ? 'Ready' : provider?.status_detail}</p>
         </Field>
         <Field>
           <FieldLabel>Model</FieldLabel>
@@ -402,12 +405,13 @@ function AIConfiguration({ task, draft, onChange, provider, models, loading, err
           <Button type="button" variant="outline" className="w-fit" disabled={loading || error || !provider?.available} onClick={() => { onSearch(''); onPickerOpen(true) }}>Change model</Button>
         </Field>
       </div>
+      <ReasoningEffortSelect value={draft.reasoning_effort} onChange={(reasoning_effort) => onChange({ ...draft, reasoning_effort })} efforts={selectedModel?.reasoning_efforts} />
       <Sheet open={pickerOpen} onOpenChange={onPickerOpen}>
         <SheetContent side="right" style={{ width: '100%', maxWidth: '36rem' }}>
           <SheetHeader className="border-b"><SheetTitle>Choose a workflow model</SheetTitle><SheetDescription>Only models compatible with this autonomous task are shown.</SheetDescription></SheetHeader>
           <div className="border-b px-6 pb-4"><div className="relative"><Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" /><Input className="pl-9" type="search" placeholder="Search models…" value={search} onChange={(event) => onSearch(event.target.value)} /></div><p className="mt-2 text-xs text-muted-foreground">{compatible.length} compatible models</p></div>
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4" role="radiogroup" aria-label="Compatible AI models">
-            {compatible.slice(0, 75).map((model) => <button key={model.id} type="button" role="radio" aria-checked={draft.model === model.id} onClick={() => { onChange({ ...draft, provider_id: 'openrouter', model: model.id }); onPickerOpen(false) }} className={cn('w-full rounded-xl border p-4 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring', draft.model === model.id && 'border-primary bg-primary/5 ring-1 ring-primary')}><p className="font-medium">{model.name}</p><p className="mt-1 break-all text-xs text-muted-foreground">{model.id}</p><p className="mt-3 text-xs text-muted-foreground">{model.context_length.toLocaleString()} context · ${model.input_price_per_million.toLocaleString()}/1M input</p></button>)}
+            {compatible.slice(0, 75).map((model) => <button key={model.id} type="button" role="radio" aria-checked={draft.model === model.id} onClick={() => { onChange({ ...draft, provider_id: 'codex_cli', model: model.id }); onPickerOpen(false) }} className={cn('w-full rounded-xl border p-4 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring', draft.model === model.id && 'border-primary bg-primary/5 ring-1 ring-primary')}><p className="font-medium">{model.name}</p><p className="mt-1 break-all text-xs text-muted-foreground">{model.id}</p><p className="mt-3 text-xs text-muted-foreground">Reasoning: {model.reasoning_efforts.join(' · ')}</p></button>)}
             {compatible.length === 0 ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No compatible model matches this search.</p> : null}
           </div>
           <SheetFooter className="border-t"><Button variant="outline" onClick={() => onPickerOpen(false)}>Cancel</Button></SheetFooter>

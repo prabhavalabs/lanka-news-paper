@@ -20,6 +20,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/adminanalysis"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/content"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm/codex"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/newsletter"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
@@ -258,11 +259,11 @@ func (worker *AdminArticleAnalysisWorker) Work(ctx context.Context, job *river.J
 }
 
 func adminAnalysisFailureIsTerminal(err error, attempt, maxAttempts int) bool {
-	return attempt >= maxAttempts || errors.Is(err, adminanalysis.ErrCodexUnavailable)
+	return attempt >= maxAttempts || errors.Is(err, codex.ErrUnavailable)
 }
 
 func (worker *AdminArticleAnalysisWorker) Timeout(*river.Job[AdminArticleAnalysisArgs]) time.Duration {
-	return 30 * time.Minute
+	return 45 * time.Minute
 }
 
 type ArticleContentBackfillArgs struct{}
@@ -321,7 +322,7 @@ func (worker *ArticlePipelineWorker) Work(ctx context.Context, job *river.Job[Ar
 }
 
 func (worker *ArticlePipelineWorker) Timeout(*river.Job[ArticlePipelineArgs]) time.Duration {
-	return 20 * time.Minute
+	return 45 * time.Minute
 }
 
 type PipelineDispatchArgs struct{}
@@ -342,6 +343,15 @@ type PipelineDispatchWorker struct {
 }
 
 func (worker *PipelineDispatchWorker) Work(ctx context.Context, _ *river.Job[PipelineDispatchArgs]) error {
+	blocked, err := worker.Pipeline.ProviderBlocked(ctx)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		slog.InfoContext(ctx, "Pipeline dispatch paused during Codex provider cooldown")
+		return nil
+	}
+
 	if err := worker.Pipeline.EnsureBacklog(ctx, 50); err != nil {
 		return err
 	}
@@ -393,7 +403,7 @@ func (worker *NewsletterWorker) Work(ctx context.Context, _ *river.Job[Newslette
 }
 
 func (worker *NewsletterWorker) Timeout(*river.Job[NewsletterArgs]) time.Duration {
-	return 10 * time.Minute
+	return 20 * time.Minute
 }
 
 func (worker *BriefWorker) Work(ctx context.Context, _ *river.Job[BriefArgs]) error {
@@ -594,10 +604,10 @@ type QueueMetadata struct {
 func QueueCatalog() []QueueMetadata {
 	return []QueueMetadata{
 		{Name: river.QueueDefault, MaxWorkers: 2},
-		{Name: "analysis", MaxWorkers: 5},
+		{Name: "analysis", MaxWorkers: codex.ConcurrencyLimit()},
 		{Name: "crawl", MaxWorkers: 1},
 		{Name: adminAnalysisDispatchQueue, MaxWorkers: 1},
-		{Name: adminAnalysisQueue, MaxWorkers: configuredAdminAnalysisWorkers(os.Getenv)},
+		{Name: adminAnalysisQueue, MaxWorkers: min(configuredAdminAnalysisWorkers(os.Getenv), codex.ConcurrencyLimit())},
 	}
 }
 

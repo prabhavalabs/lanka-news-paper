@@ -55,7 +55,7 @@ func TestStorePersistsListsAndDeletesAConversation(t *testing.T) {
 			Category: "Local", PublishedAt: from, OriginalURL: "https://example.invalid/report",
 		}},
 		Suggestions: []string{"What happened next?"},
-		Provider:    "openrouter", Model: "test-model",
+		Provider:    "codex_cli", Model: "test-model",
 		Search: SearchSummary{Label: "Last 24 hours", From: from, To: to, ArticleCount: 1},
 	})
 	require.NoError(t, err)
