@@ -37,6 +37,8 @@ func (handler newsletterAdminHandler) tests(w http.ResponseWriter, request *http
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "JSON body is required.")
 		return
 	}
+	request, cancel := inferenceRequest(w, request)
+	defer cancel()
 	result, err := handler.tester.RunTest(request.Context(), input, currentUser(request).ID)
 	if err == nil {
 		writeJSON(w, http.StatusCreated, result)

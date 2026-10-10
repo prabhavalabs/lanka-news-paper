@@ -94,6 +94,8 @@ func (handler watchTowerHandler) messages(w http.ResponseWriter, request *http.R
 		writeProblem(w, http.StatusBadRequest, "https://snap.local/problems/invalid", "Invalid request", "A question is required.")
 		return
 	}
+	request, cancel := inferenceRequest(w, request)
+	defer cancel()
 	exchange, err := handler.service.Ask(request.Context(), currentUser(request).ID, threadID, body.Content)
 	if err != nil {
 		handler.writeError(w, err)

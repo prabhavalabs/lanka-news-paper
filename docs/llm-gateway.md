@@ -22,7 +22,10 @@ for a slot respects the parent context; the task timeout starts after acquisitio
 River analysis workers match this limit (bounded to 64), and administrative
 workers are capped at it. Pipeline and administrative jobs allow 45 minutes for
 queueing, a 240-second combined call, and standalone fallback steps. Stale-run
-recovery waits 50 minutes; newsletter jobs allow 20 minutes.
+recovery waits 50 minutes; newsletter jobs allow 20 minutes. Authenticated Watch
+Tower messages and newsletter tests have a 20-minute request budget, 21-minute
+Go write deadline and 22-minute proxy read budget. Newsletter test inference
+has a 15-minute parent budget, including slot waiting.
 
 ## Article processing and fallback
 
