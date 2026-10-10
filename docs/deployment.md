@@ -2,6 +2,10 @@
 
 Merges to `main` run tests, build immutable Linux/amd64 images in GitHub Actions, push them to GHCR, run database migrations, and health-check the full stack on the VPS.
 
+The pipeline targets about two minutes. Go tests run in parallel with the release build. The build job compiles the Go binaries and both frontends on the runner (warm Go and pnpm caches) into `.ci-out/`, and `docker buildx bake` (`infra/production/docker-bake.hcl`, `package.Dockerfile`) packages the three images in parallel, so only small copy layers change per release. Deploy uploads `compose.yaml` and `deploy.sh` and runs the release over one SSH connection; health checks poll every second while containers start. `api.Dockerfile` and `frontend.Dockerfile` remain for self-contained builds from source.
+
+**CI/CD does deployment only.** Server configuration (nginx sites, TLS certificates, `/opt/lanka-news-paper/.env`) is applied by hand over SSH before a release that needs it, and is never part of the workflow.
+
 ## Runtime layout
 
 - `/opt/lanka-news-paper/.env`: production secrets, stored only on the VPS.
@@ -138,20 +142,31 @@ logged-in, dedicated CLI home when isolating development from personal sessions.
 
 ## DNS and TLS
 
-Create proxied or DNS-only `A` records pointing to `178.104.111.17` for:
+### thulawanews.com (current)
 
-- `lankanewspaper.prabhavalabs.com`
-- `admin.lankanewspaper.prabhavalabs.com`
+| Host | Serves | Upstream |
+| --- | --- | --- |
+| `thulawanews.com` | Reader site | `127.0.0.1:18173` (web container) |
+| `www.thulawanews.com` | Redirects to `thulawanews.com` | |
+| `admin.thulawanews.com` | Admin portal and its same-origin `/api/` | `127.0.0.1:18174` (admin container) |
+| `api.thulawanews.com` | Public read API; `/api/admin/` returns 404 | `127.0.0.1:18090` (API) |
 
-After DNS resolves, install `infra/production/nginx-site.conf` and issue one certificate containing both names:
+DNS is managed in Cloudflare. Create `A` records to `178.104.111.17` and `AAAA` records to `2a01:4f8:1c18:8753::1` for `@`, `www`, `admin` and `api`, **DNS only (grey cloud)** so Let's Encrypt can validate over HTTP. After the certificate is issued they may be switched to proxied, with Cloudflare SSL mode **Full (strict)**.
+
+The site is `infra/production/nginx-thulawanews.conf`, installed as `/etc/nginx/sites-available/thulawanews`. Before DNS existed only its port-80 block was enabled (ACME challenge and HTTPS redirect). Once DNS resolves:
 
 ```sh
-certbot certonly --webroot -w /var/www/lanka-news-paper-acme \
-  --cert-name lankanewspaper.prabhavalabs.com \
-  -d lankanewspaper.prabhavalabs.com \
-  -d admin.lankanewspaper.prabhavalabs.com
+certbot certonly --webroot -w /var/www/lanka-news-paper-acme --cert-name thulawanews.com \
+  -d thulawanews.com -d www.thulawanews.com -d admin.thulawanews.com -d api.thulawanews.com
+cp /opt/lanka-news-paper/nginx-thulawanews.final.conf /etc/nginx/sites-available/thulawanews
 nginx -t && systemctl reload nginx
 ```
+
+Then update `/opt/lanka-news-paper/.env`: add `https://thulawanews.com`, `https://www.thulawanews.com` and `https://admin.thulawanews.com` to `SNAP_ALLOWED_ORIGINS`, set `SNAP_NEWSLETTER_BASE_URL` and `SNAP_SOCIAL_PUBLIC_BASE_URL` to `https://thulawanews.com`, and set `SNAP_META_REDIRECT_URL=https://admin.thulawanews.com/api/admin/social/facebook/callback` after adding that redirect URI to the Meta app. Restart with `IMAGE_TAG=$(cat .deployed-image) docker compose up -d api worker web admin`.
+
+### lankanewspaper.prabhavalabs.com (previous)
+
+Still served by `infra/production/nginx-site.conf` with certificate `lankanewspaper.prabhavalabs.com`, until it is redirected to the new domain.
 
 ## Operations
 
@@ -177,3 +192,23 @@ ssh -N -o ExitOnForwardFailure=yes \
 Copy `infra/local/shared.env.example` to the repository-root `.env`, replace its placeholders with the production database password and bucket-scoped R2 credentials, then run the API and either frontend normally. The production worker remains the only ingestion scheduler.
 
 `SNAP_ENV=shared-development` blocks `pnpm worker:dev` and `pnpm migrate`. Tests and schema migrations must continue to use an isolated local database. Admin actions from the local API still modify shared data intentionally.
+
+## Facebook Page publishing
+
+See [Facebook Page publishing](social-publishing.md) for the new Meta Business app setup, review workflow, caps and failure recovery. These optional server variables are forwarded to API and worker:
+
+```dotenv
+SNAP_META_APP_ID=
+SNAP_META_APP_SECRET=
+SNAP_META_REDIRECT_URL=https://admin.lankanewspaper.prabhavalabs.com/api/admin/social/facebook/callback
+SNAP_META_LOGIN_CONFIG_ID=
+SNAP_META_GRAPH_VERSION=v26.0
+SNAP_SOCIAL_TOKEN_KEY=
+SNAP_SOCIAL_PUBLIC_BASE_URL=https://lankanewspaper.prabhavalabs.com
+SNAP_SOCIAL_CHROME_PATH=/usr/bin/chromium
+SNAP_SOCIAL_CHROME_NO_SANDBOX=true
+```
+
+Generate `SNAP_SOCIAL_TOKEN_KEY` once as base64 encoded 32 bytes and preserve it with deployment secrets. Both processes must have the same key and use shared media storage (the Compose worker now also mounts `media-data`). Chrome/Chromium and Sinhala fonts are included by the image renderer's Docker configuration. If renderer initialization fails, queue/review still work and publishing waits for a rendered image. No app configuration automatically enables selection or auto-publish; both default to off in migration 54.
+
+The existing admin-origin `/api/` proxy carries the OAuth callback and session cookie. Manual post creation gets the existing long-inference nginx timeout, because it invokes the editorial model. After deployment, verify the Page connection and a reviewed post through the actual Meta app; Development-mode API success does not by itself prove public post visibility.

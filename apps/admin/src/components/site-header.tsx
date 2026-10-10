@@ -11,7 +11,10 @@ const titles: Record<string, string> = {
   '/complaints': 'Complaints',
   '/routing': 'AI & routing',
   '/watch-tower': 'Watch Tower',
+  '/social': 'Social publishing',
   '/mailing-list': 'Mailing list',
+  '/brand': 'Brand kit',
+  '/social/content': 'Content calendar',
 }
 
 export function SiteHeader() {
@@ -20,7 +23,7 @@ export function SiteHeader() {
     ? 'Source feed'
     : location.pathname.startsWith('/sources/')
     ? 'Source details'
-    : (titles[location.pathname] ?? 'News Control Room')
+    : (titles[location.pathname] ?? 'Thulawa Control Room')
 
   return (
     <header className="sticky top-0 z-30 flex h-(--header-height) shrink-0 items-center gap-2 border-b bg-background/90 backdrop-blur transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">

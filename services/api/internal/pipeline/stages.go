@@ -280,6 +280,9 @@ func (store *Store) synthesizeEvent(ctx context.Context, articleID, runID, stepI
 		rightPercentage, spectrumJSON, provider, model); err != nil {
 		return stepResult{}, fmt.Errorf("save event narrative analysis: %w", err)
 	}
+	if store.eventSynthesized != nil {
+		store.eventSynthesized(ctx, *eventID)
+	}
 	return stepResult{output: map[string]any{
 		"event_id": *eventID, "summary": summary, "article_count": articleCount,
 		"source_count": len(sourceIDs), "rated_source_count": rated,

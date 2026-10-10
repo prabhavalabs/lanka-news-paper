@@ -8,7 +8,7 @@
 
 ## 1. Design Principles
 
-1. **Ink on paper.** The entire interface uses one "ink" color on one "paper" color, plus a limited set of grays. No brand blues, no gradients, no colored accents except functional states (links visited, errors).
+1. **Ink on paper.** Reading surfaces use one "ink" color on one "paper" color, plus a limited set of grays. The only other colours are the Thulawa brand navy and gold (§2.4), used for identity, not decoration, and functional states (links visited, errors).
 2. **Typography is the interface.** Hierarchy comes from type size, weight, and spacing — never from colored boxes, shadows, or pills.
 3. **Rules, not cards.** Content is separated by hairline rules (borders) the way newspaper columns are, not by floating cards with shadows and rounded corners.
 4. **Density with dignity.** Newspapers are dense but never cramped. Generous line-height for Sinhala script, tight but consistent spacing between items.
@@ -56,8 +56,23 @@ Not inverted-white. Dark charcoal paper, off-white ink — like reading under a 
 ### 2.3 Rules
 
 - Both themes must pass WCAG 2.2 AA: `--ink` on `--paper` ≥ 12:1, `--ink-tertiary` on `--paper` ≥ 4.5:1. Verify at build time.
-- Never introduce a new color without updating this document. Category labels, source-type labels, buttons — all monochrome.
+- Never introduce a new color without updating this document and `docs/brand-guidelines.md`. Category labels, source-type labels, buttons — all monochrome.
 - Source-type distinction (state media / private / government / international) is conveyed with **text labels and small-caps styling**, never color coding.
+
+### 2.4 Brand colours (Thulawa News)
+
+Defined in `packages/ui/src/tokens.css` and identical in both themes. Full rules are in `docs/brand-guidelines.md`.
+
+| Token | Value | Usage |
+|---|---|---|
+| `--brand-navy` | `#13233A` | Masthead rule, admin brand surfaces, social card frame |
+| `--brand-navy-deep` | `#0B1626` | Dark brand backgrounds (covers, admin brand header) |
+| `--brand-gold` | `#C9A24A` | Thin accent rules under the masthead and on social cards |
+| `--brand-gold-light` | `#E9D08C` | Tagline on navy |
+| `--brand-gold-dark` | `#94702A` | Tagline on paper or cream |
+| `--brand-cream` | `#F5ECD8` | Light brand backgrounds |
+
+Brand colours appear only on the masthead, logo, favicon and brand surfaces. Article lists, body text, buttons and category labels stay monochrome.
 
 ---
 
@@ -127,7 +142,7 @@ Centered, stacked, like a broadsheet nameplate:
 
 ```
         ─────────────────────────────────────
-                  [SITE NAME IN SINHALA]        ← Abhaya Libre Bold, --text-masthead
+        [SEAL] [තුලාව wordmark + tagline]      ← brand artwork from /brand (seal + name-navy.svg + tagline-gold-dark.svg)
         2026 අගෝස්තු 15 සිකුරාදා | කොළඹ         ← date line, --text-meta, centered
         ═════════════════════════════════════   ← double rule
         පුවත් | දේශපාලන | ආර්ථික | ක්‍රීඩා | ලෝක ...  ← section nav, horizontal, scrollable on mobile
@@ -256,7 +271,7 @@ Reject any generated UI that contains:
 - Emoji in UI copy
 - Gradient text, glassmorphism, neumorphism
 - More than two font families on a page
-- Colored favicons/logos on public pages (the admin source registry may use publisher-hosted favicons for identification)
+- Colored favicons/logos on public pages other than Thulawa's own seal and icon (the admin source registry may use publisher-hosted favicons for identification)
 
 ## 10. Page Inventory (public)
 

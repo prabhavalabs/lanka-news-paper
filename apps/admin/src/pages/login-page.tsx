@@ -28,9 +28,9 @@ export function LoginPage() {
     <main className="relative flex min-h-svh items-center justify-center bg-background px-6 py-16 text-foreground">
       <section className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-sm" aria-labelledby="login-title">
         <div className="mb-6 flex items-center gap-3">
-          <img src="/brand/news-control-room-mark.svg" alt="" className="size-10" />
+          <img src="/brand/icon-192.png" alt="" className="size-10 rounded-lg" />
           <div>
-            <p className="font-heading font-semibold tracking-tight">News Control Room</p>
+            <p className="font-heading font-semibold tracking-tight">Thulawa Control Room</p>
             <p className="text-xs text-muted-foreground">Administration portal</p>
           </div>
         </div>

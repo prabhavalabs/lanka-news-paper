@@ -926,6 +926,45 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export type SocialPostStatus = "pending_review" | "approved" | "publishing" | "published" | "needs_attention" | "failed" | "skipped" | "rejected";
+export type SocialSettings = {
+  enabled: boolean; auto_publish: boolean; max_posts_per_hour: number; max_posts_per_day: number;
+  min_gap_minutes: number; quiet_hours_start: number; quiet_hours_end: number; min_score: number;
+  lookback_hours: number; candidates_per_run: number; include_single_articles: boolean; timezone: string; updated_at: string;
+  realtime_enabled: boolean; min_review_score: number;
+};
+export type SocialChannelKey = "facebook";
+export type SocialTrigger = "scheduled" | "realtime" | "manual";
+export type SocialReviewStatus = "not_reviewed" | "passed" | "failed" | "unavailable";
+export type SocialReviewIssue = { severity: "blocker" | "major" | "minor"; field: string; message: string };
+export type SocialAccount = {
+  id: string; page_id: string; page_name: string; picture: string; status: string; connected_at: string;
+  last_verified_at: string | null; token_expires_at: string | null; last_error: string | null;
+};
+export type SocialPost = {
+  id: string; account_id: string | null; subject_kind: string; event_id: string | null; article_id: string | null;
+  subject_title: string; category: string; status: SocialPostStatus; score: number; selection_reason: string;
+  kind: string; headline_si: string; summary_si: string; caption: string; hashtags: string[]; link_url: string;
+  source_names: string[]; source_count: number; spectrum: { left: number; center: number; right: number } | null;
+  image_key: string | null; image_url: string; image_rendered_at: string | null; scheduled_for: string | null;
+  approved_by: string | null; approved_at: string | null; rejected_by: string | null; rejected_at: string | null;
+  published_at: string | null; fb_post_id: string | null; fb_permalink: string | null; attempts: number;
+  last_error: string | null; llm_call_id: number | null; evaluated_source_count: number;
+  created_by: string; created_at: string; updated_at: string;
+  channel: SocialChannelKey; trigger: SocialTrigger; review_status: SocialReviewStatus; review_score: number | null;
+  review_summary: string; review_issues: SocialReviewIssue[]; reviewed_at: string | null;
+};
+export type SocialChannel = { key: string; name: string; available: boolean; status: string };
+export type SocialContentList = { items: SocialPost[]; from: string; to: string };
+export type SocialStatus = {
+  configured: boolean; connected: boolean; account: SocialAccount | null; settings: SocialSettings;
+  counts: Partial<Record<SocialPostStatus, number>>; next_publish_eligible_at: string | null;
+};
+export type SocialPostList = { items: SocialPost[]; next_cursor: string };
+export type SocialEditInput = Pick<SocialPost, "headline_si" | "summary_si" | "caption" | "hashtags">;
+export type SocialCreateInput = { event_id: string; article_id?: never } | { article_id: string; event_id?: never };
+export type SocialPendingPage = { id: string; name: string; picture: string };
+
 export function createClient(baseUrl = "") {
   const url = (path: string) => `${baseUrl}${path}`;
   return {
@@ -1300,6 +1339,25 @@ export function createClient(baseUrl = "") {
         method: "POST",
         body: JSON.stringify(body)
       }),
+    socialStatus: () => request<SocialStatus>(url("/api/admin/social/status")),
+    socialSettings: () => request<SocialSettings>(url("/api/admin/social/settings")),
+    updateSocialSettings: (body: SocialSettings) => request<SocialSettings>(url("/api/admin/social/settings"), { method: "POST", body: JSON.stringify(body) }),
+    connectFacebook: () => request<{ authorize_url: string }>(url("/api/admin/social/facebook/connect"), { method: "POST", body: "{}" }),
+    pendingFacebookPages: (state_id: string) => request<{ items: SocialPendingPage[] }>(url(withQuery("/api/admin/social/facebook/pending-pages", { state_id }))),
+    selectFacebookPage: (body: { state_id: string; page_id: string }) => request<{ ok: boolean }>(url("/api/admin/social/facebook/select"), { method: "POST", body: JSON.stringify(body) }),
+    disconnectFacebook: () => request<{ ok: boolean }>(url("/api/admin/social/facebook/disconnect"), { method: "POST", body: "{}" }),
+    socialPosts: (params: { status?: SocialPostStatus; limit?: number; cursor?: string } = {}) => request<SocialPostList>(url(withQuery("/api/admin/social/posts", params))),
+    socialPost: (id: string) => request<SocialPost>(url(`/api/admin/social/posts/${encodeURIComponent(id)}`)),
+    createSocialPost: (body: SocialCreateInput) => request<SocialPost>(url("/api/admin/social/posts"), { method: "POST", body: JSON.stringify(body) }),
+    editSocialPost: (id: string, body: Partial<SocialEditInput>) => request<SocialPost>(url(`/api/admin/social/posts/${encodeURIComponent(id)}`), { method: "PATCH", body: JSON.stringify(body) }),
+    approveSocialPost: (id: string, body: { scheduled_for?: string } = {}) => request<SocialPost>(url(`/api/admin/social/posts/${encodeURIComponent(id)}/approve`), { method: "POST", body: JSON.stringify(body) }),
+    rejectSocialPost: (id: string) => request<SocialPost>(url(`/api/admin/social/posts/${encodeURIComponent(id)}/reject`), { method: "POST", body: "{}" }),
+    retrySocialPost: (id: string, confirm_not_published = false) => request<SocialPost>(url(`/api/admin/social/posts/${encodeURIComponent(id)}/retry`), { method: "POST", body: JSON.stringify({ confirm_not_published }) }),
+    renderSocialPost: (id: string) => request<SocialPost>(url(`/api/admin/social/posts/${encodeURIComponent(id)}/render`), { method: "POST", body: "{}" }),
+    reviewSocialPost: (id: string) => request<SocialPost>(url(`/api/admin/social/posts/${encodeURIComponent(id)}/review`), { method: "POST", body: "{}" }),
+    socialChannels: () => request<{ items: SocialChannel[] }>(url("/api/admin/social/channels")),
+    socialContent: (params: { from: string; to: string; channel?: string; status?: SocialPostStatus }) => request<SocialContentList>(url(withQuery("/api/admin/social/content", params))),
+    runSocialSelection: () => request<{ ok: boolean }>(url("/api/admin/social/run-selection"), { method: "POST", body: "{}" }),
     agentWorkflows: () =>
       request<{ items: AgentWorkflow[] }>(url("/api/admin/workflows")),
     updateAgentWorkflow: (task: string, body: AgentWorkflowInput) =>

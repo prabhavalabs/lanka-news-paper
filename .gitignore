@@ -62,3 +62,6 @@ GEMINI.md
 **/.skills/
 *-instructions.md
 **/*-instructions.md
+
+# CI release artifacts (compiled on the runner, packaged by infra/production/package.Dockerfile)
+.ci-out/

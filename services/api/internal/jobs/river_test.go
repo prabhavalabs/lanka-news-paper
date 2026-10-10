@@ -23,7 +23,7 @@ func TestQueueHistoryCutoff(t *testing.T) {
 func TestPeriodicJobCatalog(t *testing.T) {
 	catalog := PeriodicJobCatalog()
 
-	require.Len(t, catalog, 6)
+	require.Len(t, catalog, 8)
 	require.Equal(t, "ingest.poll", catalog[0].Kind)
 	require.Equal(t, time.Minute, catalog[0].Interval)
 	require.True(t, catalog[0].RunOnStart)
@@ -42,6 +42,10 @@ func TestPeriodicJobCatalog(t *testing.T) {
 	require.Equal(t, "article.content.cleanup", catalog[5].Kind)
 	require.Equal(t, 24*time.Hour, catalog[5].Interval)
 	require.True(t, catalog[5].RunOnStart)
+	require.Equal(t, "social.selection", catalog[6].Kind)
+	require.Equal(t, 15*time.Minute, catalog[6].Interval)
+	require.Equal(t, "social.publish", catalog[7].Kind)
+	require.Equal(t, 3*time.Minute, catalog[7].Interval)
 }
 
 func TestDailyScheduleTargetsEightInColombo(t *testing.T) {
@@ -69,7 +73,7 @@ func TestQueueCatalog(t *testing.T) {
 	t.Setenv("SNAP_ADMIN_ANALYSIS_WORKERS", "")
 	catalog := QueueCatalog()
 
-	require.Len(t, catalog, 5)
+	require.Len(t, catalog, 6)
 	require.Equal(t, "default", catalog[0].Name)
 	require.Equal(t, 2, catalog[0].MaxWorkers)
 	require.Equal(t, "analysis", catalog[1].Name)
@@ -80,6 +84,8 @@ func TestQueueCatalog(t *testing.T) {
 	require.Equal(t, 1, catalog[3].MaxWorkers)
 	require.Equal(t, "admin-analysis", catalog[4].Name)
 	require.Equal(t, 1, catalog[4].MaxWorkers)
+	require.Equal(t, "social", catalog[5].Name)
+	require.Equal(t, 1, catalog[5].MaxWorkers)
 }
 
 func TestQueueCatalogUsesConfiguredAdministrativeConcurrency(t *testing.T) {

@@ -21,7 +21,7 @@ export function ArticlePage() {
   })
   useEffect(() => {
     if (!article.data) return
-    document.title = `${article.data.headline} | ලංකා පුවත්`
+    document.title = `${article.data.headline} | තුලාව`
     const setMeta = (property: string, content: string) => {
       let el = document.querySelector(`meta[property="${property}"]`)
       if (!el) {
@@ -31,7 +31,7 @@ export function ArticlePage() {
       }
       el.setAttribute('content', content)
     }
-    setMeta('og:title', `${article.data.headline} — ලංකා පුවත් සොයාගැනීම`)
+    setMeta('og:title', `${article.data.headline} — තුලාව`)
     setMeta('og:description', `${article.data.source.name} වෙතින් සොයාගත් ශීර්ෂපාඨයකි. සම්පූර්ණ ලිපිය මුල් ප්‍රකාශකයා සතුය.`)
     setMeta('og:type', 'article')
   }, [article.data])

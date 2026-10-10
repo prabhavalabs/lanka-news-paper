@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerE
 import { Link, useParams } from 'react-router'
 import { toast } from 'sonner'
 
+import { CreateSocialPost } from '@/components/create-social-post'
 import { LLMTelemetryCard } from '@/components/llm-telemetry'
 import { SourceAvatar } from '@/components/source-avatar'
 import { RichArticleContent } from '@/components/rich-article-content'
@@ -91,6 +92,7 @@ function decodeCodePoint(code: number) {
 export function ArticleDetailPage() {
   const { id = '' } = useParams()
   const queryClient = useQueryClient()
+  const me = useQuery({ queryKey: ['me'], queryFn: () => client.me() })
   const article = useQuery({
     queryKey: ['article', id], queryFn: () => client.adminArticle(id),
     refetchInterval: (query) => ['queued', 'running'].includes(query.state.data?.pipeline_runs[0]?.status ?? '') ? 5_000 : false,
@@ -131,7 +133,8 @@ export function ArticleDetailPage() {
             <span><strong className="font-medium text-foreground">{item.source}</strong><br />Published {date.format(new Date(item.published_at))}</span>
           </div>
         </div>
-        {originalURL ? <Button variant="outline" nativeButton={false} render={<a href={originalURL} target="_blank" rel="noreferrer" />}><ExternalLink /> Open original source</Button> : null}
+        <div className="flex flex-wrap gap-2">{me.data?.role === 'administrator' ? <CreateSocialPost subject={{ article_id: id }} /> : null}
+        {originalURL ? <Button variant="outline" nativeButton={false} render={<a href={originalURL} target="_blank" rel="noreferrer" />}><ExternalLink /> Open original source</Button> : null}</div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

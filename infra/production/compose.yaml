@@ -10,12 +10,22 @@ x-app-environment: &app-environment
   SNAP_CODEX_QUOTA_COOLDOWN: ${SNAP_CODEX_QUOTA_COOLDOWN:-15m}
   SNAP_CODEX_MODELS: ${SNAP_CODEX_MODELS:-gpt-6-luna,gpt-6.1-sol,gpt-6-sol,gpt-5.6-luna,gpt-5.6-terra}
   SNAP_MEDIA_LOCAL_DIR: /data/media
-  SNAP_NEWSLETTER_BASE_URL: ${SNAP_NEWSLETTER_BASE_URL:-https://lankanewspaper.prabhavalabs.com}
+  SNAP_NEWSLETTER_BASE_URL: ${SNAP_NEWSLETTER_BASE_URL:-https://thulawanews.com}
   SNAP_NEWSLETTER_ENABLED: ${SNAP_NEWSLETTER_ENABLED:-false}
   SNAP_NEWSLETTER_FROM: ${SNAP_NEWSLETTER_FROM:-}
   SNAP_NEWSLETTER_RECIPIENT: ${SNAP_NEWSLETTER_RECIPIENT:-}
   SNAP_NEWSLETTER_SEND_HOUR: ${SNAP_NEWSLETTER_SEND_HOUR:-8}
   SNAP_NEWSLETTER_TIMEZONE: ${SNAP_NEWSLETTER_TIMEZONE:-Asia/Colombo}
+  SNAP_META_APP_ID: ${SNAP_META_APP_ID:-}
+  SNAP_META_APP_SECRET: ${SNAP_META_APP_SECRET:-}
+  SNAP_META_REDIRECT_URL: ${SNAP_META_REDIRECT_URL:-https://admin.thulawanews.com/api/admin/social/facebook/callback}
+  SNAP_META_LOGIN_CONFIG_ID: ${SNAP_META_LOGIN_CONFIG_ID:-}
+  SNAP_META_GRAPH_VERSION: ${SNAP_META_GRAPH_VERSION:-v26.0}
+  SNAP_SOCIAL_TOKEN_KEY: ${SNAP_SOCIAL_TOKEN_KEY:-}
+  SNAP_SOCIAL_PUBLIC_BASE_URL: ${SNAP_SOCIAL_PUBLIC_BASE_URL:-}
+  SNAP_SOCIAL_INCLUDE_LINK: ${SNAP_SOCIAL_INCLUDE_LINK:-false}
+  SNAP_SOCIAL_CHROME_PATH: ${SNAP_SOCIAL_CHROME_PATH:-/usr/bin/chromium}
+  SNAP_SOCIAL_CHROME_NO_SANDBOX: ${SNAP_SOCIAL_CHROME_NO_SANDBOX:-true}
   SNAP_MIGRATIONS_PATH: /app/migrations
   SNAP_R2_ACCESS_KEY_ID: ${SNAP_R2_ACCESS_KEY_ID:-}
   SNAP_R2_ACCOUNT_ID: ${SNAP_R2_ACCOUNT_ID:-}
@@ -77,7 +87,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
-      start_period: 10s
+      start_period: 60s
+      start_interval: 1s
     mem_limit: 1g
     cpus: 0.75
 
@@ -88,6 +99,7 @@ services:
     environment: *app-environment
     volumes:
       - codex-data:/data/codex
+      - media-data:/data/media
     depends_on:
       postgres:
         condition: service_healthy
@@ -120,6 +132,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
+      start_period: 30s
+      start_interval: 1s
     mem_limit: 64m
     cpus: 0.15
 
@@ -136,6 +150,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
+      start_period: 30s
+      start_interval: 1s
     mem_limit: 64m
     cpus: 0.15
 

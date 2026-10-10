@@ -24,6 +24,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/newsletter"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
 )
 
 type PollArgs struct{}
@@ -564,6 +565,22 @@ func periodicJobDefinitions(newsletterSchedule ...river.PeriodicSchedule) []peri
 			},
 			Constructor: func() (river.JobArgs, *river.InsertOpts) { return ArticleContentCleanupArgs{}, nil },
 		},
+		{
+			PeriodicJobMetadata: PeriodicJobMetadata{
+				Kind: SocialSelectionArgs{}.Kind(), Name: "Social story selection",
+				Description: "Prepares rights-approved Sinhala posts for review.",
+				Queue:       "social", Interval: 15 * time.Minute,
+			},
+			Constructor: func() (river.JobArgs, *river.InsertOpts) { return SocialSelectionArgs{}, nil },
+		},
+		{
+			PeriodicJobMetadata: PeriodicJobMetadata{
+				Kind: SocialPublishArgs{}.Kind(), Name: "Facebook Page publishing",
+				Description: "Publishes approved image posts within caps and quiet hours.",
+				Queue:       "social", Interval: 3 * time.Minute,
+			},
+			Constructor: func() (river.JobArgs, *river.InsertOpts) { return SocialPublishArgs{}, nil },
+		},
 	}
 }
 
@@ -608,6 +625,7 @@ func QueueCatalog() []QueueMetadata {
 		{Name: "crawl", MaxWorkers: 1},
 		{Name: adminAnalysisDispatchQueue, MaxWorkers: 1},
 		{Name: adminAnalysisQueue, MaxWorkers: min(configuredAdminAnalysisWorkers(os.Getenv), codex.ConcurrencyLimit())},
+		{Name: "social", MaxWorkers: 1},
 	}
 }
 
@@ -642,8 +660,14 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
-func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, pipelineStore *pipeline.Store, contentStore *content.Store, news *publish.Store, newsletterService *newsletter.Service, adminAnalysis *adminanalysis.Service) (*river.Client[pgx.Tx], error) {
+func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, pipelineStore *pipeline.Store, contentStore *content.Store, news *publish.Store, newsletterService *newsletter.Service, adminAnalysis *adminanalysis.Service, socialServices ...*social.Service) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
+	var socialService *social.Service
+	if len(socialServices) > 0 {
+		socialService = socialServices[0]
+	}
+	river.AddWorker(workers, &SocialSelectionWorker{Social: socialService})
+	river.AddWorker(workers, &SocialPublishWorker{Social: socialService})
 	dispatcher := &PipelineDispatchWorker{Pipeline: pipelineStore}
 	contentBackfill := &ArticleContentBackfillWorker{Content: contentStore}
 	adminDispatcher := &AdminAnalysisBackfillDispatchWorker{Analysis: adminAnalysis}

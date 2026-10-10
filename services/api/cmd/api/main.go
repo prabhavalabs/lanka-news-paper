@@ -29,6 +29,8 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/registry"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social/card"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/watchtower"
 )
 
@@ -130,10 +132,21 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("media storage ready", "remote", mediaStore.Remote())
 
+	chromeRenderer, renderErr := card.NewChromeRenderer(card.Options{ChromePath: loaded.Social.ChromePath})
+	var socialRenderer card.Renderer
+	if renderErr != nil {
+		logger.Warn("social image renderer unavailable", "error", renderErr)
+	} else {
+		socialRenderer = chromeRenderer
+	}
+	socialService := social.NewService(social.NewStore(pool), loaded.Social, model, socialRenderer, mediaStore, time.Now)
+	socialService.SetEnqueuers(func(ctx context.Context) error { return jobs.EnqueueSocialSelection(ctx, producer) }, func(ctx context.Context) error { return jobs.EnqueueSocialPublisher(ctx, producer) })
+
 	server := &http.Server{
 		Addr: loaded.Address,
 		Handler: httpapi.NewRouter(httpapi.Dependencies{
 			AdminAnalysis:    adminAnalysis,
+			Social:           socialService,
 			AllowedOrigins:   loaded.AllowedOrigins,
 			CookieSecure:     loaded.SessionCookieSecure,
 			Database:         pool,

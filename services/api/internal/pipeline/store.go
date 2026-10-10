@@ -34,6 +34,14 @@ type Store struct {
 	model    llm.Completer
 	clusters *cluster.Store
 	politics *politics.Store
+	// eventSynthesized is told about every event whose cross-source synthesis was refreshed,
+	// so social publishing can consider new coverage straight away.
+	eventSynthesized func(ctx context.Context, eventID string)
+}
+
+// OnEventSynthesized registers a best-effort callback for refreshed event syntheses.
+func (store *Store) OnEventSynthesized(callback func(ctx context.Context, eventID string)) {
+	store.eventSynthesized = callback
 }
 
 type modelSelection struct {
