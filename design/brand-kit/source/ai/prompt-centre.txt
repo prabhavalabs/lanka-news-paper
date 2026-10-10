@@ -1,0 +1,9 @@
+Use your image generation tool to create ONE image, then save the generated PNG file into the current working directory as centre-v1.png (copy it from wherever the tool stores it). Reply only with the saved file path.
+
+Image brief (square 1024x1024):
+Premium heraldic crest illustration for a Sri Lankan news brand, centred on a perfectly flat plain cream background (#F6EEDC), with NO text of any kind.
+Subject: a classic balance scale whose central upright post is an elegant fountain pen standing vertically, its gold nib pointing straight up at the top. A level, horizontal antique-gold beam crosses the pen just below the nib, with ornate curled scroll ends and a round boss at the centre. Two identical shallow gold pans hang from fine chains, perfectly level (the scale is balanced). Behind the scale, fine radiating sunburst rays in pale gold fading outward. Framing the lower half, a symmetrical wreath of ripe Sri Lankan paddy (rice) stalks heavy with grain, curving up both sides.
+Palette: deep navy #13233A (pen barrel, outlines), antique gold #C9A24A with highlights #E9D08C and shadows #94702A, cream #F6EEDC.
+Style: high-end vintage badge / law-and-press crest illustration, crisp vector-like linework with fine engraved hatching on the gold, perfectly symmetrical, centred, rich but clean detail, print quality.
+Composition: all artwork fits inside a centred circle about 88% of the canvas width, generous even margin, nothing touching the edges.
+Strictly avoid: any text, letters, numbers, words, monograms, ribbon banners, outer border rings, watermarks, signatures, people, swords.

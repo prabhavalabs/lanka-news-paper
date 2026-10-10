@@ -44,8 +44,9 @@ export function RootLayout() {
       </a>
       {condensed ? (
         <div className="sticky top-0 z-10 flex h-12 items-center justify-between border-b border-rule bg-paper px-6">
-          <Link to="/" className="font-headline text-lg font-bold">
-            ලංකා පුවත්
+          <Link to="/" className="flex items-center gap-2" aria-label="තුලාව මුල් පිටුව">
+            <img src="/brand/thulawa-seal-512.png" alt="" className="size-8" />
+            <img src="/brand/name-navy.svg" alt="තුලාව" className="h-6 w-auto" />
           </Link>
         </div>
       ) : null}
@@ -59,11 +60,17 @@ export function RootLayout() {
       ) : null}
       <header className="mx-auto max-w-[1280px] px-6 py-8 text-center md:px-12">
         <div className="h-px bg-rule" />
-        <p className="font-headline mt-6 text-[length:var(--text-masthead)] leading-[1.1] font-bold">ලංකා පුවත්</p>
+        <Link to="/" className="mt-6 inline-flex items-center justify-center gap-4 md:gap-6" aria-label="තුලාව මුල් පිටුව">
+          <img src="/brand/thulawa-seal-512.png" alt="" className="size-16 md:size-24" />
+          <span className="flex flex-col items-start gap-2 md:gap-3">
+            <img src="/brand/name-navy.svg" alt="තුලාව" className="h-12 w-auto md:h-[4.5rem]" />
+            <img src="/brand/tagline-gold-dark.svg" alt="අසමතුලිත ලෝකයකට සමතුලිත පුවත්" className="h-4 w-auto md:h-5" />
+          </span>
+        </Link>
         <p className="mt-2 text-[0.8125rem] text-muted-foreground">{colomboDateLine()}</p>
         <div className="mt-4 flex flex-col gap-[3px]">
-          <div className="h-[3px] bg-ink" />
-          <div className="h-px bg-ink" />
+          <div className="h-[3px] bg-brand-navy" />
+          <div className="h-px bg-brand-gold" />
         </div>
         <div className="relative mt-3 flex items-center">
           <nav className="flex min-w-0 flex-1 gap-5 overflow-x-auto text-[0.8125rem] [scrollbar-width:none]" aria-label="කොටස්">

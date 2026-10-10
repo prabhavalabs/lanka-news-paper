@@ -10,6 +10,14 @@
   --link-visited: #5a5650;
   --error: #8b2500;
 
+  /* Thulawa brand colours (design/brand-kit, docs/brand-guidelines.md). Same in light and dark. */
+  --brand-navy: #13233a;
+  --brand-navy-deep: #0b1626;
+  --brand-gold: #c9a24a;
+  --brand-gold-light: #e9d08c;
+  --brand-gold-dark: #94702a;
+  --brand-cream: #f5ecd8;
+
   --background: var(--paper);
   --foreground: var(--ink);
   --card: var(--paper-raised);
@@ -77,6 +85,12 @@
   --color-ink: var(--ink);
   --color-rule: var(--rule);
   --color-tint: var(--tint);
+  --color-brand-navy: var(--brand-navy);
+  --color-brand-navy-deep: var(--brand-navy-deep);
+  --color-brand-gold: var(--brand-gold);
+  --color-brand-gold-light: var(--brand-gold-light);
+  --color-brand-gold-dark: var(--brand-gold-dark);
+  --color-brand-cream: var(--brand-cream);
   --radius-sm: 0;
   --radius-md: 0;
   --radius-lg: 0;

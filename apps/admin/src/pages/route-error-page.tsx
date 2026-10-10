@@ -16,7 +16,7 @@ type RecoveryContentProps = {
 function usePageTitle(title: string) {
   useEffect(() => {
     const previousTitle = document.title
-    document.title = `${title} · News Control Room`
+    document.title = `${title} · Thulawa Control Room`
     return () => {
       document.title = previousTitle
     }
