@@ -6,7 +6,7 @@ import {
   type FrontPageStory,
 } from '@snap/api-client'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowDown, ArrowUp, ExternalLink, LayoutTemplate, LoaderCircle, Save, Search, Undo2, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ExternalLink, LayoutTemplate, LoaderCircle, RefreshCw, Save, Search, Undo2, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -75,6 +75,11 @@ export function FrontPagePage() {
     },
     onError: (error) => toast.error(error instanceof Error && error.message ? error.message : 'Could not save the front page'),
   })
+  const rebuild = useMutation({
+    mutationFn: () => client.rebuildFrontPage(),
+    onSuccess: () => toast.success('Rebuilding the edition. The AI desk writes and illustrates stories, so this takes about 10–20 minutes.'),
+    onError: () => toast.error('Could not queue a rebuild'),
+  })
   const toggleSource = useMutation({
     mutationFn: ({ id, front_page }: { id: string; front_page: boolean }) => client.setFrontPageSource(id, { front_page }),
     onSuccess: (source) => {
@@ -125,10 +130,11 @@ export function FrontPagePage() {
           <Badge variant="outline" className="mb-2"><LayoutTemplate /> Chief editor</Badge>
           <h1 className="font-heading text-2xl font-semibold tracking-tight">Front page</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Choose the lead and the stories readers see first. Places you leave open fill automatically with the most widely reported recent stories from sources allowed on the front page.
+            The AI layout editor builds a new edition every 30 minutes (05:00–24:00): it chooses the stories and block sizes, writes each story to fit, and draws a few illustrations. Stories you place here are always included in the place you choose, and saving rebuilds the edition.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => rebuild.mutate()} disabled={rebuild.isPending}>{rebuild.isPending ? <LoaderCircle className="animate-spin" /> : <RefreshCw />} Rebuild edition now</Button>
           {dirty ? <Button variant="outline" onClick={() => setDraft(null)} disabled={save.isPending}><Undo2 /> Discard changes</Button> : null}
           <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
             {save.isPending ? <LoaderCircle className="animate-spin" /> : <Save />} {save.isPending ? 'Publishing…' : 'Publish front page'}

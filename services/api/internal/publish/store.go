@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/textcheck"
 )
 
 type Store struct {
@@ -23,7 +24,7 @@ func NewStore(pool *pgxpool.Pool) *Store {
 }
 
 const articleSelect = `
-	SELECT a.id::text, a.headline, s.id::text, s.name, s.source_type,
+	SELECT a.id::text, a.headline, s.id::text, s.name, s.source_type, COALESCE(s.icon_url, ''),
 	       c.slug, c.name_si, a.published_at, a.received_at, a.canonical_url,
 	       a.event_id::text, a.editorial_note, NULLIF(document.summary_text, ''),
 	       analysis.relevant, analysis.label, analysis.left_probability,
@@ -203,6 +204,11 @@ func (store *Store) GetEvent(ctx context.Context, id string) (Event, error) {
 	if err != nil {
 		return Event{}, err
 	}
+	if event.Analysis != nil {
+		for i := range event.Analysis.SourceSpectrum {
+			event.Analysis.SourceSpectrum[i].SourceIcon = PublicIcon(event.Analysis.SourceSpectrum[i].SourceIcon)
+		}
+	}
 	return event, nil
 }
 
@@ -227,6 +233,9 @@ func (store *Store) eventNarrativeAnalysis(ctx context.Context, eventID string) 
 	}
 	if err := json.Unmarshal(spectrum, &item.SourceSpectrum); err != nil {
 		return nil, err
+	}
+	if _, foreign := textcheck.Foreign(item.Summary); foreign {
+		item.Summary = ""
 	}
 	if item.SourceSpectrum == nil {
 		item.SourceSpectrum = []EventSourceSpectrum{}
@@ -568,7 +577,7 @@ func scanArticle(row rowScanner) (Article, error) {
 	var relevant *bool
 	var left, center, right, confidence *float64
 	if err := row.Scan(
-		&item.ID, &item.Headline, &item.Source.ID, &item.Source.Name, &item.Source.Type,
+		&item.ID, &item.Headline, &item.Source.ID, &item.Source.Name, &item.Source.Type, &item.Source.Icon,
 		&slug, &nameSI, &item.PublishedAt, &item.ReceivedAt, &item.OriginalURL, &eventID, &note,
 		&summary, &relevant, &label, &left, &center, &right, &confidence,
 	); err != nil {
@@ -577,8 +586,15 @@ func scanArticle(row rowScanner) (Article, error) {
 	if slug != nil && nameSI != nil {
 		item.Category = &Category{Slug: *slug, NameSI: *nameSI}
 	}
+	item.Source.Icon = PublicIcon(item.Source.Icon)
 	item.EventID = eventID
 	item.EditorialNote = note
+	if summary != nil {
+		// Never show readers machine-written text that mixes in characters from another script.
+		if _, foreign := textcheck.Foreign(*summary); foreign {
+			summary = nil
+		}
+	}
 	if summary != nil || relevant != nil {
 		item.Analysis = &ArticleNarrativeAnalysis{Label: "unrated", CenterProbability: 1}
 		if summary != nil {

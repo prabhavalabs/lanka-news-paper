@@ -57,7 +57,7 @@ export function EditorialListPage() {
                     {item.title}
                   </Link>
                 </h2>
-                {item.standfirst ? <p className="np-body mt-2 text-[1.0625rem] text-ink-secondary">{item.standfirst}</p> : null}
+                {item.standfirst ? <p className="np-standfirst mt-2">{item.standfirst}</p> : null}
                 <p className="mt-1 flex flex-wrap items-center justify-between gap-x-4">
                   <span className="np-meta">{item.author_name}</span>
                   <Link to={`/editorial/${item.id}`} className="np-link font-headline inline-flex min-h-11 items-center font-bold">
@@ -85,7 +85,7 @@ function Body({ text }: { text: string }) {
         {remainder}
       </p>
       {rest.map((paragraph, index) => (
-        <p key={index} className="mt-4 indent-8">
+        <p key={index} className="mt-3">
           {paragraph}
         </p>
       ))}
@@ -120,7 +120,7 @@ export function EditorialPage() {
         {item.title}
       </h1>
       {item.standfirst ? (
-        <p className="mx-auto mt-4 max-w-[38rem] text-center font-headline text-[1.25rem] leading-[1.7] font-medium text-ink-secondary md:text-[1.375rem]">
+        <p className="np-standfirst mx-auto mt-4 max-w-[38rem] text-center md:text-[1.1875rem]">
           {item.standfirst}
         </p>
       ) : null}

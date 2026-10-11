@@ -25,23 +25,44 @@ var colombo = func() *time.Location {
 	return l
 }()
 var cardTemplate = template.Must(template.New("card").Parse(pageTemplate))
+
+// Card fonts, chosen in the card font picker (11 October 2026): headline AF Sandarenu,
+// summary Noto Sans Sinhala, badge and section label Abhaya Libre, sources, coverage and
+// footer Yaldevi Colombo SemiBold. Subset files carry a unicode-range; whole files do not.
+var cardFonts = []struct {
+	name   string
+	weight int
+	files  map[string]string // file -> unicode-range ("" for the whole font)
+}{
+	{"AF Sandarenu", 400, map[string]string{"af-sandarenu-400.woff2": ""}},
+	{"Noto Sans Sinhala", 400, map[string]string{"noto-sans-sinhala-sinhala-400-normal.woff2": sinhalaRange, "noto-sans-sinhala-latin-400-normal.woff2": latinRange}},
+	{"Abhaya Libre", 400, map[string]string{"abhaya-libre-sinhala-400-normal.woff2": sinhalaRange, "abhaya-libre-latin-400-normal.woff2": latinRange}},
+	{"Yaldevi Colombo", 600, map[string]string{"yaldevi-colombo-600.woff2": ""}},
+}
+
+const (
+	sinhalaRange = "U+0964-0965,U+0D81-0DF4,U+1CF2,U+200C-200D,U+25CC,U+111E1-111F4"
+	latinRange   = "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
+)
+
 var fontCSS = func() template.CSS {
 	var css strings.Builder
-	for _, font := range []struct {
-		slug, name string
-		weight     int
-	}{{"abhaya-libre", "Abhaya Libre", 700}, {"noto-serif-sinhala", "Noto Serif Sinhala", 400}, {"noto-sans-sinhala", "Noto Sans Sinhala", 400}} {
-		for _, subset := range []string{"sinhala", "latin"} {
-			filename := fmt.Sprintf("assets/fonts/%s-%s-%d-normal.woff2", font.slug, subset, font.weight)
-			data, err := assets.ReadFile(filename)
+	for _, font := range cardFonts {
+		files := make([]string, 0, len(font.files))
+		for file := range font.files {
+			files = append(files, file)
+		}
+		sort.Strings(files)
+		for _, file := range files {
+			data, err := assets.ReadFile("assets/fonts/" + file)
 			if err != nil {
 				panic(err)
 			}
-			unicodeRange := "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
-			if subset == "sinhala" {
-				unicodeRange = "U+0964-0965,U+0D81-0DF4,U+1CF2,U+200C-200D,U+25CC,U+111E1-111F4"
+			unicodeRange := ""
+			if font.files[file] != "" {
+				unicodeRange = "unicode-range:" + font.files[file] + ";"
 			}
-			fmt.Fprintf(&css, "@font-face{font-family:'%s';font-style:normal;font-weight:%d;font-display:block;src:url(data:font/woff2;base64,%s) format('woff2');unicode-range:%s;}\n", font.name, font.weight, base64.StdEncoding.EncodeToString(data), unicodeRange)
+			fmt.Fprintf(&css, "@font-face{font-family:'%s';font-style:normal;font-weight:%d;font-display:block;src:url(data:font/woff2;base64,%s) format('woff2');%s}\n", font.name, font.weight, base64.StdEncoding.EncodeToString(data), unicodeRange)
 		}
 	}
 	// Only build-time embedded fonts are trusted CSS; all card text is escaped.
@@ -170,7 +191,7 @@ func renderHTML(c Card) (string, error) {
 }
 
 const fitScript = `(async () => {
- await Promise.all([document.fonts.load('700 80px "Abhaya Libre"', 'ශ්‍රී ලංකා ප්‍රධාන'),document.fonts.load('400 36px "Noto Serif Sinhala"','ශ්‍රී ලංකා'),document.fonts.load('400 24px "Noto Sans Sinhala"','මූලාශ්‍ර')]);
+ await Promise.all([document.fonts.load('400 80px "AF Sandarenu"', 'ශ්‍රී ලංකා ප්‍රධාන'),document.fonts.load('400 36px "Noto Sans Sinhala"','ශ්‍රී ලංකා'),document.fonts.load('400 24px "Abhaya Libre"','ප්‍රධාන පුවත'),document.fonts.load('600 24px "Yaldevi Colombo"','මූලාශ්‍ර')]);
  await document.fonts.ready;
  function fit(el,start,min,lines,maxHeight=Infinity) {
   for(let size=start;size>=min;size--) {

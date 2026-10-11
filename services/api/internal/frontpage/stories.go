@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/textcheck"
 )
 
 type Category struct {
@@ -21,6 +24,7 @@ type StorySource struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	Type        string    `json:"type"`
+	Icon        string    `json:"icon"`
 	ArticleID   string    `json:"article_id"`
 	Headline    string    `json:"headline"`
 	OriginalURL string    `json:"original_url"`
@@ -62,7 +66,7 @@ func NewStore(pool *pgxpool.Pool) *Store {
 const publicArticles = `
 	SELECT a.id, a.event_id, a.headline, a.canonical_url, a.published_at, a.category_id,
 	       NULLIF(btrim(document.summary_text), '') AS summary,
-	       s.id AS source_id, s.name AS source_name, s.source_type
+	       s.id AS source_id, s.name AS source_name, s.source_type, COALESCE(s.icon_url, '') AS source_icon
 	FROM articles a
 	JOIN sources s ON s.id = a.source_id
 	JOIN rights_profiles r ON r.id = a.rights_profile_id
@@ -104,6 +108,7 @@ func (store *Store) eventStories(ctx context.Context, ids []string, frontPageOnl
 		if slug != nil && name != nil {
 			story.Category = &Category{Slug: *slug, NameSI: *name}
 		}
+		story.Summary = readable(story.Summary)
 		stories[story.ID] = story
 	}
 	if err := rows.Err(); err != nil {
@@ -112,7 +117,7 @@ func (store *Store) eventStories(ctx context.Context, ids []string, frontPageOnl
 	// One report per outlet: the outlet's earliest article on the event.
 	sourceRows, err := store.pool.Query(ctx, `
 		WITH q AS (`+publicArticles+` AND a.event_id = ANY($2::uuid[]))
-		SELECT DISTINCT ON (q.event_id, q.source_id) q.event_id::text, q.source_id::text, q.source_name, q.source_type,
+		SELECT DISTINCT ON (q.event_id, q.source_id) q.event_id::text, q.source_id::text, q.source_name, q.source_type, q.source_icon,
 		       q.id::text, q.headline, q.canonical_url, q.published_at
 		FROM q ORDER BY q.event_id, q.source_id, q.published_at, q.id`, frontPageOnly, ids)
 	if err != nil {
@@ -122,9 +127,10 @@ func (store *Store) eventStories(ctx context.Context, ids []string, frontPageOnl
 	for sourceRows.Next() {
 		var eventID string
 		var source StorySource
-		if err := sourceRows.Scan(&eventID, &source.ID, &source.Name, &source.Type, &source.ArticleID, &source.Headline, &source.OriginalURL, &source.PublishedAt); err != nil {
+		if err := sourceRows.Scan(&eventID, &source.ID, &source.Name, &source.Type, &source.Icon, &source.ArticleID, &source.Headline, &source.OriginalURL, &source.PublishedAt); err != nil {
 			return nil, err
 		}
+		source.Icon = publish.PublicIcon(source.Icon)
 		if story, ok := stories[eventID]; ok {
 			story.Sources = append(story.Sources, source)
 			stories[eventID] = story
@@ -137,7 +143,39 @@ func (store *Store) eventStories(ctx context.Context, ids []string, frontPageOnl
 		sort.SliceStable(story.Sources, func(i, j int) bool { return story.Sources[i].PublishedAt.Before(story.Sources[j].PublishedAt) })
 		stories[id] = story
 	}
-	return stories, nil
+	return stories, store.preferWritten(ctx, "event_id", stories)
+}
+
+// preferWritten replaces each story's summary with the opening of its latest desk report, so
+// every list readers see (front page, related stories) uses text written to the house style.
+func (store *Store) preferWritten(ctx context.Context, column string, stories map[string]Story) error {
+	if len(stories) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(stories))
+	for id := range stories {
+		ids = append(ids, id)
+	}
+	rows, err := store.pool.Query(ctx, `
+		SELECT DISTINCT ON (`+column+`) `+column+`::text,
+		       COALESCE(NULLIF(standfirst, ''), paragraphs->>0, '')
+		FROM story_reports WHERE `+column+` = ANY($1::uuid[])
+		ORDER BY `+column+`, created_at DESC`, ids)
+	if err != nil {
+		return fmt.Errorf("load written summaries: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, text string
+		if err := rows.Scan(&id, &text); err != nil {
+			return err
+		}
+		if story, ok := stories[id]; ok && text != "" {
+			story.Summary = &text
+			stories[id] = story
+		}
+	}
+	return rows.Err()
 }
 
 // articleStories loads single articles by ID as stories.
@@ -149,7 +187,7 @@ func (store *Store) articleStories(ctx context.Context, ids []string) (map[strin
 	rows, err := store.pool.Query(ctx, `
 		WITH q AS (`+publicArticles+` AND a.id = ANY($2::uuid[]))
 		SELECT q.id::text, q.headline, q.summary, category.slug, category.name_si, q.published_at,
-		       q.source_id::text, q.source_name, q.source_type, q.canonical_url
+		       q.source_id::text, q.source_name, q.source_type, q.source_icon, q.canonical_url
 		FROM q LEFT JOIN categories category ON category.id = q.category_id`, false, ids)
 	if err != nil {
 		return nil, fmt.Errorf("load article stories: %w", err)
@@ -159,18 +197,23 @@ func (store *Store) articleStories(ctx context.Context, ids []string) (map[strin
 		story := Story{Kind: KindArticle, SourceCount: 1}
 		var slug, name *string
 		var source StorySource
-		if err := rows.Scan(&story.ID, &story.Headline, &story.Summary, &slug, &name, &story.PublishedAt, &source.ID, &source.Name, &source.Type, &source.OriginalURL); err != nil {
+		if err := rows.Scan(&story.ID, &story.Headline, &story.Summary, &slug, &name, &story.PublishedAt, &source.ID, &source.Name, &source.Type, &source.Icon, &source.OriginalURL); err != nil {
 			return nil, err
 		}
+		source.Icon = publish.PublicIcon(source.Icon)
 		if slug != nil && name != nil {
 			story.Category = &Category{Slug: *slug, NameSI: *name}
 		}
+		story.Summary = readable(story.Summary)
 		story.UpdatedAt = story.PublishedAt
 		source.ArticleID, source.Headline, source.PublishedAt = story.ID, story.Headline, story.PublishedAt
 		story.Sources = []StorySource{source}
 		stories[story.ID] = story
 	}
-	return stories, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return stories, store.preferWritten(ctx, "article_id", stories)
 }
 
 // candidateWindow bounds the automatic front page to recent coverage.
@@ -244,4 +287,68 @@ func rank(stories []Story, now time.Time) {
 		}
 		return stories[i].ID < stories[j].ID
 	})
+}
+
+// Related returns up to six recent stories to read next: same section first, never the story
+// itself or the same news reported in another cluster.
+func (service *Service) Related(ctx context.Context, kind, id string) ([]Story, error) {
+	var current Story
+	var ok bool
+	switch kind {
+	case KindEvent:
+		stories, err := service.store.eventStories(ctx, []string{id}, false)
+		if err != nil {
+			return nil, err
+		}
+		current, ok = stories[id]
+	case KindArticle:
+		stories, err := service.store.articleStories(ctx, []string{id})
+		if err != nil {
+			return nil, err
+		}
+		current, ok = stories[id]
+	}
+	if !ok {
+		return nil, ErrNotFound
+	}
+	candidates, err := service.store.candidates(ctx, service.now(), 80)
+	if err != nil {
+		return nil, err
+	}
+	chosen := []storyWords{wordsOf(current)}
+	sameSection, others := make([]Story, 0, relatedStories), make([]Story, 0, relatedStories)
+	for _, story := range candidates {
+		if story.Kind == current.Kind && story.ID == current.ID {
+			continue
+		}
+		words := wordsOf(story)
+		if repeats(words, chosen) {
+			continue
+		}
+		chosen = append(chosen, words)
+		if current.Category != nil && story.Category != nil && story.Category.Slug == current.Category.Slug {
+			sameSection = append(sameSection, story)
+		} else {
+			others = append(others, story)
+		}
+	}
+	result := append(sameSection, others...)
+	if len(result) > relatedStories {
+		result = result[:relatedStories]
+	}
+	return result, nil
+}
+
+const relatedStories = 6
+
+// readable hides machine-written text that contains characters from an unrelated script, so
+// readers never see it; the page then falls back to the headline and sources.
+func readable(text *string) *string {
+	if text == nil {
+		return nil
+	}
+	if _, foreign := textcheck.Foreign(*text); foreign {
+		return nil
+	}
+	return text
 }

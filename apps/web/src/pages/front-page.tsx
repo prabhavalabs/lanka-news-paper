@@ -1,13 +1,20 @@
-import { createClient, type FrontPage as FrontPageData, type FrontPageStory, type PublicArticle } from '@snap/api-client'
+import {
+  createClient,
+  type EditionBlock,
+  type FrontPage as FrontPageData,
+  type FrontPageStory,
+  type PublicArticle,
+} from '@snap/api-client'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router'
 
 import { cn } from '@snap/ui/utils'
 import { EditorialPanel } from '@/components/newsprint/editorial-panel'
-import { OrnamentRule } from '@/components/newsprint/ornament'
+import { Asterism, Fleuron } from '@/components/newsprint/ornament'
 import { GalleyPlaceholder, Notice } from '@/components/newsprint/states'
-import { BriefStory, LeadStory, TopStory, storyHref } from '@/components/newsprint/story'
+import { PhoneBlock, PrintBlock, storyHref } from '@/components/newsprint/story'
+import { composeEdition, editionBlocks, itemKey, type Lane, type MeasuredAreas } from '@/lib/edition'
 import { editionDate, sinhalaLongDate } from '@/lib/format'
 
 const client = createClient()
@@ -39,6 +46,7 @@ function automaticEdition(items: PublicArticle[]): FrontPageData {
         id: article.source.id,
         name: article.source.name,
         type: article.source.type,
+        icon: '',
         article_id: article.id,
         headline: article.headline,
         original_url: article.original_url,
@@ -53,6 +61,8 @@ function automaticEdition(items: PublicArticle[]): FrontPageData {
   stories.sort((a, b) => b.source_count - a.source_count || b.updated_at.localeCompare(a.updated_at))
   const [lead = null, ...rest] = stories
   return {
+    blocks: [],
+    edition_id: null,
     edition_date: new Date().toISOString().slice(0, 10),
     generated_at: new Date().toISOString(),
     lead: lead ? { ...lead, slot: 'lead' } : null,
@@ -82,27 +92,15 @@ function useEdition() {
   }
 }
 
-// Column rules between top stories: 2-up on tablets, 3- or 4-up on desktop (4 when it fills rows evenly).
-function topColumnClass(index: number, lgCols: 3 | 4) {
-  return cn(
-    'border-t border-rule pt-5 sm:pt-6',
-    index < 2 && 'sm:border-t-0 sm:pt-0',
-    index % 2 === 1 && 'sm:border-s sm:ps-6',
-    'lg:border-t-0 lg:pt-0 lg:border-s-0 lg:ps-0',
-    index >= lgCols && 'lg:border-t lg:pt-6',
-    index % lgCols !== 0 && 'lg:border-s lg:ps-6',
-  )
-}
-
-function BreakingStrip({ stories }: { stories: FrontPageStory[] }) {
+function BreakingLine({ stories }: { stories: FrontPageStory[] }) {
   if (!stories.length) return null
   return (
-    <section aria-label="විශේෂ පුවත්" className="mb-5 bg-ink px-3 py-2 text-paper">
-      <ul className="flex flex-col gap-1">
+    <section aria-label="විශේෂ පුවත්" className="border-b border-ink py-1.5">
+      <ul className="flex flex-col">
         {stories.map((story) => (
-          <li key={story.id} className="flex flex-wrap items-baseline gap-x-3 font-headline text-[1.0625rem] leading-[1.55]">
-            <span className="border border-paper px-1.5 text-[0.9375rem] font-extrabold">විශේෂ පුවත</span>
-            <Link to={storyHref(story)} className="font-bold underline underline-offset-4">
+          <li key={story.id} className="flex flex-wrap items-baseline gap-x-2 font-headline text-[1rem] leading-[1.6]">
+            <span className="bg-ink px-1.5 text-[0.8125rem] text-paper">විශේෂ පුවත</span>
+            <Link to={storyHref(story)} className="np-headline-link max-lg:inline-flex max-lg:min-h-11 max-lg:items-center">
               {story.headline}
             </Link>
           </li>
@@ -112,12 +110,109 @@ function BreakingStrip({ stories }: { stories: FrontPageStory[] }) {
   )
 }
 
+/** Leftover depth at the foot of a lane takes a printer's ornament, never a blank. */
+function LaneFiller() {
+  return (
+    <div className="np-filler flex-1" aria-hidden="true">
+      <div className="h-full items-center justify-center gap-2 border-t border-rule text-ink-tertiary">
+        <Fleuron flip />
+        <Asterism />
+        <Fleuron />
+      </div>
+    </div>
+  )
+}
+
+function LaneColumn({ lane, index, editorial }: { lane: Lane; index: number; editorial: FrontPageData['editorial'] }) {
+  return (
+    <div
+      className={cn('flex min-w-0 flex-col', index > 0 && 'border-s border-ink ps-4', 'pe-4 last:pe-0')}
+      style={{ gridColumn: `span ${lane.span} / span ${lane.span}` }}
+    >
+      {lane.items.map((item, itemIndex) => (
+        <div key={itemKey(item)} data-measure={itemKey(item)} className={cn(itemIndex > 0 && 'border-t border-rule')}>
+          {item.type === 'editorial' ? (
+            <EditorialPanel editorial={editorial} className="my-3" />
+          ) : (
+            <PrintBlock block={item.block} span={lane.span} />
+          )}
+        </div>
+      ))}
+      <LaneFiller />
+    </div>
+  )
+}
+
+/** Desktop broadsheet: spreads of interlocking lanes, ruled, every story complete in its box. */
+function Broadsheet({ blocks, editorial }: { blocks: EditionBlock[]; editorial: FrontPageData['editorial'] }) {
+  const [areas, setAreas] = useState<{ blocks: EditionBlock[]; areas: MeasuredAreas } | null>(null)
+  const measuredAreas = areas?.blocks === blocks ? areas.areas : undefined
+  const sections = useMemo(() => composeEdition(blocks, true, measuredAreas), [blocks, measuredAreas])
+  const root = useRef<HTMLDivElement>(null)
+
+  // First pass lays out from estimates; once type has loaded we measure every story's printed
+  // area and pour the page again so the lanes end level.
+  useEffect(() => {
+    const node = root.current
+    if (!node || measuredAreas) return
+    let cancelled = false
+    const measure = () => {
+      if (cancelled || node.offsetWidth === 0) return
+      const next: MeasuredAreas = new Map()
+      node.querySelectorAll<HTMLElement>('[data-measure]').forEach((element) => {
+        next.set(element.dataset.measure ?? '', element.offsetHeight * element.clientWidth)
+      })
+      if (next.size) setAreas({ blocks, areas: next })
+    }
+    const observer = new ResizeObserver(() => void document.fonts.ready.then(measure))
+    observer.observe(node)
+    return () => {
+      cancelled = true
+      observer.disconnect()
+    }
+  }, [blocks, measuredAreas])
+
+  return (
+    <div ref={root} className="hidden lg:block">
+      {sections.map((section, index) => (
+        <section
+          key={index}
+          aria-label={index === 0 ? 'ප්‍රධාන පුවත' : undefined}
+          className={cn('grid grid-cols-12', index > 0 && 'border-t-2 border-ink')}
+        >
+          {section.lanes.map((lane, laneIndex) => (
+            <LaneColumn key={laneIndex} lane={lane} index={laneIndex} editorial={editorial} />
+          ))}
+        </section>
+      ))}
+    </div>
+  )
+}
+
+/** Phones and tablets: one column in page order, the editorial right after the lead. */
+function Galley({ blocks, editorial }: { blocks: EditionBlock[]; editorial: FrontPageData['editorial'] }) {
+  return (
+    <div className="lg:hidden">
+      {blocks.map((block, index) => (
+        <div key={block.story.id}>
+          <div className={cn(index > 0 && 'border-t border-ink')}>
+            <PhoneBlock block={block} />
+          </div>
+          {index === 0 ? <EditorialPanel editorial={editorial} className="mb-4" /> : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function FrontPage() {
   const { edition, pending, error, retry } = useEdition()
 
   useEffect(() => {
     document.title = 'තුලාව | Thulawa News — අසමතුලිත ලෝකයකට සමතුලිත පුවත්'
   }, [])
+
+  const blocks = useMemo(() => (edition ? editionBlocks(edition) : []), [edition])
 
   if (pending) {
     return (
@@ -135,109 +230,31 @@ export function FrontPage() {
     )
   }
 
-  const { lead } = edition
-  const all = [lead, ...edition.top, ...edition.more].filter((story): story is FrontPageStory => Boolean(story))
-  const breaking = all.filter((story) => story.breaking)
-  // Balance the opening spread: one top story runs under the lead, one beside it in the rail.
-  const [underLead, ...afterUnder] = edition.top
-  const rail = afterUnder.slice(0, 1)
-  const row = afterUnder.slice(1)
-  const rowCols: 3 | 4 = row.length % 4 === 0 ? 4 : 3
-  const curatedCount = all.filter((story) => story.curated).length
+  const breaking = blocks.map((block) => block.story).filter((story) => story.breaking).slice(0, 2)
+  const curatedCount = blocks.filter((block) => block.story.curated).length
 
-  if (!lead && !all.length) {
-    return (
-      <>
-        <h1 className="sr-only">අද මුල් පිටුව</h1>
-        <div className="grid gap-8 lg:grid-cols-12">
+  return (
+    <>
+      <h1 className="sr-only">අද මුල් පිටුව — {sinhalaLongDate(editionDate(edition.edition_date))}</h1>
+      <BreakingLine stories={breaking} />
+      {blocks.length ? (
+        <>
+          <Broadsheet blocks={blocks} editorial={edition.editorial} />
+          <Galley blocks={blocks} editorial={edition.editorial} />
+        </>
+      ) : (
+        <div className="grid gap-6 py-6 lg:grid-cols-12">
           <Notice title="අද කලාපයට තවම පුවත් නැත" className="lg:col-span-8">
             නව වාර්තා ලැබෙත්ම මෙම පිටුව පිරේ.
           </Notice>
           <EditorialPanel editorial={edition.editorial} className="lg:col-span-4" />
         </div>
-      </>
-    )
-  }
-
-  return (
-    <>
-      <h1 className="sr-only">අද මුල් පිටුව — {sinhalaLongDate(editionDate(edition.edition_date))}</h1>
-      <BreakingStrip stories={breaking} />
-
-      <div className="grid grid-cols-1 gap-y-8 lg:grid-cols-12">
-        <div className="lg:col-span-8 lg:border-e lg:border-rule lg:pe-8">
-          {lead ? <LeadStory story={lead} /> : null}
-          {underLead ? (
-            <div className={cn(lead && 'mt-6 border-t-2 border-ink pt-4')}>
-              <TopStory story={underLead} />
-            </div>
-          ) : null}
-        </div>
-        <div className="flex flex-col gap-8 lg:col-span-4 lg:ps-8">
-          <EditorialPanel editorial={edition.editorial} />
-          {rail.length ? (
-            <section aria-labelledby="rail-title">
-              <h2 id="rail-title" className="np-section-head">
-                ප්‍රධාන පුවත්
-              </h2>
-              <div className="pt-3">
-                {rail.map((story) => (
-                  <TopStory key={story.id} story={story} />
-                ))}
-              </div>
-            </section>
-          ) : null}
-        </div>
-      </div>
-
-      {row.length ? (
-        <section aria-labelledby="top-title" className="mt-10">
-          <div className="np-rule-double" />
-          <h2 id="top-title" className="np-section-head mt-2">
-            තවත් ප්‍රධාන පුවත්
-          </h2>
-          <ul className={cn('mt-4 grid grid-cols-1 gap-x-6 gap-y-6 sm:grid-cols-2', rowCols === 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3')}>
-            {row.map((story, index) => (
-              <li key={story.id} className={topColumnClass(index, rowCols)}>
-                <TopStory story={story} />
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      {edition.more.length ? (
-        <section aria-labelledby="more-title" className="mt-10">
-          <div className="np-rule-double" />
-          <h2 id="more-title" className="np-section-head mt-2">
-            තවත් පුවත්
-          </h2>
-          <ul className="np-columns mt-4 md:columns-2 lg:columns-3">
-            {edition.more.map((story) => (
-              <li key={story.id} className="mb-4 break-inside-avoid border-b border-rule pb-4">
-                <BriefStory story={story} />
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      <OrnamentRule className="mt-8" kind="fleuron" />
-      <div className="np-meta mt-3 flex flex-col items-center gap-1 text-center text-[0.875rem]">
-        <p>
-          {curatedCount > 0
-            ? `මෙම කලාපයේ පුවත් ${curatedCount}ක් ප්‍රධාන කතුවරයා තෝරා ගත්තේය; ඉතිරි ඉඩ නවතම වාර්තා අනුව පිරිණි.`
-            : 'මෙම කලාපය නවතම වාර්තා අනුව සකස් විය.'}
-        </p>
-        <p className="flex flex-wrap justify-center gap-x-5">
-          <Link to="/search" className="np-link font-headline inline-flex min-h-11 items-center font-bold text-ink">
-            සියලු නවතම පුවත් →
-          </Link>
-          <Link to="/about" className="np-link inline-flex min-h-11 items-center">
-            පුවත්පත සකසන ආකාරය
-          </Link>
-        </p>
-      </div>
+      )}
+      <div className="np-rule-double mt-2" />
+      <p className="np-meta mt-2 text-center text-[0.8125rem]">
+        මෙහි පුවත් මාධ්‍ය ආයතනවල වාර්තා ඇසුරින් සකස් කළ ඒවා ය; එක් එක් පුවත අවසානයේ මුල් ලිපි සඳහන් වේ.
+        {curatedCount > 0 ? ` පුවත් ${curatedCount}ක් ප්‍රධාන කතුවරයා තෝරා ගත්තේය.` : ''}
+      </p>
     </>
   )
 }

@@ -41,6 +41,7 @@ type Dependencies struct {
 	RunPipeline                 func(context.Context, string, string) error
 	RunContentBackfill          func(context.Context) error
 	RunLogCleanup               func(context.Context) error
+	RebuildEdition              func(context.Context) error
 	RunAdminAnalysisBackfill    func(context.Context, string) error
 	PauseAdminAnalysisBackfill  func(context.Context, string) (adminanalysis.Run, error)
 	ResumeAdminAnalysisBackfill func(context.Context, string) (adminanalysis.Run, error)
@@ -60,7 +61,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	newsletterAdmin := newsletterAdminHandler{repository: dependencies.Newsletter, tester: dependencies.NewsletterTester}
 	newsletterPublic := newsletterUnsubscribeHandler{repository: dependencies.Newsletter}
 	workflowAdmin := workflowAdminHandler{gateway: dependencies.LLM}
-	frontPage := frontPageHandler{service: dependencies.FrontPage}
+	frontPage := frontPageHandler{service: dependencies.FrontPage, media: dependencies.Media, rebuild: dependencies.RebuildEdition}
 
 	mux.HandleFunc("GET /api/v1/health/live", health.liveness)
 	mux.HandleFunc("GET /api/v1/health/ready", health.readiness)
@@ -78,6 +79,10 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/front-page", frontPage.publicFrontPage)
 	mux.HandleFunc("GET /api/v1/editorials", frontPage.publicEditorials)
 	mux.HandleFunc("GET /api/v1/editorials/{id}", frontPage.publicEditorial)
+	mux.HandleFunc("GET /api/v1/reports/{kind}/{id}", frontPage.publicReport)
+	mux.HandleFunc("GET /api/v1/illustrations/{name}", frontPage.illustration)
+	mux.HandleFunc("GET /api/v1/related/{kind}/{id}", frontPage.publicRelated)
+	mux.HandleFunc("GET /api/v1/source-logos/{path...}", frontPage.sourceLogo)
 	mux.HandleFunc("POST /api/v1/complaints", news.complain)
 	mux.HandleFunc("GET /api/v1/newsletter/unsubscribe/{token}", newsletterPublic.unsubscribe)
 	mux.HandleFunc("POST /api/v1/newsletter/unsubscribe/{token}", newsletterPublic.unsubscribe)
@@ -110,6 +115,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("GET /api/admin/front-page", frontPage.adminFrontPage)
 	protected.HandleFunc("PUT /api/admin/front-page", frontPage.adminFrontPage)
 	protected.HandleFunc("PATCH /api/admin/front-page/sources/{id}", frontPage.adminSource)
+	protected.HandleFunc("POST /api/admin/front-page/rebuild", frontPage.adminRebuild)
 	protected.HandleFunc("GET /api/admin/editorials", frontPage.adminEditorials)
 	protected.HandleFunc("POST /api/admin/editorials", frontPage.adminEditorials)
 	protected.HandleFunc("PATCH /api/admin/editorials/{id}", frontPage.adminEditorial)

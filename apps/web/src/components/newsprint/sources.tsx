@@ -1,9 +1,9 @@
 import type { PublicArticle, StorySource } from '@snap/api-client'
-import { Link } from 'react-router'
+import { Fragment } from 'react'
 
 import { cn } from '@snap/ui/utils'
-import { absoluteTitle, relativeTime, sourceTypeLabel } from '@/lib/format'
-import { ExternalMark, OutletName } from './outlet'
+import { absoluteTitle, relativeTime, sinhalaDateTime, sourceTypeLabel } from '@/lib/format'
+import { OutletName } from './outlet'
 
 export type SourceRef = {
   key: string
@@ -12,7 +12,6 @@ export type SourceRef = {
   url: string
   publishedAt?: string
   headline?: string
-  articleId?: string
 }
 
 export function fromStorySources(sources: StorySource[]): SourceRef[] {
@@ -23,7 +22,6 @@ export function fromStorySources(sources: StorySource[]): SourceRef[] {
     url: source.original_url,
     publishedAt: source.published_at,
     headline: source.headline,
-    articleId: source.article_id,
   }))
 }
 
@@ -35,97 +33,60 @@ export function fromArticles(articles: PublicArticle[]): SourceRef[] {
     url: article.original_url,
     publishedAt: article.published_at,
     headline: article.headline,
-    articleId: article.id,
   }))
 }
 
-function OriginalLink({ source, children, className }: { source: SourceRef; children: React.ReactNode; className?: string }) {
-  return (
-    <a
-      href={source.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={cn('np-link inline-flex min-h-11 items-center', className)}
-    >
-      {children}
-      <ExternalMark />
-    </a>
-  )
+/** One report per outlet (the earliest), so a source line never repeats a name. */
+export function uniqueOutlets(sources: SourceRef[]) {
+  const seen = new Map<string, SourceRef>()
+  for (const source of [...sources].sort((a, b) => (a.publishedAt ?? '').localeCompare(b.publishedAt ?? ''))) {
+    if (!seen.has(source.name)) seen.set(source.name, source)
+  }
+  return [...seen.values()]
 }
 
 /**
- * Compact attribution under a story: every outlet, each with its own link to the original.
- * Wraps freely; every link keeps a 44px tap height.
+ * The single small attribution line that closes every story:
+ * "මූලාශ්‍ර: Hiru News · ITN News" — each name opens the original article in a new tab.
  */
-export function SourceLine({ sources, className }: { sources: SourceRef[]; className?: string }) {
-  if (!sources.length) return null
-  return (
-    <div className={cn('np-meta flex flex-wrap items-center gap-x-3', className)}>
-      <span className="text-ink-secondary">මුල් ලිපිය:</span>
-      {sources.map((source) => (
-        <OriginalLink key={source.key} source={source} className="text-ink">
-          <OutletName name={source.name} className="font-bold" />
-        </OriginalLink>
-      ))}
-    </div>
-  )
-}
-
-/** Full ledger of reporting outlets, chronological, for lead stories and story pages. */
-export function SourceLedger({
+export function SourceLine({
   sources,
-  title = 'මෙම පුවත ගැන මාධ්‍ය වාර්තා',
-  showHeadlines = true,
-  headingLevel = 2,
+  updatedAt,
+  linked = true,
   className,
 }: {
   sources: SourceRef[]
-  title?: string
-  showHeadlines?: boolean
-  headingLevel?: 2 | 3
+  updatedAt?: string
+  /** Phones print names only (links would be below tap size); the reading page carries them. */
+  linked?: boolean
   className?: string
 }) {
-  if (!sources.length) return null
-  const ordered = [...sources].sort((a, b) => (a.publishedAt ?? '').localeCompare(b.publishedAt ?? ''))
-  const Heading = headingLevel === 2 ? 'h2' : 'h3'
+  const outlets = uniqueOutlets(sources)
+  if (!outlets.length) return null
   return (
-    <section className={cn('border-t-2 border-ink', className)} aria-label={title}>
-      <Heading className="np-kicker flex items-baseline justify-between gap-3 pt-2 text-ink">
-        <span>{title}</span>
-        <span className="np-meta">{ordered.length}</span>
-      </Heading>
-      <ol className="mt-1">
-        {ordered.map((source) => (
-          <li key={source.key} className="border-t border-rule py-2 first:border-t-0">
-            <p className="np-meta flex flex-wrap items-baseline gap-x-2">
-              <OutletName name={source.name} className="text-[1rem]" />
-              <span>{sourceTypeLabel(source.type)}</span>
-              {source.publishedAt ? (
-                <time dateTime={source.publishedAt} title={absoluteTitle(source.publishedAt)}>
-                  · {relativeTime(source.publishedAt)}
-                </time>
-              ) : null}
-            </p>
-            {showHeadlines && source.headline ? (
-              <p className="font-headline text-[1rem] leading-[1.6] font-medium text-ink-secondary">
-                <span aria-hidden="true">“</span>
-                {source.headline}
-                <span aria-hidden="true">”</span>
-              </p>
-            ) : null}
-            <p className="flex flex-wrap gap-x-5">
-              <OriginalLink source={source} className="font-headline font-bold">
-                මුල් ලිපිය — {source.name}
-              </OriginalLink>
-              {source.articleId ? (
-                <Link to={`/a/${source.articleId}`} className="np-link np-meta inline-flex min-h-11 items-center">
-                  මෙම වාර්තාව ගැන
-                </Link>
-              ) : null}
-            </p>
-          </li>
-        ))}
-      </ol>
-    </section>
+    <p className={cn('np-meta text-[0.8125rem] leading-[1.7] text-ink-secondary', className)}>
+      <span>මූලාශ්‍ර: </span>
+      {outlets.map((source, index) => (
+        <Fragment key={source.key}>
+          {index > 0 ? <span aria-hidden="true"> · </span> : null}
+          {!linked ? (
+            <OutletName name={source.name} className="font-normal text-ink-secondary" />
+          ) : (
+            <a href={source.url} target="_blank" rel="noopener noreferrer" className="np-link">
+              <OutletName name={source.name} className="font-normal text-ink-secondary" />
+              <span className="sr-only"> — මුල් ලිපිය (නව පටිත්තක)</span>
+            </a>
+          )}
+        </Fragment>
+      ))}
+      {updatedAt ? (
+        <>
+          <span aria-hidden="true"> — </span>
+          <time dateTime={updatedAt} title={absoluteTitle(updatedAt)}>
+            {relativeTime(updatedAt)}
+          </time>
+        </>
+      ) : null}
+    </p>
   )
 }

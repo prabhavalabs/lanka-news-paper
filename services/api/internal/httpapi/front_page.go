@@ -1,16 +1,21 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/frontpage"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/media"
 )
 
 type frontPageHandler struct {
 	service *frontpage.Service
+	media   *media.Store
+	rebuild func(context.Context) error
 }
 
 func (handler frontPageHandler) available(w http.ResponseWriter) bool {
@@ -192,4 +197,90 @@ func (handler frontPageHandler) adminEditorialAction(w http.ResponseWriter, requ
 		return
 	}
 	writeJSON(w, http.StatusOK, item)
+}
+
+func (handler frontPageHandler) publicReport(w http.ResponseWriter, request *http.Request) {
+	if !handler.available(w) {
+		return
+	}
+	report, image, err := handler.service.Report(request.Context(), request.PathValue("kind"), request.PathValue("id"))
+	if err != nil {
+		handler.writeError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=60")
+	writeJSON(w, http.StatusOK, map[string]any{"report": report, "image": image})
+}
+
+// illustration serves a generated front-page illustration; only illustration files are public.
+func (handler frontPageHandler) illustration(w http.ResponseWriter, request *http.Request) {
+	key, ok := frontpage.IllustrationKey(request.PathValue("name"))
+	if !ok || handler.media == nil {
+		http.NotFound(w, request)
+		return
+	}
+	body, contentType, err := handler.media.Open(request.Context(), key)
+	if err != nil {
+		http.NotFound(w, request)
+		return
+	}
+	defer body.Close()
+	if contentType == "" {
+		contentType = "image/jpeg"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	if _, err := io.Copy(w, body); err != nil {
+		slog.WarnContext(request.Context(), "stream illustration", "error", err)
+	}
+}
+
+func (handler frontPageHandler) adminRebuild(w http.ResponseWriter, request *http.Request) {
+	if !handler.curator(w, request) {
+		return
+	}
+	if handler.rebuild == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "https://snap.local/problems/unavailable", "Rebuild unavailable", "The job queue is not configured.")
+		return
+	}
+	if err := handler.rebuild(request.Context()); err != nil {
+		handler.writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
+}
+
+func (handler frontPageHandler) publicRelated(w http.ResponseWriter, request *http.Request) {
+	if !handler.available(w) {
+		return
+	}
+	items, err := handler.service.Related(request.Context(), request.PathValue("kind"), request.PathValue("id"))
+	if err != nil {
+		handler.writeError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=60")
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// sourceLogo serves uploaded outlet logos to readers; only the source-logos media folder is public.
+func (handler frontPageHandler) sourceLogo(w http.ResponseWriter, request *http.Request) {
+	path := request.PathValue("path")
+	if handler.media == nil || path == "" || strings.Contains(path, "..") {
+		http.NotFound(w, request)
+		return
+	}
+	body, contentType, err := handler.media.Open(request.Context(), "source-logos/"+path)
+	if err != nil {
+		http.NotFound(w, request)
+		return
+	}
+	defer body.Close()
+	if contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	if _, err := io.Copy(w, body); err != nil {
+		slog.WarnContext(request.Context(), "stream source logo", "error", err)
+	}
 }

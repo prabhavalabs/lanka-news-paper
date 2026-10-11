@@ -60,6 +60,7 @@ type Source struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Type        string `json:"type"`
+	Icon        string `json:"icon,omitempty"`
 	Description string `json:"description,omitempty"`
 	Website     string `json:"website,omitempty"`
 }
