@@ -172,6 +172,7 @@ func run(logger *slog.Logger) error {
 			Registry:         registry.NewStore(pool),
 			LogRetention:     retention.NewStore(pool, nil),
 			RunLogCleanup:    func(ctx context.Context) error { return jobs.EnqueueLogCleanup(ctx, producer) },
+			RebuildEdition:   func(ctx context.Context) error { return jobs.EnqueueEditionBuild(ctx, producer) },
 			RunContentBackfill: func(ctx context.Context) error {
 				return jobs.EnqueueContentBackfill(ctx, producer)
 			},
