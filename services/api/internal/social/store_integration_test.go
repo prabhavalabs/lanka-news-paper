@@ -689,6 +689,9 @@ func TestSocialReviewGateIntegration(t *testing.T) {
 		})
 	}
 	t.Run("revised after review", func(t *testing.T) {
+		// Keep the posts left waiting above out of this run's resume step.
+		_, err := store.pool.Exec(ctx, `UPDATE social_posts SET status='rejected' WHERE status='pending_review'`)
+		require.NoError(t, err)
 		id := fixtureEvent(t, store, 2, now)
 		text := fmt.Sprintf(`{"items":[{"id":%q,"score":90,"publish":true,"reason":"Important","headline_si":"මාතර","summary_si":"මාතර","caption_si":"පුවත මෙන්න.","hashtags":[]}]}`, id)
 		model := &editorialModel{

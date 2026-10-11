@@ -25,6 +25,7 @@ Check:
 4. Language: natural, professional newspaper Sinhala with correct spelling and grammar. Public figures and officials take respectful titles; suspects and accused persons are named plainly without honorifics.
 5. Safety and law: no defamation, hate speech, graphic violence, identification of minors or victims of sexual crimes, or content that could prejudice an ongoing court case.
 6. Completeness: the headline reflects the story fairly, the caption keeps the source credit line "මූලාශ්‍ර: ..." and speaks to readers, never about the drafting process.
+7. Repetition: you also receive recent_posts, the posts already published or queued on the Page in the last 48 hours. Set repeats_recent_post=true when this post reports the same story or event as one of them without a major new development (such as an arrest, a verdict, a death toll change or an official decision). A different story of the same kind (another accident, another court case) is not a repeat. Repetition is not a text problem: do not list it as an issue.
 The Thulawa News website is shown on the image by the system; never raise an issue about a missing or unverified link or URL.
 
 Severity, applied strictly as defined:
@@ -64,14 +65,16 @@ type reviewResult struct {
 	Score   int           `json:"score"`
 	Summary string        `json:"summary"`
 	Issues  []ReviewIssue `json:"issues"`
+	Repeats bool          `json:"repeats_recent_post"`
 }
 
 var reviewSchema = map[string]any{
-	"type": "object", "additionalProperties": false, "required": []string{"pass", "score", "summary", "issues"},
+	"type": "object", "additionalProperties": false, "required": []string{"pass", "score", "summary", "issues", "repeats_recent_post"},
 	"properties": map[string]any{
-		"pass":    map[string]any{"type": "boolean"},
-		"score":   map[string]any{"type": "integer", "minimum": 0, "maximum": 100},
-		"summary": map[string]any{"type": "string", "maxLength": 600},
+		"pass":                map[string]any{"type": "boolean"},
+		"repeats_recent_post": map[string]any{"type": "boolean"},
+		"score":               map[string]any{"type": "integer", "minimum": 0, "maximum": 100},
+		"summary":             map[string]any{"type": "string", "maxLength": 600},
 		"issues": map[string]any{"type": "array", "maxItems": 12, "items": map[string]any{
 			"type": "object", "additionalProperties": false, "required": []string{"severity", "field", "message"},
 			"properties": map[string]any{
@@ -98,7 +101,7 @@ type evidenceArticle struct {
 
 // approvable reports whether a review lets a post publish automatically.
 func approvable(result reviewResult, minScore int) bool {
-	if !result.Pass || result.Score < minScore {
+	if !result.Pass || result.Repeats || result.Score < minScore {
 		return false
 	}
 	for _, issue := range result.Issues {
@@ -238,12 +241,23 @@ func (service *Service) callReview(ctx context.Context, p Post) (reviewResult, *
 	if len(evidence.Articles) == 0 && evidence.Synthesis == "" {
 		return reviewResult{}, nil, errors.New("no evidence is available for this post")
 	}
+	recent, err := service.store.recentPosts(ctx, service.now())
+	if err != nil {
+		return reviewResult{}, nil, err
+	}
+	others := make([]map[string]any, 0, len(recent))
+	for _, post := range recent {
+		if post.ID != p.ID && post.Status != "pending_review" {
+			others = append(others, map[string]any{"headline": post.Headline, "summary": post.Summary, "status": post.Status, "at": post.At})
+		}
+	}
 	input, err := json.Marshal(map[string]any{
 		"post": map[string]any{
 			"headline": p.HeadlineSI, "summary": p.SummarySI, "caption": captionForReview(p), "hashtags": p.Hashtags,
 			"kind": p.Kind, "category": p.Category, "credited_sources": p.SourceNames,
 		},
-		"evidence": evidence,
+		"evidence":     evidence,
+		"recent_posts": others,
 	})
 	if err != nil {
 		return reviewResult{}, nil, err
@@ -292,14 +306,18 @@ func (service *Service) Review(ctx context.Context, id string, actor uuid.UUID) 
 	return p, tx.Commit(ctx)
 }
 
-// revisable reports whether an automatic rewrite could fix a failed review.
-func revisable(result reviewResult) bool {
+// revisable reports whether an automatic rewrite could fix a failed review: it lists problems
+// to fix, or scored the text below the bar. A repeat of a recent post cannot be rewritten away.
+func revisable(result reviewResult, minScore int) bool {
+	if result.Repeats {
+		return false
+	}
 	for _, issue := range result.Issues {
 		if issue.Severity == "blocker" || issue.Severity == "major" {
 			return true
 		}
 	}
-	return false
+	return result.Score < minScore
 }
 
 // captionBody returns the written part of a caption, without the source credits and hashtags.

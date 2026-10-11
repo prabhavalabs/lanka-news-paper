@@ -1113,7 +1113,7 @@ export type SocialPost = {
 };
 /** Whether and when a post goes out; `at` is an estimate when `estimated` is true. */
 export type SocialPublishPlan = {
-  state: "published" | "publishing" | "scheduled" | "paused" | "needs_editor" | "not_publishing";
+  state: "published" | "publishing" | "scheduled" | "paused" | "in_review" | "needs_editor" | "not_publishing";
   at: string | null; estimated: boolean; note: string;
 };
 export type SocialChannel = { key: string; name: string; available: boolean; status: string };

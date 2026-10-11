@@ -16,18 +16,37 @@ func TestDuplicateOf(t *testing.T) {
 	require.Nil(t, duplicateOf(repeat, nil))
 }
 
-func TestTopicHold(t *testing.T) {
+func TestQueueRank(t *testing.T) {
 	now := time.Now()
-	recent := []recentPost{
+	published := []recentPost{
 		{CategorySlug: "crime", Status: "published", At: now.Add(-time.Hour)},
-		{CategorySlug: "crime", Status: "approved", At: now.Add(-2 * time.Hour)},
-		{CategorySlug: "crime", Status: "pending_review", At: now},
-		{CategorySlug: "politics", Status: "published", At: now.Add(-time.Hour)},
+		{CategorySlug: "crime", Status: "published", At: now.Add(-2 * time.Hour)},
+		{CategorySlug: "politics", Status: "published", At: now.Add(-8 * time.Hour)},
 	}
-	require.NotEmpty(t, topicHold(Candidate{CategorySlug: "crime", Category: "අපරාධ"}, recent, now))
-	require.Empty(t, topicHold(Candidate{CategorySlug: "crime", Breaking: true}, recent, now))
-	require.Empty(t, topicHold(Candidate{CategorySlug: "politics"}, recent, now))
-	require.Empty(t, topicHold(Candidate{CategorySlug: "crime"}, recent, now.Add(6*time.Hour)))
+	crime := queuedPost{Score: 90, CategorySlug: "crime", CreatedAt: now}
+	politics := queuedPost{Score: 80, CategorySlug: "politics", CreatedAt: now}
+	require.Greater(t, politics.rank(published, now), crime.rank(published, now))
+	breaking := queuedPost{Score: 60, Breaking: true, CategorySlug: "crime", CreatedAt: now}
+	require.Greater(t, breaking.rank(published, now), politics.rank(published, now))
+	old := queuedPost{Score: 80, CategorySlug: "politics", CreatedAt: now.Add(-6 * time.Hour)}
+	require.Greater(t, politics.rank(published, now), old.rank(published, now))
+}
+
+func TestLimitsFor(t *testing.T) {
+	settings := Settings{MaxPostsPerDay: 12, QuietHoursStart: 0, QuietHoursEnd: 6}
+	require.Equal(t, settings, limitsFor(queuedPost{Score: 70}, settings))
+	important := limitsFor(queuedPost{Score: priorityScore}, settings)
+	require.Greater(t, important.MaxPostsPerDay, 12)
+	require.Equal(t, 6, int(important.QuietHoursEnd))
+	breaking := limitsFor(queuedPost{Score: 50, Breaking: true}, settings)
+	require.Greater(t, breaking.MaxPostsPerDay, 12)
+	require.Equal(t, breaking.QuietHoursStart, breaking.QuietHoursEnd)
+}
+
+func TestRepeatsPublished(t *testing.T) {
+	published := []recentPost{{Headline: "නාගොඩ වෙඩි තැබීම සම්බන්ධයෙන් සැකකරුවෙකු අත්අඩංගුවට", Summary: "අවන්හල් හිමිකරුවෙකු මියගිය වෙඩි තැබීම"}}
+	require.NotNil(t, repeatsPublished(queuedPost{Headline: "නාගොඩ වෙඩි තැබීම: සැකකරුවෙකු අත්අඩංගුවට"}, published))
+	require.Nil(t, repeatsPublished(queuedPost{Headline: "පොල්ගහවෙල–පේරාදෙණිය දිනපතා දුම්රියක්"}, published))
 }
 
 func TestCaptionForReviewDropsOwnLink(t *testing.T) {
@@ -52,15 +71,19 @@ func TestPlanFor(t *testing.T) {
 
 func TestRevisionHelpers(t *testing.T) {
 	require.Equal(t, "පුවත.", captionBody(BuildCaption("පුවත.", []string{"Hiru News"}, "", []string{"දුම්රිය"})))
-	require.True(t, revisable(reviewResult{Issues: []ReviewIssue{{Severity: "major"}}}))
-	require.False(t, revisable(reviewResult{Score: 60, Issues: []ReviewIssue{{Severity: "minor"}}}))
+	require.True(t, revisable(reviewResult{Issues: []ReviewIssue{{Severity: "major"}}}, 80))
+	require.True(t, revisable(reviewResult{Score: 60, Issues: []ReviewIssue{{Severity: "minor"}}}, 80))
+	require.True(t, revisable(reviewResult{Score: 60}, 80))
+	require.False(t, revisable(reviewResult{Score: 90, Issues: []ReviewIssue{{Severity: "minor"}}}, 80))
+	require.False(t, revisable(reviewResult{Repeats: true, Issues: []ReviewIssue{{Severity: "major"}}}, 80))
+	require.False(t, approvable(reviewResult{Pass: true, Score: 95, Repeats: true}, 80))
 	require.Equal(t, "thulawanews.com", siteName("https://www.thulawanews.com/"))
 }
 
 func TestActivityOf(t *testing.T) {
 	now := time.Date(2026, 10, 11, 8, 0, 0, 0, time.UTC)
-	quiet := activityOf(nil, Settings{MaxPostsPerDay: 12}, now)
-	if quiet.PostsLast24Hours != 0 || quiet.DailyLimit != 12 || quiet.HoursSinceLastPost != nil {
+	quiet := activityOf(nil, now)
+	if quiet.PostsLast24Hours != 0 || quiet.HoursSinceLastPost != nil {
 		t.Fatalf("quiet page = %+v", quiet)
 	}
 	recent := []recentPost{
@@ -69,7 +92,7 @@ func TestActivityOf(t *testing.T) {
 		{Status: "pending_review", At: now.Add(-1 * time.Hour)},
 		{Status: "published", At: now.Add(-30 * time.Hour)},
 	}
-	busy := activityOf(recent, Settings{MaxPostsPerDay: 12}, now)
+	busy := activityOf(recent, now)
 	if busy.PostsLast24Hours != 2 || busy.HoursSinceLastPost == nil || *busy.HoursSinceLastPost != 3 {
 		t.Fatalf("activity = %+v", busy)
 	}

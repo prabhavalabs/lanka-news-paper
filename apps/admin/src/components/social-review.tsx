@@ -15,7 +15,7 @@ export function ReviewBadge({ post }: { post: SocialPost }) {
 
 const reviewMeaning: Record<string, string> = {
   passed: 'Meets the editorial standards (accuracy, attribution, neutrality, Sinhala and safety). It can publish automatically when auto-publish is on.',
-  failed: 'The AI editor found a blocker or major problem, or scored it below the minimum. It is never published automatically. Fix the issues and run the review again, or approve it yourself if they are acceptable.',
+  failed: 'The AI editor found a blocker or major problem, or scored it below the minimum. Automatic posts are rewritten by the AI desk and reviewed again, up to two times, then dropped if they still fail. Manual posts wait for you: fix the issues and run the review again, or approve it yourself.',
   unavailable: 'The AI review could not run, so it is never published automatically. Run the review again or approve it yourself.',
 }
 
@@ -32,7 +32,7 @@ export function ReviewPanel({ post }: { post: SocialPost }) {
 }
 
 const planLabel: Record<string, string> = {
-  published: 'Published', publishing: 'Publishing now', scheduled: 'Will publish', paused: 'Paused', needs_editor: 'Needs an editor', not_publishing: 'Will not publish',
+  published: 'Published', publishing: 'Publishing now', scheduled: 'Will publish', paused: 'Paused', in_review: 'AI desk working', needs_editor: 'Needs an editor', not_publishing: 'Will not publish',
 }
 
 /** Short "when does this go out" text for tables. */
