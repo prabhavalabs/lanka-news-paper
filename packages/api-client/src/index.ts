@@ -70,6 +70,112 @@ export type EventNarrativeAnalysis = {
   analyzed_at: string;
 };
 
+/** One outlet's report inside a front-page story, with the link to the original article. */
+export type StorySource = {
+  id: string;
+  name: string;
+  type: SourceType;
+  article_id: string;
+  headline: string;
+  original_url: string;
+  published_at: string;
+};
+
+export type FrontPageSlot = "lead" | "top" | "more";
+
+/** A story on the front page: an event covered by one or more outlets, or a single article. */
+export type FrontPageStory = {
+  kind: "event" | "article";
+  id: string;
+  headline: string;
+  summary: string | null;
+  category: PublicCategory | null;
+  breaking: boolean;
+  published_at: string;
+  updated_at: string;
+  source_count: number;
+  sources: StorySource[];
+  /** True when the chief editor placed it; false when it filled an open slot automatically. */
+  curated: boolean;
+  slot: FrontPageSlot;
+  editor_note: string | null;
+  media: string | null;
+};
+
+export type EditorialSummary = {
+  id: string;
+  title: string;
+  standfirst: string;
+  author_name: string;
+  published_at: string;
+};
+
+export type Editorial = EditorialSummary & {
+  body: string;
+  event_id: string | null;
+  updated_at: string;
+};
+
+export type FrontPage = {
+  edition_date: string;
+  generated_at: string;
+  lead: FrontPageStory | null;
+  top: FrontPageStory[];
+  more: FrontPageStory[];
+  editorial: EditorialSummary | null;
+  /** True when at least one slot was placed by the chief editor. */
+  curated: boolean;
+};
+
+export type EditorialStatus = "draft" | "published" | "archived";
+
+export type AdminEditorial = Omit<Editorial, "published_at"> & {
+  status: EditorialStatus;
+  /** Null until first published; kept when an editorial is unpublished or archived. */
+  published_at: string | null;
+  created_at: string;
+};
+
+export type EditorialInput = {
+  title: string;
+  standfirst: string;
+  body: string;
+  author_name: string;
+  event_id?: string | null;
+};
+
+export type FrontPagePlacement = {
+  slot: FrontPageSlot;
+  rank: number;
+  story: FrontPageStory;
+  note: string | null;
+  expires_at: string | null;
+  placed_by: string;
+  placed_at: string;
+};
+
+export type FrontPagePlacementInput = {
+  slot: FrontPageSlot;
+  kind: "event" | "article";
+  id: string;
+  note?: string | null;
+  expires_at?: string | null;
+};
+
+export type FrontPageSource = {
+  id: string;
+  name: string;
+  type: SourceType;
+  front_page: boolean;
+};
+
+export type AdminFrontPage = {
+  placements: FrontPagePlacement[];
+  candidates: FrontPageStory[];
+  sources: FrontPageSource[];
+  preview: FrontPage;
+};
+
 export type CursorPage<T> = {
   items: T[];
   next_cursor: string | null;
@@ -1010,6 +1116,23 @@ export function createClient(baseUrl = "") {
     } = { days: 1 }) =>
       request<PublicKnowledgeGraph>(url(withQuery("/api/v1/knowledge-graph", params))),
     breaking: () => request<{ items: PublicEvent[] }>(url("/api/v1/breaking")),
+    frontPage: () => request<FrontPage>(url("/api/v1/front-page")),
+    editorials: () => request<{ items: EditorialSummary[] }>(url("/api/v1/editorials")),
+    editorial: (id: string) => request<Editorial>(url(`/api/v1/editorials/${encodeURIComponent(id)}`)),
+    adminFrontPage: () => request<AdminFrontPage>(url("/api/admin/front-page")),
+    updateFrontPage: (body: { placements: FrontPagePlacementInput[] }) =>
+      request<AdminFrontPage>(url("/api/admin/front-page"), { method: "PUT", body: JSON.stringify(body) }),
+    setFrontPageSource: (id: string, body: { front_page: boolean }) =>
+      request<FrontPageSource>(url(`/api/admin/front-page/sources/${encodeURIComponent(id)}`), { method: "PATCH", body: JSON.stringify(body) }),
+    adminEditorials: () => request<{ items: AdminEditorial[] }>(url("/api/admin/editorials")),
+    createEditorial: (body: EditorialInput) =>
+      request<AdminEditorial>(url("/api/admin/editorials"), { method: "POST", body: JSON.stringify(body) }),
+    updateEditorial: (id: string, body: EditorialInput) =>
+      request<AdminEditorial>(url(`/api/admin/editorials/${encodeURIComponent(id)}`), { method: "PATCH", body: JSON.stringify(body) }),
+    setEditorialStatus: (id: string, action: "publish" | "unpublish" | "archive") =>
+      request<AdminEditorial>(url(`/api/admin/editorials/${encodeURIComponent(id)}/${action}`), { method: "POST", body: JSON.stringify({}) }),
+    deleteEditorial: (id: string) =>
+      request<{ ok: boolean }>(url(`/api/admin/editorials/${encodeURIComponent(id)}`), { method: "DELETE" }),
     brief: () =>
       request<{
         date?: string;

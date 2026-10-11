@@ -17,6 +17,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/content"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/database"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/desk"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/frontpage"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/httpapi"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/iam"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
@@ -152,6 +153,7 @@ func run(logger *slog.Logger) error {
 			CookieSecure:     loaded.SessionCookieSecure,
 			Database:         pool,
 			Desk:             deskStore,
+			FrontPage:        frontpage.NewService(frontpage.NewStore(pool), time.Now),
 			IAM:              users,
 			LLM:              gateway,
 			Media:            mediaStore,
