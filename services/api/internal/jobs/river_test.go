@@ -167,3 +167,12 @@ func TestCodexQueueCapacityAndTimeouts(t *testing.T) {
 	require.Equal(t, 45*time.Minute, (&ArticlePipelineWorker{}).Timeout(nil))
 	require.Equal(t, 45*time.Minute, (&AdminArticleAnalysisWorker{}).Timeout(nil))
 }
+
+// River rejects unique options that leave out a required state, so every insert would fail.
+func TestEditionBuildUniqueStatesAreAccepted(t *testing.T) {
+	opts := (EditionBuildArgs{}).InsertOpts()
+	require.True(t, opts.UniqueOpts.ByQueue)
+	for _, state := range []rivertype.JobState{rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning, rivertype.JobStateScheduled} {
+		require.Contains(t, opts.UniqueOpts.ByState, state)
+	}
+}
