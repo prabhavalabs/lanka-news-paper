@@ -75,6 +75,8 @@ export type StorySource = {
   id: string;
   name: string;
   type: SourceType;
+  /** Outlet logo URL readers can load; empty when the outlet has none. Show it in greyscale. */
+  icon: string;
   article_id: string;
   headline: string;
   original_url: string;
@@ -1154,6 +1156,9 @@ export function createClient(baseUrl = "") {
     frontPage: () => request<FrontPage>(url("/api/v1/front-page")),
     editorials: () => request<{ items: EditorialSummary[] }>(url("/api/v1/editorials")),
     editorial: (id: string) => request<Editorial>(url(`/api/v1/editorials/${encodeURIComponent(id)}`)),
+    /** Up to six recent stories to read next, same section first. */
+    relatedStories: (kind: "event" | "article", id: string) =>
+      request<{ items: FrontPageStory[] }>(url(`/api/v1/related/${kind}/${encodeURIComponent(id)}`)),
     /** The latest desk report and illustration for a story, if one has been written. */
     storyReport: (kind: "event" | "article", id: string) =>
       request<{ report: StoryReport; image: StoryImage | null }>(url(`/api/v1/reports/${kind}/${encodeURIComponent(id)}`)),

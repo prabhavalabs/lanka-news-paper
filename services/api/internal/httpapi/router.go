@@ -81,6 +81,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/editorials/{id}", frontPage.publicEditorial)
 	mux.HandleFunc("GET /api/v1/reports/{kind}/{id}", frontPage.publicReport)
 	mux.HandleFunc("GET /api/v1/illustrations/{name}", frontPage.illustration)
+	mux.HandleFunc("GET /api/v1/related/{kind}/{id}", frontPage.publicRelated)
+	mux.HandleFunc("GET /api/v1/source-logos/{path...}", frontPage.sourceLogo)
 	mux.HandleFunc("POST /api/v1/complaints", news.complain)
 	mux.HandleFunc("GET /api/v1/newsletter/unsubscribe/{token}", newsletterPublic.unsubscribe)
 	mux.HandleFunc("POST /api/v1/newsletter/unsubscribe/{token}", newsletterPublic.unsubscribe)

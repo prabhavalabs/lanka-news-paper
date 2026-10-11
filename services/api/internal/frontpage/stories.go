@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 )
 
 type Category struct {
@@ -21,6 +23,7 @@ type StorySource struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	Type        string    `json:"type"`
+	Icon        string    `json:"icon"`
 	ArticleID   string    `json:"article_id"`
 	Headline    string    `json:"headline"`
 	OriginalURL string    `json:"original_url"`
@@ -62,7 +65,7 @@ func NewStore(pool *pgxpool.Pool) *Store {
 const publicArticles = `
 	SELECT a.id, a.event_id, a.headline, a.canonical_url, a.published_at, a.category_id,
 	       NULLIF(btrim(document.summary_text), '') AS summary,
-	       s.id AS source_id, s.name AS source_name, s.source_type
+	       s.id AS source_id, s.name AS source_name, s.source_type, COALESCE(s.icon_url, '') AS source_icon
 	FROM articles a
 	JOIN sources s ON s.id = a.source_id
 	JOIN rights_profiles r ON r.id = a.rights_profile_id
@@ -112,7 +115,7 @@ func (store *Store) eventStories(ctx context.Context, ids []string, frontPageOnl
 	// One report per outlet: the outlet's earliest article on the event.
 	sourceRows, err := store.pool.Query(ctx, `
 		WITH q AS (`+publicArticles+` AND a.event_id = ANY($2::uuid[]))
-		SELECT DISTINCT ON (q.event_id, q.source_id) q.event_id::text, q.source_id::text, q.source_name, q.source_type,
+		SELECT DISTINCT ON (q.event_id, q.source_id) q.event_id::text, q.source_id::text, q.source_name, q.source_type, q.source_icon,
 		       q.id::text, q.headline, q.canonical_url, q.published_at
 		FROM q ORDER BY q.event_id, q.source_id, q.published_at, q.id`, frontPageOnly, ids)
 	if err != nil {
@@ -122,9 +125,10 @@ func (store *Store) eventStories(ctx context.Context, ids []string, frontPageOnl
 	for sourceRows.Next() {
 		var eventID string
 		var source StorySource
-		if err := sourceRows.Scan(&eventID, &source.ID, &source.Name, &source.Type, &source.ArticleID, &source.Headline, &source.OriginalURL, &source.PublishedAt); err != nil {
+		if err := sourceRows.Scan(&eventID, &source.ID, &source.Name, &source.Type, &source.Icon, &source.ArticleID, &source.Headline, &source.OriginalURL, &source.PublishedAt); err != nil {
 			return nil, err
 		}
+		source.Icon = publish.PublicIcon(source.Icon)
 		if story, ok := stories[eventID]; ok {
 			story.Sources = append(story.Sources, source)
 			stories[eventID] = story
@@ -149,7 +153,7 @@ func (store *Store) articleStories(ctx context.Context, ids []string) (map[strin
 	rows, err := store.pool.Query(ctx, `
 		WITH q AS (`+publicArticles+` AND a.id = ANY($2::uuid[]))
 		SELECT q.id::text, q.headline, q.summary, category.slug, category.name_si, q.published_at,
-		       q.source_id::text, q.source_name, q.source_type, q.canonical_url
+		       q.source_id::text, q.source_name, q.source_type, q.source_icon, q.canonical_url
 		FROM q LEFT JOIN categories category ON category.id = q.category_id`, false, ids)
 	if err != nil {
 		return nil, fmt.Errorf("load article stories: %w", err)
@@ -159,9 +163,10 @@ func (store *Store) articleStories(ctx context.Context, ids []string) (map[strin
 		story := Story{Kind: KindArticle, SourceCount: 1}
 		var slug, name *string
 		var source StorySource
-		if err := rows.Scan(&story.ID, &story.Headline, &story.Summary, &slug, &name, &story.PublishedAt, &source.ID, &source.Name, &source.Type, &source.OriginalURL); err != nil {
+		if err := rows.Scan(&story.ID, &story.Headline, &story.Summary, &slug, &name, &story.PublishedAt, &source.ID, &source.Name, &source.Type, &source.Icon, &source.OriginalURL); err != nil {
 			return nil, err
 		}
+		source.Icon = publish.PublicIcon(source.Icon)
 		if slug != nil && name != nil {
 			story.Category = &Category{Slug: *slug, NameSI: *name}
 		}
@@ -245,3 +250,55 @@ func rank(stories []Story, now time.Time) {
 		return stories[i].ID < stories[j].ID
 	})
 }
+
+// Related returns up to six recent stories to read next: same section first, never the story
+// itself or the same news reported in another cluster.
+func (service *Service) Related(ctx context.Context, kind, id string) ([]Story, error) {
+	var current Story
+	var ok bool
+	switch kind {
+	case KindEvent:
+		stories, err := service.store.eventStories(ctx, []string{id}, false)
+		if err != nil {
+			return nil, err
+		}
+		current, ok = stories[id]
+	case KindArticle:
+		stories, err := service.store.articleStories(ctx, []string{id})
+		if err != nil {
+			return nil, err
+		}
+		current, ok = stories[id]
+	}
+	if !ok {
+		return nil, ErrNotFound
+	}
+	candidates, err := service.store.candidates(ctx, service.now(), 80)
+	if err != nil {
+		return nil, err
+	}
+	chosen := []storyWords{wordsOf(current)}
+	sameSection, others := make([]Story, 0, relatedStories), make([]Story, 0, relatedStories)
+	for _, story := range candidates {
+		if story.Kind == current.Kind && story.ID == current.ID {
+			continue
+		}
+		words := wordsOf(story)
+		if repeats(words, chosen) {
+			continue
+		}
+		chosen = append(chosen, words)
+		if current.Category != nil && story.Category != nil && story.Category.Slug == current.Category.Slug {
+			sameSection = append(sameSection, story)
+		} else {
+			others = append(others, story)
+		}
+	}
+	result := append(sameSection, others...)
+	if len(result) > relatedStories {
+		result = result[:relatedStories]
+	}
+	return result, nil
+}
+
+const relatedStories = 6

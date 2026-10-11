@@ -203,6 +203,11 @@ func (store *Store) GetEvent(ctx context.Context, id string) (Event, error) {
 	if err != nil {
 		return Event{}, err
 	}
+	if event.Analysis != nil {
+		for i := range event.Analysis.SourceSpectrum {
+			event.Analysis.SourceSpectrum[i].SourceIcon = PublicIcon(event.Analysis.SourceSpectrum[i].SourceIcon)
+		}
+	}
 	return event, nil
 }
 
