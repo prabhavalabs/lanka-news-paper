@@ -20,6 +20,7 @@ import (
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/adminanalysis"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/content"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/frontpage"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm/codex"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/newsletter"
@@ -416,7 +417,6 @@ func (worker *BriefWorker) Work(ctx context.Context, _ *river.Job[BriefArgs]) er
 	return worker.News.WriteBrief(ctx)
 }
 
-
 type QueueHistoryCleanupArgs struct{}
 
 func (QueueHistoryCleanupArgs) Kind() string { return "queue.history.cleanup" }
@@ -596,6 +596,14 @@ func periodicJobDefinitions(newsletterSchedule ...river.PeriodicSchedule) []peri
 		},
 		{
 			PeriodicJobMetadata: PeriodicJobMetadata{
+				Kind: EditionBuildArgs{}.Kind(), Name: "Front page edition",
+				Description: "AI layout editor arranges the front page, writes each story to fit its block and draws illustrations. Skips overnight and when stories are unchanged.",
+				Queue:       editionQueue, Interval: 30 * time.Minute, RunOnStart: true,
+			},
+			Constructor: func() (river.JobArgs, *river.InsertOpts) { return EditionBuildArgs{}, nil },
+		},
+		{
+			PeriodicJobMetadata: PeriodicJobMetadata{
 				Kind: SocialSelectionArgs{}.Kind(), Name: "Social story selection",
 				Description: "Prepares rights-approved Sinhala posts for review.",
 				Queue:       "social", Interval: 15 * time.Minute,
@@ -655,6 +663,7 @@ func QueueCatalog() []QueueMetadata {
 		{Name: adminAnalysisDispatchQueue, MaxWorkers: 1},
 		{Name: adminAnalysisQueue, MaxWorkers: min(configuredAdminAnalysisWorkers(os.Getenv), codex.ConcurrencyLimit())},
 		{Name: "social", MaxWorkers: 1},
+		{Name: editionQueue, MaxWorkers: 1},
 	}
 }
 
@@ -689,12 +698,16 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
-func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, pipelineStore *pipeline.Store, contentStore *content.Store, news *publish.Store, newsletterService *newsletter.Service, adminAnalysis *adminanalysis.Service, socialServices ...*social.Service) (*river.Client[pgx.Tx], error) {
+// Extras are optional services whose jobs run only when they are configured.
+type Extras struct {
+	Social    *social.Service
+	FrontPage *frontpage.Service
+}
+
+func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, pipelineStore *pipeline.Store, contentStore *content.Store, news *publish.Store, newsletterService *newsletter.Service, adminAnalysis *adminanalysis.Service, extras Extras) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
-	var socialService *social.Service
-	if len(socialServices) > 0 {
-		socialService = socialServices[0]
-	}
+	socialService := extras.Social
+	river.AddWorker(workers, &EditionBuildWorker{FrontPage: extras.FrontPage})
 	river.AddWorker(workers, &SocialSelectionWorker{Social: socialService})
 	river.AddWorker(workers, &SocialPublishWorker{Social: socialService})
 	dispatcher := &PipelineDispatchWorker{Pipeline: pipelineStore}

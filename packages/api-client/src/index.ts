@@ -116,7 +116,42 @@ export type Editorial = EditorialSummary & {
   updated_at: string;
 };
 
+/** Block sizes the AI layout editor chooses from, largest first. */
+export type EditionBlockSize = "lead" | "feature" | "standard" | "short" | "brief";
+
+/** A complete report written by the AI desk from every outlet's coverage, sized to its block. */
+export type StoryReport = {
+  headline: string;
+  /** One-sentence summary under the headline; empty for short sizes. */
+  standfirst: string;
+  /** Plain-text paragraphs, in order. */
+  paragraphs: string[];
+  word_count: number;
+  written_at: string;
+};
+
+/** A generated black-and-white illustration. Never a photograph; always captioned as such. */
+export type StoryImage = {
+  url: string;
+  alt: string;
+  caption: string;
+  kind: "illustration";
+  width: number;
+  height: number;
+};
+
+export type EditionBlock = {
+  size: EditionBlockSize;
+  story: FrontPageStory;
+  /** Null until the desk has written this story; show the story summary instead. */
+  report: StoryReport | null;
+  image: StoryImage | null;
+};
+
 export type FrontPage = {
+  /** Ordered blocks of the AI-built edition. Empty when no edition has been built yet. */
+  blocks: EditionBlock[];
+  edition_id: string | null;
   edition_date: string;
   generated_at: string;
   lead: FrontPageStory | null;
@@ -1119,9 +1154,14 @@ export function createClient(baseUrl = "") {
     frontPage: () => request<FrontPage>(url("/api/v1/front-page")),
     editorials: () => request<{ items: EditorialSummary[] }>(url("/api/v1/editorials")),
     editorial: (id: string) => request<Editorial>(url(`/api/v1/editorials/${encodeURIComponent(id)}`)),
+    /** The latest desk report and illustration for a story, if one has been written. */
+    storyReport: (kind: "event" | "article", id: string) =>
+      request<{ report: StoryReport; image: StoryImage | null }>(url(`/api/v1/reports/${kind}/${encodeURIComponent(id)}`)),
     adminFrontPage: () => request<AdminFrontPage>(url("/api/admin/front-page")),
     updateFrontPage: (body: { placements: FrontPagePlacementInput[] }) =>
       request<AdminFrontPage>(url("/api/admin/front-page"), { method: "PUT", body: JSON.stringify(body) }),
+    rebuildFrontPage: () =>
+      request<{ ok: boolean }>(url("/api/admin/front-page/rebuild"), { method: "POST", body: JSON.stringify({}) }),
     setFrontPageSource: (id: string, body: { front_page: boolean }) =>
       request<FrontPageSource>(url(`/api/admin/front-page/sources/${encodeURIComponent(id)}`), { method: "PATCH", body: JSON.stringify(body) }),
     adminEditorials: () => request<{ items: AdminEditorial[] }>(url("/api/admin/editorials")),

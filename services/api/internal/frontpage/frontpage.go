@@ -34,6 +34,8 @@ var (
 )
 
 type FrontPage struct {
+	Blocks      []EditionBlock    `json:"blocks"`
+	EditionID   *string           `json:"edition_id"`
 	EditionDate string            `json:"edition_date"`
 	GeneratedAt time.Time         `json:"generated_at"`
 	Lead        *Story            `json:"lead"`
@@ -79,6 +81,9 @@ type Service struct {
 	store    *Store
 	now      func() time.Time
 	location *time.Location
+
+	desk     *Desk
+	onChange func(context.Context)
 
 	mu       sync.Mutex
 	cached   *FrontPage
@@ -127,7 +132,7 @@ func (service *Service) build(ctx context.Context, now time.Time) (FrontPage, er
 	if err != nil {
 		return FrontPage{}, err
 	}
-	page := FrontPage{EditionDate: now.In(service.location).Format("2006-01-02"), GeneratedAt: now, Top: []Story{}, More: []Story{}}
+	page := FrontPage{Blocks: []EditionBlock{}, EditionDate: now.In(service.location).Format("2006-01-02"), GeneratedAt: now, Top: []Story{}, More: []Story{}}
 	used := map[string]bool{}
 	chosen := make([]storyWords, 0, 1+topStories+moreStories)
 	for _, placement := range placements {
@@ -188,6 +193,9 @@ func (service *Service) build(ctx context.Context, now time.Time) (FrontPage, er
 	}
 	if len(editorials) > 0 {
 		page.Editorial = &editorials[0]
+	}
+	if err := service.attachEdition(ctx, &page, placements, now); err != nil {
+		return FrontPage{}, err
 	}
 	return page, nil
 }
@@ -324,7 +332,7 @@ func (service *Service) Replace(ctx context.Context, actor uuid.UUID, inputs []P
 	if err := tx.Commit(ctx); err != nil {
 		return AdminView{}, err
 	}
-	service.invalidate()
+	service.changed(ctx)
 	return service.Admin(ctx)
 }
 
@@ -417,7 +425,7 @@ func (service *Service) SetSourceFrontPage(ctx context.Context, actor uuid.UUID,
 	if err := tx.Commit(ctx); err != nil {
 		return Source{}, err
 	}
-	service.invalidate()
+	service.changed(ctx)
 	return source, nil
 }
 

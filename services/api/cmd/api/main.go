@@ -120,6 +120,13 @@ func run(logger *slog.Logger) error {
 		},
 		time.Now,
 	)
+	// Editor changes queue a forced edition rebuild so the page follows them promptly.
+	frontPage := frontpage.NewService(frontpage.NewStore(pool), time.Now)
+	frontPage.SetOnChange(func(ctx context.Context) {
+		if err := jobs.EnqueueEditionBuild(ctx, producer); err != nil {
+			logger.Warn("front page rebuild not queued", "error", err)
+		}
+	})
 	deskStore := desk.NewStore(pool)
 	monitorBroker := desk.NewMonitorBroker(processContext, pool, logger)
 	mediaStore, err := media.New(processContext, media.Config{
@@ -153,7 +160,7 @@ func run(logger *slog.Logger) error {
 			CookieSecure:     loaded.SessionCookieSecure,
 			Database:         pool,
 			Desk:             deskStore,
-			FrontPage:        frontpage.NewService(frontpage.NewStore(pool), time.Now),
+			FrontPage:        frontPage,
 			IAM:              users,
 			LLM:              gateway,
 			Media:            mediaStore,

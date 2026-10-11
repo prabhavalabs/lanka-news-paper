@@ -44,6 +44,34 @@ A story whose headline or summary largely matches one already on the page is ski
 
 The public response is cached for 30 seconds. Any editor change clears the cache at once.
 
+## AI editions
+
+The worker job `front_page.edition` runs every 30 minutes from 05:00 to midnight Colombo time (`edition` queue, one at a time). It skips a run when the top stories and the editor's placements have not changed and the last edition is under three hours old. It also runs at once after the chief editor changes placements or sources, and from **Rebuild edition now** in the admin. To build one edition by hand, run `go run ./cmd/edition` (add `-images=false` to skip drawing).
+
+Each run works in four steps:
+
+1. **Layout.** The layout editor (`edition_layout` task) receives up to 36 ranked candidates and the editor's placements. It returns 16–24 stories in reading order, each with a block size:
+
+   | Size | Count | Report length |
+   | --- | --- | --- |
+   | `lead` | 1 | about 450 words |
+   | `feature` | 2–3 | about 300 words |
+   | `standard` | 4–6 | about 180 words |
+   | `short` | 4–6 | about 110 words, uses the story summary |
+   | `brief` | 4–8 | about 60 words, uses the story summary instead of a written report |
+
+   It marks at most three stories for an illustration. The result is normalised: one lead, no repeats, every placement included at a size matching its slot, and no images on short or brief stories. If the layout editor fails, the ranked list is used instead.
+2. **Reports.** The desk writer (`story_report` task) writes an original Sinhala report for every lead, feature and standard block (at most about ten), two at a time, close to the block's length. It works only from the stories' public evidence: each outlet's headline, its summary, and the stored article text where the outlet's rights allow storing it (up to six outlets, 2,500 characters each).
+   - The reviewer (`story_report_review` task) checks every report against the evidence. A report needs a score of 80 or more and no blocker or major issue.
+   - A failing report gets one rewrite from the reviewer's issues. If it still fails, it is not printed and the block shows the story summary instead.
+   - Reports are stored in `story_reports` and reused while the story is unchanged, meaning the same update time and number of outlets.
+3. **Illustrations.** For each image place, the Codex CLI's built-in image tool draws an 18th-century woodcut-style drawing from the report's `illustration_prompt`. It needs no API key, just the ChatGPT login.
+   - Prompts forbid real people's likenesses, violence and injuries, and stories about crime victims, casualties or named individuals are never illustrated.
+   - Images are converted to 960-pixel-wide greyscale JPEGs (quality 72), stored under media key `illustrations/<report>.jpg` and served at `/api/v1/illustrations/<file>`. Codex's own copies are deleted.
+   - Every illustration is captioned "චිත්‍රය: AI නිර්මාණයකි — සැබෑ ඡායාරූපයක් නොවේ" (an AI illustration, not a real photograph). A story keeps its illustration in later editions.
+   - `SNAP_CODEX_IMAGE_MODEL` chooses the Codex model; the default is the first allowed model.
+4. **Publish.** The edition is saved in `editions` and served in `GET /api/v1/front-page` as `blocks` (size, story, report, image). The lead, top and more lists are derived from those blocks. Editions older than 12 hours are ignored, and the page falls back to the automatic ranking. `GET /api/v1/reports/{event|article}/{id}` returns a story's longest report and its illustration for the story page.
+
 ## Editorials
 
 Editorials (`editorials` table) are the paper's own opinion and are labelled as such on the site:

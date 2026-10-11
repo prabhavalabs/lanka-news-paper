@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/config"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/content"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/database"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/frontpage"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/jobs"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
@@ -103,7 +105,9 @@ func run(logger *slog.Logger) error {
 	socialService := social.NewService(social.NewStore(pool), loaded.Social, model, socialRenderer, mediaStore, time.Now)
 
 	poller := ingest.NewPoller(pool, logger, clusters)
-	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news, newsletterService, adminAnalysis, socialService)
+	frontPage := frontpage.NewService(frontpage.NewStore(pool), time.Now)
+	frontPage.SetDesk(frontpage.Desk{Model: model, Illustrator: codexClient, Media: mediaStore, ImageModel: imageModel()})
+	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news, newsletterService, adminAnalysis, jobs.Extras{Social: socialService, FrontPage: frontPage})
 	if err != nil {
 		return err
 	}
@@ -139,4 +143,15 @@ func run(logger *slog.Logger) error {
 	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), loaded.ShutdownTimeout)
 	defer cancelShutdown()
 	return client.Stop(shutdownContext)
+}
+
+// imageModel is the Codex model that drives the built-in image tool for illustrations.
+func imageModel() string {
+	if model := strings.TrimSpace(os.Getenv("SNAP_CODEX_IMAGE_MODEL")); model != "" {
+		return model
+	}
+	if models := codex.Models(); len(models) > 0 {
+		return models[0]
+	}
+	return ""
 }
