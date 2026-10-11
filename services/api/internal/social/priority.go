@@ -18,9 +18,11 @@ const (
 	topicPenalty = 15
 	// A post approved automatically but not yet published is dropped once its story is this old.
 	autoPublishMaxAge = 12 * time.Hour
-	// Breaking news and posts scored at least priorityScore go out even after the daily limit;
-	// breaking news also ignores quiet hours. Nothing important waits for tomorrow.
-	priorityScore = 85
+	// The Page limits are soft. Posts scored at least priorityScore may pass the daily and hourly
+	// limits; breaking news also ignores quiet hours and needs only breakingGapMinutes since the
+	// last post. Nothing important waits.
+	priorityScore      = 85
+	breakingGapMinutes = 5
 	// An automatic post failing review is rewritten up to maxAutoRevisions times before it is dropped.
 	maxAutoRevisions = 2
 	// Word-overlap thresholds above which a draft repeats a recent post.
@@ -172,14 +174,17 @@ func (post queuedPost) rank(published []recentPost, now time.Time) int {
 	return score - 2*int(now.Sub(post.CreatedAt).Hours())
 }
 
-// limitsFor relaxes the Page limits for important posts: breaking news and high scores may
-// pass the daily limit, and breaking news may also publish during quiet hours.
+// limitsFor relaxes the soft Page limits for important posts: breaking news and high scores
+// may pass the daily and hourly limits, and breaking news may also publish during quiet hours
+// with a short gap after the previous post.
 func limitsFor(post queuedPost, settings Settings) Settings {
 	if post.Breaking || post.Score >= priorityScore {
 		settings.MaxPostsPerDay = 1000
+		settings.MaxPostsPerHour = 100
 	}
 	if post.Breaking {
 		settings.QuietHoursEnd = settings.QuietHoursStart
+		settings.MinGapMinutes = min(settings.MinGapMinutes, breakingGapMinutes)
 	}
 	return settings
 }

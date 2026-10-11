@@ -33,14 +33,17 @@ func TestQueueRank(t *testing.T) {
 }
 
 func TestLimitsFor(t *testing.T) {
-	settings := Settings{MaxPostsPerDay: 12, QuietHoursStart: 0, QuietHoursEnd: 6}
+	settings := Settings{MaxPostsPerDay: 12, MaxPostsPerHour: 2, MinGapMinutes: 20, QuietHoursStart: 0, QuietHoursEnd: 6}
 	require.Equal(t, settings, limitsFor(queuedPost{Score: 70}, settings))
 	important := limitsFor(queuedPost{Score: priorityScore}, settings)
 	require.Greater(t, important.MaxPostsPerDay, 12)
+	require.Greater(t, important.MaxPostsPerHour, 2)
 	require.Equal(t, 6, int(important.QuietHoursEnd))
+	require.Equal(t, 20, important.MinGapMinutes)
 	breaking := limitsFor(queuedPost{Score: 50, Breaking: true}, settings)
 	require.Greater(t, breaking.MaxPostsPerDay, 12)
 	require.Equal(t, breaking.QuietHoursStart, breaking.QuietHoursEnd)
+	require.Equal(t, breakingGapMinutes, breaking.MinGapMinutes)
 }
 
 func TestRepeatsPublished(t *testing.T) {
