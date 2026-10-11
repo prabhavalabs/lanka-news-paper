@@ -23,7 +23,7 @@ func (EditionBuildArgs) Kind() string { return "front_page.edition" }
 
 func (EditionBuildArgs) InsertOpts() river.InsertOpts {
 	return river.InsertOpts{Queue: editionQueue, MaxAttempts: 2, UniqueOpts: river.UniqueOpts{ByQueue: true, ByState: []rivertype.JobState{
-		rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateScheduled, rivertype.JobStateRetryable,
+		rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning, rivertype.JobStateScheduled, rivertype.JobStateRetryable,
 	}}}
 }
 
