@@ -46,6 +46,7 @@ function automaticEdition(items: PublicArticle[]): FrontPageData {
         id: article.source.id,
         name: article.source.name,
         type: article.source.type,
+        icon: '',
         article_id: article.id,
         headline: article.headline,
         original_url: article.original_url,

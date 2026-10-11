@@ -90,36 +90,3 @@ export function SourceLine({
     </p>
   )
 }
-
-/** Small closing note on the reading page: each outlet's original article, with time. */
-export function SourceNotes({ sources, className }: { sources: SourceRef[]; className?: string }) {
-  if (!sources.length) return null
-  const ordered = [...sources].sort((a, b) => (a.publishedAt ?? '').localeCompare(b.publishedAt ?? ''))
-  return (
-    <section aria-labelledby="source-notes" className={cn('border-t border-ink pt-2', className)}>
-      <h2 id="source-notes" className="np-kicker text-[0.875rem] text-ink">
-        මූලාශ්‍ර
-      </h2>
-      <ol className="np-meta mt-1 text-[0.875rem] leading-[1.6]">
-        {ordered.map((source) => (
-          <li key={source.key} className="border-b border-rule py-1.5 last:border-b-0">
-            <a href={source.url} target="_blank" rel="noopener noreferrer" className="np-link inline-flex min-h-11 flex-wrap items-center gap-x-2 lg:min-h-0">
-              <OutletName name={source.name} className="font-normal text-ink" />
-              {source.headline ? <span className="text-ink-secondary">“{source.headline}”</span> : null}
-              <span className="sr-only"> — මුල් ලිපිය (නව පටිත්තක)</span>
-            </a>
-            <span className="block text-[0.8125rem]">
-              {sourceTypeLabel(source.type)}
-              {source.publishedAt ? (
-                <>
-                  {' · '}
-                  <time dateTime={source.publishedAt}>{sinhalaDateTime(source.publishedAt)}</time>
-                </>
-              ) : null}
-            </span>
-          </li>
-        ))}
-      </ol>
-    </section>
-  )
-}
