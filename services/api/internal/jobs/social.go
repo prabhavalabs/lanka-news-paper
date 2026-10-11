@@ -40,8 +40,10 @@ func (worker *SocialSelectionWorker) Work(ctx context.Context, job *river.Job[So
 	}
 	return worker.Social.Select(ctx, job.Args.Trigger)
 }
+
+// A run reviews and rewrites each draft, and settles posts left waiting, before it ends.
 func (worker *SocialSelectionWorker) Timeout(*river.Job[SocialSelectionArgs]) time.Duration {
-	return 15 * time.Minute
+	return 30 * time.Minute
 }
 
 type SocialPublishWorker struct {

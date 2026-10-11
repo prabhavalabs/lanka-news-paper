@@ -116,7 +116,7 @@ func (service *Service) annotatePlans(ctx context.Context, posts []Post) error {
 			return err
 		}
 		rows, err := service.store.pool.Query(ctx, `SELECT id::text,COALESCE(scheduled_for,$1) FROM social_posts WHERE status='approved'
- ORDER BY kind='breaking' DESC,created_at,id LIMIT 200`, now)
+ ORDER BY kind='breaking' DESC,score DESC,created_at,id LIMIT 200`, now)
 		if err != nil {
 			return err
 		}
@@ -169,12 +169,17 @@ func planFor(p Post, settings Settings, connected bool, estimates map[string]tim
 			return PublishPlan{State: "paused", Note: "Approved, but no Facebook Page is connected. It goes out after the Page is connected."}
 		}
 		if at, ok := estimates[p.ID]; ok {
-			return PublishPlan{State: "scheduled", At: &at, Estimated: true, Note: "Expected time: the next free slot after the hourly and daily limits, the minimum gap and quiet hours. Breaking news goes first."}
+			return PublishPlan{State: "scheduled", At: &at, Estimated: true, Note: "Expected time: the next free slot after the hourly and daily limits, the minimum gap and quiet hours. Breaking news and the most important stories go first and may pass the daily limit."}
 		}
 		return PublishPlan{State: "scheduled", At: p.ScheduledFor, Estimated: true, Note: "Queued for the next free publishing slot."}
 	case "pending_review":
 		note := "Waiting for an editor to approve. It is not published until then."
+		automatic := p.Trigger == TriggerScheduled || p.Trigger == TriggerRealtime
 		switch {
+		case automatic && p.ReviewStatus == "passed" && settings.AutoPublish:
+			return PublishPlan{State: "in_review", Note: "Passed the AI review; it joins the publishing queue on the next selection run."}
+		case automatic && p.ReviewStatus != "passed" && settings.AutoPublish:
+			return PublishPlan{State: "in_review", Note: "The AI desk is reviewing this post and rewriting it to fix any problems. It publishes automatically once it passes, or is dropped with the reason."}
 		case p.ReviewStatus == "failed":
 			note = "Will not publish automatically: the AI review found problems that must be fixed first. Edit the post and run the review again, or approve it yourself if the issues are acceptable."
 		case p.ReviewStatus == "unavailable":

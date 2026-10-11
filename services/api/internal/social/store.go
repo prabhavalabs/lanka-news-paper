@@ -286,7 +286,7 @@ func (store *Store) autoApprove(ctx context.Context, id string, now time.Time) (
 	if !allowed {
 		return false, nil
 	}
-	result, err := tx.Exec(ctx, `UPDATE social_posts SET status='approved',scheduled_for=$2,approved_at=$2
+	result, err := tx.Exec(ctx, `UPDATE social_posts SET status='approved',scheduled_for=$2,approved_at=$2,hold_reason=NULL
  WHERE id=$1 AND status='pending_review' AND review_status='passed'`, id, now)
 	if err != nil {
 		return false, err

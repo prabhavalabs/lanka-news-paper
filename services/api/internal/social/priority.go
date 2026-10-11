@@ -2,7 +2,6 @@ package social
 
 import (
 	"context"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -13,12 +12,17 @@ const (
 	candidatePoolFactor = 3
 	// Recent posts the editor and the duplicate check compare new candidates with.
 	recentPostWindow = 48 * time.Hour
-	// At most topicCapPosts non-breaking posts from one category within topicCapWindow publish
-	// automatically; further ones wait for an editor so the Page does not repeat one kind of story.
-	topicCapWindow = 6 * time.Hour
-	topicCapPosts  = 2
+	// Each post from the same category published within topicWindow lowers a queued post's rank
+	// by topicPenalty, so the Page does not run one kind of story back to back.
+	topicWindow  = 6 * time.Hour
+	topicPenalty = 15
 	// A post approved automatically but not yet published is dropped once its story is this old.
 	autoPublishMaxAge = 12 * time.Hour
+	// Breaking news and posts scored at least priorityScore go out even after the daily limit;
+	// breaking news also ignores quiet hours. Nothing important waits for tomorrow.
+	priorityScore = 85
+	// An automatic post failing review is rewritten up to maxAutoRevisions times before it is dropped.
+	maxAutoRevisions = 2
 	// Word-overlap thresholds above which a draft repeats a recent post.
 	headlineOverlap = 0.5
 	summaryOverlap  = 0.45
@@ -77,14 +81,14 @@ func (store *Store) recentPosts(ctx context.Context, now time.Time) ([]recentPos
 }
 
 // pageActivity tells the editor how busy the Page has been, so a quiet Page gets a steady flow.
+// It carries no limits: the publisher enforces them, so the editor judges news value alone.
 type pageActivity struct {
 	PostsLast24Hours   int  `json:"posts_last_24_hours"`
-	DailyLimit         int  `json:"daily_limit"`
 	HoursSinceLastPost *int `json:"hours_since_last_post"`
 }
 
-func activityOf(recent []recentPost, settings Settings, now time.Time) pageActivity {
-	result := pageActivity{DailyLimit: settings.MaxPostsPerDay}
+func activityOf(recent []recentPost, now time.Time) pageActivity {
+	var result pageActivity
 	var last time.Time
 	for _, post := range recent {
 		if post.Status == "pending_review" {
@@ -142,20 +146,45 @@ func duplicateOf(item editorialItem, recent []recentPost) *recentPost {
 	return nil
 }
 
-// topicHold explains why a non-breaking post should wait for an editor because its category
-// already had topicCapPosts posts within topicCapWindow. It returns "" when it may publish.
-func topicHold(candidate Candidate, recent []recentPost, now time.Time) string {
-	if candidate.Breaking || candidate.CategorySlug == "" {
-		return ""
+// queuedPost is an approved post waiting for a publishing slot.
+type queuedPost struct {
+	ID           string
+	Breaking     bool
+	Score        int
+	CategorySlug string
+	Headline     string
+	Summary      string
+	CreatedAt    time.Time
+}
+
+// rank orders the publishing queue: breaking news first, then the most important story,
+// lowered for categories the Page has just carried and for stories that are getting old.
+func (post queuedPost) rank(published []recentPost, now time.Time) int {
+	score := post.Score
+	if post.Breaking {
+		score += 100
 	}
-	count := 0
-	for _, post := range recent {
-		if post.Status != "pending_review" && post.CategorySlug == candidate.CategorySlug && post.At.After(now.Add(-topicCapWindow)) {
-			count++
+	for _, recent := range published {
+		if recent.CategorySlug != "" && recent.CategorySlug == post.CategorySlug && recent.At.After(now.Add(-topicWindow)) {
+			score -= topicPenalty
 		}
 	}
-	if count < topicCapPosts {
-		return ""
+	return score - 2*int(now.Sub(post.CreatedAt).Hours())
+}
+
+// limitsFor relaxes the Page limits for important posts: breaking news and high scores may
+// pass the daily limit, and breaking news may also publish during quiet hours.
+func limitsFor(post queuedPost, settings Settings) Settings {
+	if post.Breaking || post.Score >= priorityScore {
+		settings.MaxPostsPerDay = 1000
 	}
-	return "Held for an editor: " + candidate.Category + " already had " + strconv.Itoa(count) + " posts in the last 6 hours. Approve it if it is important enough to post now."
+	if post.Breaking {
+		settings.QuietHoursEnd = settings.QuietHoursStart
+	}
+	return settings
+}
+
+// repeatsPublished returns the published post a queued post repeats, if any.
+func repeatsPublished(post queuedPost, published []recentPost) *recentPost {
+	return duplicateOf(editorialItem{HeadlineSI: post.Headline, SummarySI: post.Summary}, published)
 }

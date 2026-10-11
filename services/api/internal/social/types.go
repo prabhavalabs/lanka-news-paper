@@ -102,7 +102,7 @@ type Post struct {
 }
 
 // PublishPlan tells editors whether and when a post will go out.
-// State is one of published, publishing, scheduled, paused, needs_editor or not_publishing.
+// State is one of published, publishing, scheduled, paused, in_review, needs_editor or not_publishing.
 type PublishPlan struct {
 	State     string     `json:"state"`
 	At        *time.Time `json:"at"`

@@ -92,6 +92,9 @@ func (service *Service) Select(ctx context.Context, trigger string) error {
 	if !settings.Enabled || (trigger == TriggerRealtime && !settings.RealtimeEnabled) {
 		return nil
 	}
+	if err := service.resume(ctx, settings); err != nil {
+		return err
+	}
 	candidates, err := service.store.Candidates(ctx, settings, service.now(), service.config.PublicBaseURL, "", "")
 	if err != nil {
 		return err
@@ -132,15 +135,16 @@ func (service *Service) ManualPost(ctx context.Context, eventID, articleID strin
 }
 
 // createFromCandidates drafts posts and runs each through the AI quality gate. Nothing is
-// approved at insert time: a post becomes approved only when auto-publish is on and its
-// review passes. Every other outcome waits in pending_review for an editor.
+// approved at insert time. Automatic posts are settled with no editor: reviewed, rewritten
+// until they pass, then queued (when auto-publish is on) or dropped. Manual posts wait in
+// pending_review for the editor who asked for them.
 func (service *Service) createFromCandidates(ctx context.Context, candidates []Candidate, settings Settings, trigger string, actor uuid.UUID) ([]Post, error) {
 	manual := trigger == TriggerManual
 	recent, err := service.store.recentPosts(ctx, service.now())
 	if err != nil {
 		return nil, err
 	}
-	items, callID, err := service.editorial(ctx, candidates, recent, activityOf(recent, settings, service.now()))
+	items, callID, err := service.editorial(ctx, candidates, recent, activityOf(recent, service.now()))
 	if err != nil {
 		return nil, err
 	}
@@ -173,23 +177,18 @@ func (service *Service) createFromCandidates(ctx context.Context, candidates []C
 			return posts, err
 		}
 		if status != "skipped" {
-			_ = service.render(ctx, p.ID, uuid.Nil)
-			_, result, reviewErr := service.review(ctx, p.ID)
-			// One automatic rewrite fixes most review findings; the rewrite must pass a fresh review.
-			if reviewErr == nil && !approvable(result, settings.MinReviewScore) && revisable(result) {
-				if revised, err := service.revise(ctx, p.ID, result); err == nil && revised {
-					_ = service.render(ctx, p.ID, uuid.Nil)
-					_, result, reviewErr = service.review(ctx, p.ID)
-				}
-			}
-			if reviewErr == nil && !manual && settings.AutoPublish && approvable(result, settings.MinReviewScore) {
-				if hold := topicHold(candidate, recent, service.now()); hold != "" {
-					if _, err := service.store.pool.Exec(ctx, `UPDATE social_posts SET hold_reason=$2 WHERE id=$1`, p.ID, hold); err != nil {
-						return posts, err
+			if manual {
+				// An editor's post gets one review and, if needed, one rewrite; the editor decides.
+				_ = service.render(ctx, p.ID, uuid.Nil)
+				_, result, reviewErr := service.review(ctx, p.ID)
+				if reviewErr == nil && !approvable(result, settings.MinReviewScore) && revisable(result, settings.MinReviewScore) {
+					if revised, err := service.revise(ctx, p.ID, result); err == nil && revised {
+						_ = service.render(ctx, p.ID, uuid.Nil)
+						_, _, _ = service.review(ctx, p.ID)
 					}
-				} else if approved, err := service.store.autoApprove(ctx, p.ID, service.now()); err == nil && approved && service.enqueuePublisher != nil {
-					_ = service.enqueuePublisher(ctx)
 				}
+			} else if err := service.settle(ctx, p.ID, settings); err != nil {
+				return posts, err
 			}
 			p, err = service.store.GetPost(ctx, p.ID)
 			if err != nil {

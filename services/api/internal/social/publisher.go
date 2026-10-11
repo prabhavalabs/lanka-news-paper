@@ -101,6 +101,56 @@ func (service *Service) Status(ctx context.Context) (Status, error) {
 	return result, nil
 }
 
+// nextInQueue returns the approved post that should go out next: the highest ranked, after
+// dropping any automatic post that repeats one published since it was queued.
+func (service *Service) nextInQueue(ctx context.Context, reader historyReader) (queuedPost, bool, error) {
+	now := service.now()
+	recent, err := service.store.recentPosts(ctx, now)
+	if err != nil {
+		return queuedPost{}, false, err
+	}
+	published := make([]recentPost, 0, len(recent))
+	for _, post := range recent {
+		if post.Status == "published" || post.Status == "publishing" {
+			published = append(published, post)
+		}
+	}
+	rows, err := reader.Query(ctx, `SELECT p.id::text,p.kind='breaking',p.score,COALESCE(c.slug,''),p.headline_si,p.summary_si,p.created_at,p.approved_by IS NOT NULL
+ FROM social_posts p LEFT JOIN event_clusters e ON e.id=p.event_id LEFT JOIN articles a ON a.id=p.article_id
+ LEFT JOIN categories c ON c.id=COALESCE(e.category_id,a.category_id)
+ WHERE p.status='approved' AND COALESCE(p.scheduled_for,$1)<=$1 ORDER BY p.created_at LIMIT 100`, now)
+	if err != nil {
+		return queuedPost{}, false, err
+	}
+	var best queuedPost
+	found, repeats := false, make([]string, 0)
+	for rows.Next() {
+		var post queuedPost
+		var byEditor bool
+		if err := rows.Scan(&post.ID, &post.Breaking, &post.Score, &post.CategorySlug, &post.Headline, &post.Summary, &post.CreatedAt, &byEditor); err != nil {
+			rows.Close()
+			return queuedPost{}, false, err
+		}
+		if !byEditor && repeatsPublished(post, published) != nil {
+			repeats = append(repeats, post.ID)
+			continue
+		}
+		if !found || post.rank(published, now) > best.rank(published, now) {
+			best, found = post, true
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return queuedPost{}, false, err
+	}
+	for _, id := range repeats {
+		if _, err := service.store.pool.Exec(ctx, `UPDATE social_posts SET status='skipped',last_error='Not published: a post on the same story went out first' WHERE id=$1 AND status='approved'`, id); err != nil {
+			return queuedPost{}, false, err
+		}
+	}
+	return best, found, nil
+}
+
 func (service *Service) Publish(ctx context.Context) error {
 	if !service.config.Configured() {
 		return nil
@@ -140,7 +190,16 @@ func (service *Service) Publish(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	eligible, err := NextEligible(service.now(), settings, history)
+	// Posts approved automatically go stale if caps kept them queued; an editor's approval stands.
+	if _, err = connection.Exec(ctx, `UPDATE social_posts SET status='skipped',last_error='Not published: the story was more than 12 hours old when a publishing slot opened'
+ WHERE status='approved' AND approved_by IS NULL AND created_at<$1`, service.now().Add(-autoPublishMaxAge)); err != nil {
+		return err
+	}
+	next, found, err := service.nextInQueue(ctx, connection)
+	if err != nil || !found {
+		return err
+	}
+	eligible, err := NextEligible(service.now(), limitsFor(next, settings), history)
 	if err != nil {
 		return err
 	}
@@ -181,13 +240,7 @@ func (service *Service) Publish(ctx context.Context) error {
 		}
 		return tx.Commit(ctx)
 	}
-	// Posts approved automatically go stale if caps kept them queued; an editor's approval stands.
-	if _, err = tx.Exec(ctx, `UPDATE social_posts SET status='skipped',last_error='Not published: the story was more than 12 hours old when a publishing slot opened'
- WHERE status='approved' AND approved_by IS NULL AND created_at<$1`, service.now().Add(-autoPublishMaxAge)); err != nil {
-		return err
-	}
-	// Breaking news goes first; otherwise first approved, first published.
-	p, err := scanPost(tx.QueryRow(ctx, postSelect+`WHERE p.status='approved' AND COALESCE(p.scheduled_for,$1)<=$1 ORDER BY p.kind='breaking' DESC,p.created_at,p.id FOR UPDATE OF p SKIP LOCKED LIMIT 1`, service.now()))
+	p, err := scanPost(tx.QueryRow(ctx, postSelect+`WHERE p.id=$1 AND p.status='approved' FOR UPDATE OF p SKIP LOCKED`, next.ID))
 	if errors.Is(err, ErrNotFound) {
 		return nil
 	}
