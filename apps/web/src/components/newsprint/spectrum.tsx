@@ -6,7 +6,7 @@ export const leanLabels: Record<Lean, string> = {
   left: 'වාම',
   center: 'සමබර',
   right: 'දක්ෂිණ',
-  unrated: 'නොවිනිශ්චිත',
+  unrated: 'අවිනිශ්චිත',
 }
 
 const fills: Record<Lean, string> = {
