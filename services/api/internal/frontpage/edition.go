@@ -380,11 +380,12 @@ func truncateRunes(value string, limit int) string {
 	return string([]rune(value)[:limit-1]) + "…"
 }
 
-// writtenSizes are the block sizes the desk writes full reports for; shorter blocks print the
-// story summary, which already fits them, so an edition stays within about ten reports.
-var writtenSizes = map[string]bool{SizeLead: true, SizeFeature: true, SizeStandard: true}
+// writtenSizes are the block sizes the desk writes reports for. Every story on the front page
+// is rewritten so readers only see text written to the house style (natural attribution, one
+// script); reports are reused while a story is unchanged, so later editions write few new ones.
+var writtenSizes = map[string]bool{SizeLead: true, SizeFeature: true, SizeStandard: true, SizeShort: true, SizeBrief: true}
 
-// writeReports writes (or reuses) a report for every lead, feature and standard block, two at a time.
+// writeReports writes (or reuses) a report for every block, two at a time.
 func (service *Service) writeReports(ctx context.Context, blocks []storedBlock, stories map[string]Story) []storedBlock {
 	var wait sync.WaitGroup
 	slots := make(chan struct{}, 2)

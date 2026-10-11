@@ -143,7 +143,39 @@ func (store *Store) eventStories(ctx context.Context, ids []string, frontPageOnl
 		sort.SliceStable(story.Sources, func(i, j int) bool { return story.Sources[i].PublishedAt.Before(story.Sources[j].PublishedAt) })
 		stories[id] = story
 	}
-	return stories, nil
+	return stories, store.preferWritten(ctx, "event_id", stories)
+}
+
+// preferWritten replaces each story's summary with the opening of its latest desk report, so
+// every list readers see (front page, related stories) uses text written to the house style.
+func (store *Store) preferWritten(ctx context.Context, column string, stories map[string]Story) error {
+	if len(stories) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(stories))
+	for id := range stories {
+		ids = append(ids, id)
+	}
+	rows, err := store.pool.Query(ctx, `
+		SELECT DISTINCT ON (`+column+`) `+column+`::text,
+		       COALESCE(NULLIF(standfirst, ''), paragraphs->>0, '')
+		FROM story_reports WHERE `+column+` = ANY($1::uuid[])
+		ORDER BY `+column+`, created_at DESC`, ids)
+	if err != nil {
+		return fmt.Errorf("load written summaries: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, text string
+		if err := rows.Scan(&id, &text); err != nil {
+			return err
+		}
+		if story, ok := stories[id]; ok && text != "" {
+			story.Summary = &text
+			stories[id] = story
+		}
+	}
+	return rows.Err()
 }
 
 // articleStories loads single articles by ID as stories.
@@ -178,7 +210,10 @@ func (store *Store) articleStories(ctx context.Context, ids []string) (map[strin
 		story.Sources = []StorySource{source}
 		stories[story.ID] = story
 	}
-	return stories, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return stories, store.preferWritten(ctx, "article_id", stories)
 }
 
 // candidateWindow bounds the automatic front page to recent coverage.

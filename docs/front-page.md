@@ -57,11 +57,11 @@ Each run works in four steps:
    | `lead` | 1 | about 450 words |
    | `feature` | 2–3 | about 300 words |
    | `standard` | 4–6 | about 180 words |
-   | `short` | 4–6 | about 110 words, uses the story summary |
-   | `brief` | 4–8 | about 60 words, uses the story summary instead of a written report |
+   | `short` | 4–6 | about 110 words |
+   | `brief` | 4–8 | about 60 words |
 
    It marks at most three stories for an illustration. The result is normalised: one lead, no repeats, every placement included at a size matching its slot, and no images on short or brief stories. If the layout editor fails, the ranked list is used instead.
-2. **Reports.** The desk writer (`story_report` task) writes an original Sinhala report for every lead, feature and standard block (at most about ten), two at a time, close to the block's length. It works only from the stories' public evidence: each outlet's headline, its summary, and the stored article text where the outlet's rights allow storing it (up to six outlets, 2,500 characters each).
+2. **Reports.** The desk writer (`story_report` task) writes an original Sinhala report for every block, so readers only see text written to the house style, two at a time, close to the block's length. It works only from the stories' public evidence: each outlet's headline, its summary, and the stored article text where the outlet's rights allow storing it (up to six outlets, 2,500 characters each).
    - The reviewer (`story_report_review` task) checks every report against the evidence. A report needs a score of 80 or more and no blocker or major issue.
    - A failing report gets one rewrite from the reviewer's issues. If it still fails, it is not printed and the block shows the story summary instead.
    - Reports are stored in `story_reports` and reused while the story is unchanged, meaning the same update time and number of outlets.
