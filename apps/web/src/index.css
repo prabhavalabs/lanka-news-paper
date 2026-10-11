@@ -6,6 +6,7 @@
 @import "@fontsource/abhaya-libre/700.css";
 @import "@fontsource/abhaya-libre/800.css";
 @import "@fontsource/noto-sans-sinhala/400.css";
+@import "@fontsource/yaldevi/400.css";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
@@ -24,24 +25,53 @@
  * Reader site: newsprint only. Paper, ink and greys from tokens.css; the brand
  * navy/gold are deliberately not used on reading surfaces.
  */
+/* Fonts not on @fontsource are self-hosted from public/fonts (see its README for licences). */
+@font-face {
+  font-family: "AF Sandarenu";
+  src: url("/fonts/af-sandarenu-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Maname DEV";
+  src: url("/fonts/maname-dev-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Yaldevi Colombo";
+  src: url("/fonts/yaldevi-colombo-600.woff2") format("woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+
 /*
  * ===== FONT CONFIG — the only place type families are chosen. =====
- * Swapping a family is a one-line change here (plus its @import above).
- * Candidates: "Galle" (one weight), "Abhaya Libre", "Kaputa", "Maname",
- * "Noto Serif Sinhala", "Gemunu Libre". For a single-weight family set the
- * matching --weight-* to 400: hierarchy then comes from size and rules only.
+ * Chosen by the owner in the font picker (11 October 2026):
+ *   titles AF Sandarenu 400 · standfirsts Yaldevi 400, 17px · body Maname DEV 400, 16px
+ *   section labels Abhaya Libre 700, 13px · captions and source lines Yaldevi Colombo 600, 12px
+ * Single-weight families keep weight 400; hierarchy comes from size and rules.
  */
 :root {
-  --font-headline: "Abhaya Libre", "Noto Serif Sinhala", serif;
-  --font-body: "Abhaya Libre", "Noto Serif Sinhala", serif;
+  --font-headline: "AF Sandarenu", "Abhaya Libre", serif;
+  --font-standfirst: "Yaldevi", "Noto Sans Sinhala", sans-serif;
+  --font-body: "Maname DEV", "Abhaya Libre", serif;
   --font-label: "Abhaya Libre", "Noto Serif Sinhala", serif;
+  --font-meta: "Yaldevi Colombo", "Yaldevi", "Noto Sans Sinhala", sans-serif;
   --font-latin: "Abhaya Libre", Georgia, serif;
   --font-ui: "Abhaya Libre", "Noto Sans Sinhala", system-ui, sans-serif;
-  --weight-headline: 800;
+  --weight-headline: 400;
+  --weight-standfirst: 400;
   --weight-subhead: 700;
   --weight-label: 700;
-  --weight-meta: 500;
+  --weight-meta: 600;
   --weight-body: 400;
+  --size-standfirst: 1.0625rem;
+  --size-body: 1rem;
+  --size-label: 0.8125rem;
+  --size-meta: 0.75rem;
+  /* Space between paragraphs; text is left-aligned, never justified. */
+  --paragraph-gap: 0.75em;
 }
 
 :root {
@@ -120,15 +150,15 @@
   .np-kicker {
     font-family: var(--font-label);
     font-weight: var(--weight-label);
-    font-size: 0.9375rem;
+    font-size: var(--size-label);
     line-height: 1.5;
     color: var(--ink-secondary);
   }
 
   .np-meta {
-    font-family: var(--font-label);
+    font-family: var(--font-meta);
     font-weight: var(--weight-meta);
-    font-size: 0.9375rem;
+    font-size: var(--size-meta);
     line-height: 1.6;
     color: var(--ink-tertiary);
   }
@@ -328,29 +358,36 @@
   }
 
   /*
-   * Newsprint copy: paragraphs are indented, never spaced apart; the first is flush.
-   * Justified on word spaces only — inter-character justification would letter-space
-   * Sinhala, which the type rules forbid.
+   * Newsprint copy: left-aligned (justifying Sinhala opens wide word gaps), with a
+   * small space between paragraphs instead of indents.
    */
   .np-copy {
     font-family: var(--font-body);
     font-weight: var(--weight-body);
-    font-size: 1.125rem;
+    font-size: var(--size-body);
     line-height: 1.85;
-    text-align: justify;
-    text-justify: inter-word;
+    text-align: start;
     hyphens: manual;
     overflow-wrap: break-word;
   }
 
   .np-copy p {
-    margin: 0;
-    text-indent: 1.4em;
+    margin: 0 0 var(--paragraph-gap);
+    text-indent: 0;
   }
 
-  .np-copy p:first-child,
-  .np-copy .np-flush {
-    text-indent: 0;
+  .np-copy p:last-child {
+    margin-bottom: 0;
+  }
+
+  /* Standfirst: the one-sentence summary under a headline. */
+  .np-standfirst {
+    font-family: var(--font-standfirst);
+    font-weight: var(--weight-standfirst);
+    font-size: var(--size-standfirst);
+    line-height: 1.65;
+    color: var(--ink-secondary);
+    letter-spacing: 0;
   }
 
   /* Text columns inside a block: balanced, hairline column rules. */

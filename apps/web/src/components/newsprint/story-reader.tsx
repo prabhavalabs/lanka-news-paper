@@ -84,7 +84,7 @@ export function StoryReader({
         {title}
       </h1>
       {written?.standfirst ? (
-        <p className="mt-3 text-center font-headline text-[1.25rem] leading-[1.6] text-ink-secondary md:text-[1.375rem]">{written.standfirst}</p>
+        <p className="np-standfirst mt-3 text-center md:text-[1.1875rem]">{written.standfirst}</p>
       ) : null}
       <p className="np-meta mt-3 border-y border-ink py-1.5 text-center text-[0.875rem]">
         {outletsReported(outletCount)}
@@ -105,7 +105,7 @@ export function StoryReader({
       ) : null}
 
       {body.length ? (
-        <div className="np-copy mt-5 text-[1.125rem] leading-[1.9]">
+        <div className="np-copy mt-5 text-[1.0625rem] leading-[1.9]">
           <p>
             <span className="np-dropcap">{cap}</span>
             {remainder}

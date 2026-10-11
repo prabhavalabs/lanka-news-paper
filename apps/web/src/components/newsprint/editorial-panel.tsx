@@ -23,7 +23,7 @@ export function EditorialPanel({ editorial, className }: { editorial: EditorialS
                 {editorial.title}
               </Link>
             </h2>
-            {editorial.standfirst ? <p className="np-copy mt-1 text-[1rem] leading-[1.7]">{editorial.standfirst}</p> : null}
+            {editorial.standfirst ? <p className="np-standfirst mt-1">{editorial.standfirst}</p> : null}
             <p className="np-meta mt-1 text-[0.8125rem]">
               {editorial.author_name} · <time dateTime={editorial.published_at}>{sinhalaDate(editorial.published_at)}</time>
             </p>

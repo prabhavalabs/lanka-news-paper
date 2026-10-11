@@ -57,7 +57,8 @@ export function estimateHeight(block: EditionBlock, span: number) {
   const headline = Math.ceil((copy.headline.length * size * 0.42) / width) * size * 1.35
   const standfirst = copy.standfirst ? Math.ceil((copy.standfirst.length * 6.5) / width) * 30 + 12 : 0
   const image = block.image ? (width * block.image.height) / Math.max(1, block.image.width) + 28 : 0
-  return headline + standfirst + body + image + 96
+  const gaps = Math.max(0, copy.paragraphs.length - 1) * 12
+  return headline + standfirst + body + gaps + image + 96
 }
 
 const EDITORIAL_HEIGHT = 330

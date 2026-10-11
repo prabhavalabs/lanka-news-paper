@@ -67,7 +67,7 @@ export function PrintBlock({ block, span, idPrefix = 'p' }: { block: EditionBloc
         </Link>
       </h2>
       {copy.standfirst && (isLead || size === 'feature') ? (
-        <p className="mt-1 font-headline text-[1.125rem] leading-[1.55] text-ink-secondary lg:text-[1.1875rem]">{copy.standfirst}</p>
+        <p className="np-standfirst mt-1">{copy.standfirst}</p>
       ) : null}
       {isLead && story.editor_note ? (
         <p className="np-meta mt-1 text-[0.8125rem]">
@@ -109,7 +109,7 @@ export function PhoneBlock({ block }: { block: EditionBlock }) {
       </h2>
       {isLead ? (
         <>
-          {copy.standfirst ? <p className="mt-1 font-headline text-[1.1875rem] leading-[1.6] text-ink-secondary">{copy.standfirst}</p> : null}
+          {copy.standfirst ? <p className="np-standfirst mt-1">{copy.standfirst}</p> : null}
           <Illustration image={image} className="mt-3" priority />
           <div className="np-copy mt-3">
             <Paragraphs items={copy.paragraphs} dropCap />
