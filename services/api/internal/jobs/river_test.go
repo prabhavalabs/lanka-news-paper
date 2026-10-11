@@ -14,10 +14,9 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
 )
 
-func TestQueueHistoryCutoff(t *testing.T) {
-	now := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
-
-	require.Equal(t, now.Add(-7*24*time.Hour), queueHistoryCutoff(now))
+func TestCodexLogPaths(t *testing.T) {
+	require.Nil(t, codexLogPaths(func(string) string { return "" }))
+	require.Equal(t, []string{"/data/codex/log", "/data/codex/sessions"}, codexLogPaths(func(string) string { return "/data/codex" }))
 }
 
 func TestPeriodicJobCatalog(t *testing.T) {

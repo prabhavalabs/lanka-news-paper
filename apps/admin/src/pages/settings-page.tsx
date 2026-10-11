@@ -50,6 +50,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
+import { LogRetentionCard } from '@/components/log-retention-card'
 import { ReasoningEffortSelect } from '@/components/reasoning-effort-select'
 import { codexStatusDetail, providerLabel as llmProviderLabel } from '@/lib/llm'
 
@@ -255,7 +256,7 @@ export function SettingsPage() {
           <Badge variant="outline" className="mb-2"><ServerCog /> Administration</Badge>
           <h1 className="font-heading text-2xl font-semibold tracking-tight">System settings</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Verify local inference tools and run exceptional, isolated analysis backfills.
+            Verify local inference tools, set how long logs are kept and run exceptional, isolated analysis backfills.
           </p>
         </div>
         <Button variant="outline" onClick={refreshProviders} disabled={codexProvider.isFetching || codex.isFetching}>
@@ -274,6 +275,8 @@ export function SettingsPage() {
           metadata={codex.data?.installed ? `${codex.data.version || 'Version unknown'} · ${authLabel(codex.data.auth_method)}` : ''}
         />
       </div>
+
+      <LogRetentionCard />
 
       <Card className="gap-0 overflow-hidden py-0 shadow-sm">
         <CardHeader className="border-b py-6">

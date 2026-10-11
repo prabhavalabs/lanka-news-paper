@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/newsletter"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/retention"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
 )
 
@@ -414,15 +416,24 @@ func (worker *BriefWorker) Work(ctx context.Context, _ *river.Job[BriefArgs]) er
 	return worker.News.WriteBrief(ctx)
 }
 
-const queueHistoryRetention = 7 * 24 * time.Hour
 
 type QueueHistoryCleanupArgs struct{}
 
 func (QueueHistoryCleanupArgs) Kind() string { return "queue.history.cleanup" }
 
+// InsertOpts keeps a manual "run now" from stacking on top of a pending or running cleanup.
+func (QueueHistoryCleanupArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{UniqueOpts: river.UniqueOpts{ByQueue: true, ByState: []rivertype.JobState{
+		rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning,
+		rivertype.JobStateScheduled, rivertype.JobStateRetryable,
+	}}}
+}
+
+// QueueHistoryCleanupWorker applies the administrator's log retention period. The job kind
+// predates the setting and is kept so queued jobs from older releases still run.
 type QueueHistoryCleanupWorker struct {
 	river.WorkerDefaults[QueueHistoryCleanupArgs]
-	Pipeline *pipeline.Store
+	Retention *retention.Store
 }
 
 type ArticleContentCleanupArgs struct{}
@@ -448,12 +459,30 @@ func (worker *ArticleContentCleanupWorker) Work(ctx context.Context, _ *river.Jo
 }
 
 func (worker *QueueHistoryCleanupWorker) Work(ctx context.Context, _ *river.Job[QueueHistoryCleanupArgs]) error {
-	_, err := worker.Pipeline.DeleteHistory(ctx, queueHistoryCutoff(time.Now().UTC()))
+	if worker.Retention == nil {
+		return nil
+	}
+	_, err := worker.Retention.Run(ctx, time.Now().UTC())
 	return err
 }
 
-func queueHistoryCutoff(now time.Time) time.Time {
-	return now.Add(-queueHistoryRetention)
+func (worker *QueueHistoryCleanupWorker) Timeout(*river.Job[QueueHistoryCleanupArgs]) time.Duration {
+	return 30 * time.Minute
+}
+
+// EnqueueLogCleanup runs the log retention cleanup now.
+func EnqueueLogCleanup(ctx context.Context, client *river.Client[pgx.Tx]) error {
+	_, err := client.Insert(ctx, QueueHistoryCleanupArgs{}, nil)
+	return err
+}
+
+// codexLogPaths are the Codex CLI log directories pruned with the database logs.
+func codexLogPaths(getenv func(string) string) []string {
+	home := getenv("CODEX_HOME")
+	if home == "" {
+		return nil
+	}
+	return []string{filepath.Join(home, "log"), filepath.Join(home, "sessions")}
 }
 
 // PeriodicJobMetadata describes one scheduler-managed recurring job.
@@ -546,8 +575,8 @@ func periodicJobDefinitions(newsletterSchedule ...river.PeriodicSchedule) []peri
 		{
 			PeriodicJobMetadata: PeriodicJobMetadata{
 				Kind:        QueueHistoryCleanupArgs{}.Kind(),
-				Name:        "Queue history cleanup",
-				Description: "Deletes completed workflow telemetry after the retention window.",
+				Name:        "Log retention cleanup",
+				Description: "Deletes crawl, ingestion, pipeline and model-call logs and log files older than the retention period set in Settings.",
 				Queue:       river.QueueDefault,
 				Interval:    24 * time.Hour,
 				RunOnStart:  true,
@@ -679,7 +708,7 @@ func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, p
 	river.AddWorker(workers, dispatcher)
 	river.AddWorker(workers, &BriefWorker{News: news})
 	river.AddWorker(workers, &NewsletterWorker{Newsletter: newsletterService})
-	river.AddWorker(workers, &QueueHistoryCleanupWorker{Pipeline: pipelineStore})
+	river.AddWorker(workers, &QueueHistoryCleanupWorker{Retention: retention.NewStore(pool, pipelineStore, codexLogPaths(os.Getenv)...)})
 	river.AddWorker(workers, &ArticleContentCleanupWorker{Content: contentStore})
 	if adminAnalysis != nil {
 		river.AddWorker(workers, adminDispatcher)

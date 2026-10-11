@@ -179,6 +179,12 @@ docker compose logs --tail=100 api worker
 
 The deployed commit is recorded in `.deployed-image`. To redeploy a retained image manually, run `./deploy.sh <commit-sha>`.
 
+### Log retention
+
+Administrators set how long logs are kept in **Settings → Log retention** (default 7 days, 1–365). The daily `queue.history.cleanup` job, also runnable from that card, deletes rows older than the period from `crawl_attempts`, `ingestion_runs`, `article_pipeline_runs` (with their steps and logs), `article_pipeline_logs` and `llm_calls`, plus files under `$CODEX_HOME/log` and `$CODEX_HOME/sessions`. It deletes in batches of 5,000 rows and records the counts and any error on the card. Failed fetches for articles that never got a body are kept, because they stop the crawler from retrying those articles. Articles, stories, analyses, posts and the admin audit trail are never deleted. River prunes its own job rows (completed after 24 hours, discarded after 7 days).
+
+Container logs rotate by size: `compose.yaml` caps every service at three 20 MB `json-file` logs. The cap applies when a container is recreated, which every deploy does for changed services. Host logs such as the systemd journal are outside this project and are managed on the server.
+
 ## Shared development data
 
 Until the application has end users, a local API may use the deployed database and R2 bucket as a shared test environment. PostgreSQL remains private on the VPS; open a tunnel from a separate terminal:
