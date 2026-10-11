@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/textcheck"
 )
 
 // minReviewScore is the reviewer score a report needs, with no blocker or major issue, to print.
@@ -178,6 +179,9 @@ func (service *Service) draft(ctx context.Context, system, input string) (draft,
 	result.Paragraphs = paragraphs
 	if result.Headline == "" || len(paragraphs) == 0 || !containsSinhala(result.Headline+strings.Join(paragraphs, "")) {
 		return draft{}, nil, errors.New("report is empty or not in Sinhala")
+	}
+	if err := textcheck.Check("report", result.Headline+"\n"+result.Standfirst+"\n"+strings.Join(paragraphs, "\n")); err != nil {
+		return draft{}, nil, err
 	}
 	var callID *int64
 	if response.CallID > 0 {

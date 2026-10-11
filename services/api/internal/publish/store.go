@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/textcheck"
 )
 
 type Store struct {
@@ -232,6 +233,9 @@ func (store *Store) eventNarrativeAnalysis(ctx context.Context, eventID string) 
 	}
 	if err := json.Unmarshal(spectrum, &item.SourceSpectrum); err != nil {
 		return nil, err
+	}
+	if _, foreign := textcheck.Foreign(item.Summary); foreign {
+		item.Summary = ""
 	}
 	if item.SourceSpectrum == nil {
 		item.SourceSpectrum = []EventSourceSpectrum{}
@@ -585,6 +589,12 @@ func scanArticle(row rowScanner) (Article, error) {
 	item.Source.Icon = PublicIcon(item.Source.Icon)
 	item.EventID = eventID
 	item.EditorialNote = note
+	if summary != nil {
+		// Never show readers machine-written text that mixes in characters from another script.
+		if _, foreign := textcheck.Foreign(*summary); foreign {
+			summary = nil
+		}
+	}
 	if summary != nil || relevant != nil {
 		item.Analysis = &ArticleNarrativeAnalysis{Label: "unrated", CenterProbability: 1}
 		if summary != nil {

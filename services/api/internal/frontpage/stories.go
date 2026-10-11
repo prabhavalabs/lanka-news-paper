@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/textcheck"
 )
 
 type Category struct {
@@ -107,6 +108,7 @@ func (store *Store) eventStories(ctx context.Context, ids []string, frontPageOnl
 		if slug != nil && name != nil {
 			story.Category = &Category{Slug: *slug, NameSI: *name}
 		}
+		story.Summary = readable(story.Summary)
 		stories[story.ID] = story
 	}
 	if err := rows.Err(); err != nil {
@@ -170,6 +172,7 @@ func (store *Store) articleStories(ctx context.Context, ids []string) (map[strin
 		if slug != nil && name != nil {
 			story.Category = &Category{Slug: *slug, NameSI: *name}
 		}
+		story.Summary = readable(story.Summary)
 		story.UpdatedAt = story.PublishedAt
 		source.ArticleID, source.Headline, source.PublishedAt = story.ID, story.Headline, story.PublishedAt
 		story.Sources = []StorySource{source}
@@ -302,3 +305,15 @@ func (service *Service) Related(ctx context.Context, kind, id string) ([]Story, 
 }
 
 const relatedStories = 6
+
+// readable hides machine-written text that contains characters from an unrelated script, so
+// readers never see it; the page then falls back to the headline and sources.
+func readable(text *string) *string {
+	if text == nil {
+		return nil
+	}
+	if _, foreign := textcheck.Foreign(*text); foreign {
+		return nil
+	}
+	return text
+}
