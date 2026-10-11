@@ -7,6 +7,7 @@ import (
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/adminanalysis"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/desk"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/frontpage"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/iam"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/ingest"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
@@ -26,6 +27,7 @@ type Dependencies struct {
 	CookieSecure                bool
 	Database                    DatabaseChecker
 	Desk                        *desk.Store
+	FrontPage                   *frontpage.Service
 	IAM                         *iam.Store
 	LLM                         *llm.Gateway
 	LogRetention                *retention.Store
@@ -58,6 +60,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	newsletterAdmin := newsletterAdminHandler{repository: dependencies.Newsletter, tester: dependencies.NewsletterTester}
 	newsletterPublic := newsletterUnsubscribeHandler{repository: dependencies.Newsletter}
 	workflowAdmin := workflowAdminHandler{gateway: dependencies.LLM}
+	frontPage := frontPageHandler{service: dependencies.FrontPage}
 
 	mux.HandleFunc("GET /api/v1/health/live", health.liveness)
 	mux.HandleFunc("GET /api/v1/health/ready", health.readiness)
@@ -72,6 +75,9 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/v1/knowledge-graph", news.knowledgeGraph)
 	mux.HandleFunc("GET /api/v1/breaking", news.breaking)
 	mux.HandleFunc("GET /api/v1/brief", news.brief)
+	mux.HandleFunc("GET /api/v1/front-page", frontPage.publicFrontPage)
+	mux.HandleFunc("GET /api/v1/editorials", frontPage.publicEditorials)
+	mux.HandleFunc("GET /api/v1/editorials/{id}", frontPage.publicEditorial)
 	mux.HandleFunc("POST /api/v1/complaints", news.complain)
 	mux.HandleFunc("GET /api/v1/newsletter/unsubscribe/{token}", newsletterPublic.unsubscribe)
 	mux.HandleFunc("POST /api/v1/newsletter/unsubscribe/{token}", newsletterPublic.unsubscribe)
@@ -101,6 +107,14 @@ func NewRouter(dependencies Dependencies) http.Handler {
 		protected.HandleFunc(route, socialAdmin.serve)
 	}
 	protected.HandleFunc("GET /api/admin/me", auth.me)
+	protected.HandleFunc("GET /api/admin/front-page", frontPage.adminFrontPage)
+	protected.HandleFunc("PUT /api/admin/front-page", frontPage.adminFrontPage)
+	protected.HandleFunc("PATCH /api/admin/front-page/sources/{id}", frontPage.adminSource)
+	protected.HandleFunc("GET /api/admin/editorials", frontPage.adminEditorials)
+	protected.HandleFunc("POST /api/admin/editorials", frontPage.adminEditorials)
+	protected.HandleFunc("PATCH /api/admin/editorials/{id}", frontPage.adminEditorial)
+	protected.HandleFunc("DELETE /api/admin/editorials/{id}", frontPage.adminEditorial)
+	protected.HandleFunc("POST /api/admin/editorials/{id}/{action}", frontPage.adminEditorialAction)
 	protected.HandleFunc("GET /api/admin/sources", admin.sources)
 	protected.HandleFunc("POST /api/admin/sources", admin.sources)
 	protected.HandleFunc("GET /api/admin/sources/{id}", admin.source)
