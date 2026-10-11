@@ -1,0 +1,35 @@
+name: Pull request conventions
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  conventions:
+    name: Conventional title and commits
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check pull request title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: scripts/check-commit-message.sh --text "$TITLE"
+      - name: Check commit messages
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          status=0
+          for commit in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            if ! scripts/check-commit-message.sh --text "$(git log -1 --format=%B "$commit")"; then
+              echo "::error::Commit $commit does not follow Conventional Commits"
+              status=1
+            fi
+          done
+          exit $status
