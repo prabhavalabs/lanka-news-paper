@@ -113,7 +113,9 @@ func (service *Service) SendDaily(ctx context.Context) error {
 				"List-Unsubscribe":      "<" + unsubscribeURL + ">",
 				"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
 			},
-			IdempotencyKey: fmt.Sprintf("newsletter-%s-%s", editionDate, subscriber.ID),
+			// The edition ID, unique per database, keeps another environment that shares
+			// subscriber IDs (a copied database) from claiming this send's key.
+			IdempotencyKey: fmt.Sprintf("newsletter-%s-%s", edition.ID, subscriber.ID),
 		})
 		if sendErr != nil {
 			service.recordFailure(ctx, edition.ID, subscriber.ID, sendErr, &deliveryErrors)

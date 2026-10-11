@@ -269,25 +269,46 @@ func (store *Store) DeleteHistory(ctx context.Context, before time.Time) (int64,
 		return 0, nil
 	}
 
+	// Small batches keep each transaction short; a large backlog drains over several batches.
+	var total int64
+	for {
+		deleted, err := store.deleteHistoryBatch(ctx, before)
+		total += deleted
+		if err != nil || deleted < historyCleanupBatch {
+			return total, err
+		}
+	}
+}
+
+const historyCleanupBatch = 500
+
+func (store *Store) deleteHistoryBatch(ctx context.Context, before time.Time) (int64, error) {
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("begin pipeline history cleanup: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM llm_calls
-		WHERE pipeline_run_id IN (
-		  SELECT id FROM article_pipeline_runs
-		  WHERE status IN ('succeeded', 'failed') AND finished_at < $1
-		)
-	`, before); err != nil {
+	rows, err := tx.Query(ctx, `
+		SELECT id::text FROM article_pipeline_runs
+		WHERE status IN ('succeeded', 'failed') AND finished_at < $1
+		ORDER BY finished_at LIMIT $2
+		FOR UPDATE SKIP LOCKED
+	`, before, historyCleanupBatch)
+	if err != nil {
+		return 0, fmt.Errorf("select expired pipeline runs: %w", err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return 0, fmt.Errorf("select expired pipeline runs: %w", err)
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM llm_calls WHERE pipeline_run_id = ANY($1::uuid[])`, ids); err != nil {
 		return 0, fmt.Errorf("delete expired pipeline model calls: %w", err)
 	}
-	tag, err := tx.Exec(ctx, `
-		DELETE FROM article_pipeline_runs
-		WHERE status IN ('succeeded', 'failed') AND finished_at < $1
-	`, before)
+	tag, err := tx.Exec(ctx, `DELETE FROM article_pipeline_runs WHERE id = ANY($1::uuid[])`, ids)
 	if err != nil {
 		return 0, fmt.Errorf("delete expired pipeline runs: %w", err)
 	}

@@ -90,7 +90,7 @@ func (store *Store) Candidates(ctx context.Context, s Settings, now time.Time, b
  AND (($2::boolean AND e.id::text=$3) OR (NOT $2 AND e.last_update_at >= $5))
  GROUP BY e.id,category.name_si,category.slug,analysis.summary,analysis.rated_source_count,
  analysis.left_percentage,analysis.center_percentage,analysis.right_percentage
- HAVING ($2 OR e.is_breaking OR count(DISTINCT a.source_id)>=2)
+ HAVING ($2 OR $6 OR e.is_breaking OR count(DISTINCT a.source_id)>=2)
  AND COALESCE(CASE WHEN NOT EXISTS (SELECT 1 FROM articles member WHERE member.event_id=e.id
  AND NOT EXISTS (SELECT 1 FROM qualifying permitted WHERE permitted.id=member.id))
  THEN NULLIF(trim(analysis.summary),'') END,min(a.summary_text)) IS NOT NULL

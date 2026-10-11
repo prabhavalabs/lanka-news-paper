@@ -76,6 +76,34 @@ func (store *Store) recentPosts(ctx context.Context, now time.Time) ([]recentPos
 	return result, rows.Err()
 }
 
+// pageActivity tells the editor how busy the Page has been, so a quiet Page gets a steady flow.
+type pageActivity struct {
+	PostsLast24Hours   int  `json:"posts_last_24_hours"`
+	DailyLimit         int  `json:"daily_limit"`
+	HoursSinceLastPost *int `json:"hours_since_last_post"`
+}
+
+func activityOf(recent []recentPost, settings Settings, now time.Time) pageActivity {
+	result := pageActivity{DailyLimit: settings.MaxPostsPerDay}
+	var last time.Time
+	for _, post := range recent {
+		if post.Status == "pending_review" {
+			continue
+		}
+		if post.At.After(now.Add(-24 * time.Hour)) {
+			result.PostsLast24Hours++
+		}
+		if post.At.After(last) {
+			last = post.At
+		}
+	}
+	if !last.IsZero() {
+		hours := int(now.Sub(last).Hours())
+		result.HoursSinceLastPost = &hours
+	}
+	return result
+}
+
 // words returns the distinct meaningful words of Sinhala or English text.
 func words(text string) map[string]bool {
 	result := map[string]bool{}

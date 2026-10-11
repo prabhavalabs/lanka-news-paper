@@ -112,9 +112,14 @@ func (store *Store) NeedsStaticFetch(ctx context.Context, articleID string) (boo
 	var exists bool
 	if err := store.pool.QueryRow(ctx, `
 		SELECT EXISTS (SELECT 1 FROM article_contents WHERE article_id = $1 AND current)
+		  OR (
+			SELECT count(*) FROM crawl_attempts
+			WHERE article_id = $1 AND status IN ('failed', 'blocked')
+		  ) >= 3
 	`, articleID).Scan(&exists); err != nil {
 		return false, err
 	}
+	// Like the backfill, stop after three failed fetches; the poller sees the same feed item every cycle.
 	return !exists, nil
 }
 
