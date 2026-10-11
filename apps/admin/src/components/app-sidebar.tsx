@@ -1,6 +1,8 @@
 import * as React from 'react'
 import {
   CalendarDaysIcon,
+  FeatherIcon,
+  LayoutTemplateIcon,
   LayoutDashboardIcon,
   ListTreeIcon,
   ListChecksIcon,
@@ -40,6 +42,12 @@ const navigation: NavItem[] = [
   { title: 'Complaints', url: '/complaints', icon: MessageSquareWarningIcon },
 ]
 
+// The chief editor curates the public front page and writes editorials; administrators can too.
+const curatorNavigation: NavItem[] = [
+  { title: 'Front page', url: '/front-page', icon: LayoutTemplateIcon },
+  { title: 'Editorials', url: '/editorials', icon: FeatherIcon },
+]
+
 const administratorNavigation: NavItem[] = [
   { title: 'Workflow manager', url: '/workflows', icon: SparklesIcon },
   { title: 'Mailing list', url: '/mailing-list', icon: MailIcon },
@@ -72,7 +80,11 @@ export function AppSidebar({ user, onLogout, ...props }: AppSidebarProps) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={user.role === 'administrator' ? [...navigation, ...administratorNavigation] : navigation} />
+        <NavMain items={[
+          ...navigation,
+          ...(user.role === 'administrator' || user.role === 'chief_editor' ? curatorNavigation : []),
+          ...(user.role === 'administrator' ? administratorNavigation : []),
+        ]} />
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={user} onLogout={onLogout} />

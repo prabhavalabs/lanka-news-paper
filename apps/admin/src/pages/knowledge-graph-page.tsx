@@ -54,6 +54,7 @@ import {
 } from '@/components/ui/select'
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
+import { publicURL } from '@/lib/public-site'
 
 const client = createClient()
 const KnowledgeGraphView = lazy(() => import('@snap/ui/knowledge-graph-view')
@@ -292,9 +293,7 @@ function ShareGraphButton({ searchParams, selectedNodeID }: { searchParams: URLS
     }
     if (selectedNodeID) query.set('node', selectedNodeID)
     if (!query.has('days') && !query.has('from')) query.set('days', '1')
-    const publicOrigin: Record<string, string> = { 'admin.thulawanews.com': 'https://thulawanews.com', 'admin.lankanewspaper.prabhavalabs.com': 'https://lankanewspaper.prabhavalabs.com' }
-    const origin = publicOrigin[window.location.hostname] ?? `${window.location.protocol}//${window.location.hostname}${window.location.port === '5174' ? ':5173' : window.location.port ? `:${window.location.port}` : ''}`
-    const url = `${origin}/analysis/knowledge?${query}`
+    const url = publicURL(`/analysis/knowledge?${query}`)
     try {
       await navigator.clipboard.writeText(url)
       toast.success('Public analysis URL copied')

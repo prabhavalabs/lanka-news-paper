@@ -47,6 +47,8 @@ export const router = createBrowserRouter([
       { path: 'social', lazy: lazyPage(() => import('./pages/social-page'), 'SocialPage') },
       { path: 'mailing-list', lazy: lazyPage(() => import('./pages/mailing-list-page'), 'MailingListPage') },
       { path: 'social/content', lazy: lazyPage(() => import('./pages/content-calendar-page'), 'ContentCalendarPage') },
+      { path: 'front-page', lazy: lazyPage(() => import('./pages/front-page-page'), 'FrontPagePage') },
+      { path: 'editorials', lazy: lazyPage(() => import('./pages/editorials-page'), 'EditorialsPage') },
       { path: 'brand', lazy: lazyPage(() => import('./pages/brand-kit-page'), 'BrandKitPage') },
     ],
   },
