@@ -10,6 +10,8 @@ export type PublicSource = {
   id: string;
   name: string;
   type: SourceType;
+  /** Outlet logo URL readers can load, when the outlet has one. */
+  icon?: string;
   description?: string;
   website?: string;
 };

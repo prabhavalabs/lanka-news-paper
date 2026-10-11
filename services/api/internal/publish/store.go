@@ -23,7 +23,7 @@ func NewStore(pool *pgxpool.Pool) *Store {
 }
 
 const articleSelect = `
-	SELECT a.id::text, a.headline, s.id::text, s.name, s.source_type,
+	SELECT a.id::text, a.headline, s.id::text, s.name, s.source_type, COALESCE(s.icon_url, ''),
 	       c.slug, c.name_si, a.published_at, a.received_at, a.canonical_url,
 	       a.event_id::text, a.editorial_note, NULLIF(document.summary_text, ''),
 	       analysis.relevant, analysis.label, analysis.left_probability,
@@ -573,7 +573,7 @@ func scanArticle(row rowScanner) (Article, error) {
 	var relevant *bool
 	var left, center, right, confidence *float64
 	if err := row.Scan(
-		&item.ID, &item.Headline, &item.Source.ID, &item.Source.Name, &item.Source.Type,
+		&item.ID, &item.Headline, &item.Source.ID, &item.Source.Name, &item.Source.Type, &item.Source.Icon,
 		&slug, &nameSI, &item.PublishedAt, &item.ReceivedAt, &item.OriginalURL, &eventID, &note,
 		&summary, &relevant, &label, &left, &center, &right, &confidence,
 	); err != nil {
@@ -582,6 +582,7 @@ func scanArticle(row rowScanner) (Article, error) {
 	if slug != nil && nameSI != nil {
 		item.Category = &Category{Slug: *slug, NameSI: *nameSI}
 	}
+	item.Source.Icon = PublicIcon(item.Source.Icon)
 	item.EventID = eventID
 	item.EditorialNote = note
 	if summary != nil || relevant != nil {
