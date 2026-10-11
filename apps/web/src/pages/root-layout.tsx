@@ -1,126 +1,68 @@
 import { createClient } from '@snap/api-client'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect } from 'react'
-import { Link, Outlet, useNavigate } from 'react-router'
+import { useEffect, useRef } from 'react'
+import { Link, Outlet, useLocation } from 'react-router'
 
-import { Command, CommandDialog, CommandInput } from '@/components/ui/command'
+import { SiteFooter } from '@/components/newsprint/footer'
+import { Masthead, SearchDialog, SectionStrip } from '@/components/newsprint/masthead'
 import { useChromeStore } from '../chrome-store'
 
 const client = createClient()
 
-function colomboDateLine() {
-  const formatted = new Intl.DateTimeFormat('si-LK', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    timeZone: 'Asia/Colombo',
-  }).format(new Date())
-  return `${formatted} | කොළඹ`
-}
-
 export function RootLayout() {
-  const navigate = useNavigate()
+  const { pathname } = useLocation()
+  const isFront = pathname === '/'
   const condensed = useChromeStore((state) => state.condensed)
   const setCondensed = useChromeStore((state) => state.setCondensed)
   const searchOpen = useChromeStore((state) => state.searchOpen)
   const setSearchOpen = useChromeStore((state) => state.setSearchOpen)
-  const categories = useQuery({ queryKey: ['categories'], queryFn: () => client.categories() })
-  const breaking = useQuery({ queryKey: ['breaking'], queryFn: () => client.breaking() })
+  const categories = useQuery({ queryKey: ['categories'], queryFn: () => client.categories(), staleTime: 10 * 60_000 })
+  const breaking = useQuery({ queryKey: ['breaking'], queryFn: () => client.breaking(), enabled: !isFront })
+  const nameplate = useRef<HTMLDivElement>(null)
+
+  // The small wordmark joins the sticky section strip once the nameplate has scrolled away.
+  useEffect(() => {
+    const node = nameplate.current
+    if (!node) return
+    const observer = new IntersectionObserver(([entry]) => setCondensed(!entry?.isIntersecting), { threshold: 0 })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [setCondensed, isFront])
 
   useEffect(() => {
-    const onScroll = () => setCondensed(window.scrollY > 300)
-    onScroll()
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
-  }, [setCondensed])
+    window.scrollTo({ top: 0 })
+  }, [pathname])
 
   const nav = categories.data?.items.filter((item) => item.slug !== 'latest') ?? []
+  const flash = !isFront ? breaking.data?.items[0] : undefined
 
   return (
     <div className="min-h-screen bg-paper text-ink">
-      <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:start-4 focus:top-4 focus:bg-paper focus:px-3 focus:py-2">
-        මුල් අන්තර්ගතයට යන්න
+      <a
+        href="#main"
+        className="sr-only z-50 focus:not-sr-only focus:fixed focus:start-3 focus:top-3 focus:border focus:border-ink focus:bg-paper focus:px-4 focus:py-3 focus:font-bold"
+      >
+        ප්‍රධාන අන්තර්ගතයට යන්න
       </a>
-      {condensed ? (
-        <div className="sticky top-0 z-10 flex h-12 items-center justify-between border-b border-rule bg-paper px-6">
-          <Link to="/" className="flex items-center gap-2" aria-label="තුලාව මුල් පිටුව">
-            <img src="/brand/thulawa-seal-512.png" alt="" className="size-8" />
-            <img src="/brand/name-navy.svg" alt="තුලාව" className="h-6 w-auto" />
-          </Link>
-        </div>
-      ) : null}
-      {breaking.data?.items[0] ? (
-        <div className="bg-ink px-6 py-2 text-center text-sm text-paper">
-          විශේෂ පුවත්:{' '}
-          <Link className="underline" to={`/e/${breaking.data.items[0].id}`}>
-            {breaking.data.items[0].title}
-          </Link>
-        </div>
-      ) : null}
-      <header className="mx-auto max-w-[1280px] px-6 py-8 text-center md:px-12">
-        <div className="h-px bg-rule" />
-        <Link to="/" className="mt-6 inline-flex items-center justify-center gap-4 md:gap-6" aria-label="තුලාව මුල් පිටුව">
-          <img src="/brand/thulawa-seal-512.png" alt="" className="size-16 md:size-24" />
-          <span className="flex flex-col items-start gap-2 md:gap-3">
-            <img src="/brand/name-navy.svg" alt="තුලාව" className="h-12 w-auto md:h-[4.5rem]" />
-            <img src="/brand/tagline-gold-dark.svg" alt="අසමතුලිත ලෝකයකට සමතුලිත පුවත්" className="h-4 w-auto md:h-5" />
-          </span>
-        </Link>
-        <p className="mt-2 text-[0.8125rem] text-muted-foreground">{colomboDateLine()}</p>
-        <div className="mt-4 flex flex-col gap-[3px]">
-          <div className="h-[3px] bg-brand-navy" />
-          <div className="h-px bg-brand-gold" />
-        </div>
-        <div className="relative mt-3 flex items-center">
-          <nav className="flex min-w-0 flex-1 gap-5 overflow-x-auto text-[0.8125rem] [scrollbar-width:none]" aria-label="කොටස්">
-            <Link to="/" className="shrink-0">
-              පුවත්
-            </Link>
-            {nav.map((item) => (
-              <Link key={item.slug} to={`/c/${item.slug}`} className="shrink-0">
-                {item.name_si}
-              </Link>
-            ))}
-            <Link to="/brief" className="shrink-0">
-              උදෑසන සංග්‍රහය
-            </Link>
-          </nav>
-          <button type="button" className="ms-3 h-11 shrink-0 border border-ink px-3" aria-label="සොයන්න" onClick={() => setSearchOpen(true)}>
-            සොයන්න
-          </button>
-        </div>
-        <div className="mt-3 h-px bg-rule" />
+      <header>
+        <Masthead ref={nameplate} full={isFront} />
       </header>
-      <CommandDialog open={searchOpen} onOpenChange={setSearchOpen} title="සොයන්න" description="ශීර්ෂපාඨ සොයන්න">
-        <Command>
-          <CommandInput
-            placeholder="සොයන්න"
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                navigate(`/search?q=${encodeURIComponent(event.currentTarget.value)}`)
-                setSearchOpen(false)
-              }
-            }}
-          />
-        </Command>
-      </CommandDialog>
-      <main id="main" className="mx-auto max-w-[1280px] px-6 pb-16 md:px-12">
+      <SectionStrip categories={nav} condensed={condensed} onSearch={() => setSearchOpen(true)} />
+      {flash ? (
+        <div className="bg-ink text-paper">
+          <p className="mx-auto flex max-w-[1280px] flex-wrap items-center gap-x-3 px-4 py-2 font-headline text-[1rem] leading-[1.5] md:px-12">
+            <span className="border border-paper px-1.5 font-extrabold">විශේෂ පුවත</span>
+            <Link to={`/e/${flash.id}`} className="font-bold underline underline-offset-4">
+              {flash.title}
+            </Link>
+          </p>
+        </div>
+      ) : null}
+      <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
+      <main id="main" tabIndex={-1} className="mx-auto max-w-[1280px] px-4 pt-5 outline-none md:px-12 md:pt-8">
         <Outlet />
       </main>
-      <footer className="mx-auto max-w-[1280px] px-6 py-8 md:px-12">
-        <div className="mb-4 flex flex-col gap-[3px]">
-          <div className="h-[3px] bg-ink" />
-          <div className="h-px bg-ink" />
-        </div>
-        <nav className="flex flex-wrap gap-4 text-[0.75rem] text-muted-foreground">
-          <Link to="/about">අප ගැන</Link>
-          <Link to="/privacy">රහස්‍යතාව</Link>
-          <Link to="/corrections">නිවැරදි කිරීම්</Link>
-          <Link to="/contact">සම්බන්ධ වන්න</Link>
-          <Link to="/sources">මූලාශ්‍ර</Link>
-        </nav>
-      </footer>
+      <SiteFooter />
     </div>
   )
 }

@@ -3,12 +3,14 @@ import { createBrowserRouter } from 'react-router'
 
 import { RootLayout } from './pages/root-layout'
 import { NotFoundPage, RouteErrorPage } from './pages/route-error-page'
-import { StaticPage } from './pages/static-page'
+import { AboutPage, StaticPage } from './pages/static-page'
 
 function RouteLoading() {
   return (
-    <main className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">
-      <p role="status">පිටුව පූරණය වෙමින්…</p>
+    <main className="grid min-h-screen place-items-center bg-paper text-ink">
+      <p role="status" className="font-headline text-[1.125rem] font-bold">
+        තුලාව පූරණය වෙමින්…
+      </p>
     </main>
   )
 }
@@ -39,15 +41,9 @@ export const router = createBrowserRouter([
       { path: 'e/:id', lazy: lazyPage(() => import('./pages/event-page'), 'EventPage') },
       { path: 'analysis/knowledge', lazy: lazyPage(() => import('./pages/knowledge-analysis-page'), 'KnowledgeAnalysisPage') },
       { path: 'brief', lazy: lazyPage(() => import('./pages/brief-page'), 'BriefPage') },
-      {
-        path: 'about',
-        element: (
-          <StaticPage
-            title="අප ගැන"
-            body="මෙය සිංහල පුවත් සොයාගැනීමේ වේදිකාවකි. සම්පූර්ණ ලිපි මෙහි නැවත පළ නොවේ; මුල් ප්‍රකාශකයා වෙත යොමු වන්න."
-          />
-        ),
-      },
+      { path: 'editorial', lazy: lazyPage(() => import('./pages/editorial-pages'), 'EditorialListPage') },
+      { path: 'editorial/:id', lazy: lazyPage(() => import('./pages/editorial-pages'), 'EditorialPage') },
+      { path: 'about', element: <AboutPage /> },
       {
         path: 'privacy',
         element: (

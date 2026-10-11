@@ -1,73 +1,160 @@
 import { createClient, type EventNarrativeAnalysis } from '@snap/api-client'
 import { useQuery } from '@tanstack/react-query'
-import { useParams } from 'react-router'
+import { useEffect } from 'react'
+import { Link, useParams } from 'react-router'
 
-import { ArticleCard } from './article-card'
+import { HalftoneFigure } from '@/components/newsprint/figure'
+import { OutletName } from '@/components/newsprint/outlet'
+import { ReportProblem } from '@/components/newsprint/report-problem'
+import { SourceLedger, fromArticles } from '@/components/newsprint/sources'
+import { SpectrumBar, Swatch, leanLabels } from '@/components/newsprint/spectrum'
+import { GalleyPlaceholder, Notice } from '@/components/newsprint/states'
+import { absoluteTitle, outletsReported, paragraphs, relativeTime } from '@/lib/format'
 
 const client = createClient()
 
 export function EventPage() {
-  const { id } = useParams()
-  const event = useQuery({
-    queryKey: ['event', id],
-    queryFn: () => client.getEvent(id ?? ''),
-    enabled: Boolean(id),
-  })
-  if (!event.data) {
-    return <p>පූරණය වේ…</p>
-  }
+  const { id = '' } = useParams()
+  const event = useQuery({ queryKey: ['event', id], queryFn: () => client.getEvent(id), enabled: Boolean(id) })
+
+  useEffect(() => {
+    if (event.data) document.title = `${event.data.title} | තුලාව`
+  }, [event.data])
+
+  if (event.isPending) return <GalleyPlaceholder lines={10} className="max-w-3xl" />
+  if (event.isError || !event.data) return <Notice title="මෙම පුවත සොයාගත නොහැක" retry={() => event.refetch()} />
+
+  const data = event.data
+  const sources = fromArticles(data.articles)
+  const outletCount = new Set(data.articles.map((article) => article.source.id)).size
+  const latest = data.articles.reduce<string>((max, article) => (article.published_at > max ? article.published_at : max), '')
+  const category = data.articles.find((article) => article.category)?.category
+  const media = data.articles.find((article) => article.media)
+  const summary = paragraphs(data.analysis?.summary)
+
   return (
-    <section className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-start">
-      <div>
-        <p className="text-[0.8125rem] text-muted-foreground">සිදුවීම</p>
-        <h1 className="font-headline text-[length:var(--text-h1)] font-bold">{event.data.title}</h1>
-        {event.data.analysis?.summary ? <div className="mt-6 border-y border-rule py-5"><p className="text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">Cross-source summary</p><p className="mt-3 max-w-4xl whitespace-pre-line text-lg leading-8">{event.data.analysis.summary}</p></div> : null}
-      {event.data.is_breaking ? (
-        <p className="mt-4 border border-rule bg-tint px-3 py-2 text-sm">විශේෂ පුවත් — මූලාශ්‍ර කිහිපයක් වාර්තා කර ඇත.</p>
-      ) : null}
-        <h2 className="font-headline mt-8 text-2xl font-bold">Source reporting</h2>
-        <ol className="mt-4">
-        {event.data.articles.map((item) => (
-          <li key={item.id}>
-            <ArticleCard item={item} />
-          </li>
-        ))}
-        </ol>
+    <article aria-labelledby="event-title" className="grid grid-cols-1 gap-8 lg:grid-cols-12">
+      <div className="lg:col-span-8 lg:border-e lg:border-rule lg:pe-8">
+        <p className="np-kicker flex flex-wrap items-center gap-x-3">
+          {data.is_breaking ? <span className="bg-ink px-1.5 text-paper">විශේෂ පුවත</span> : null}
+          {category ? (
+            <Link to={`/c/${category.slug}`} className="np-headline-link">
+              {category.name_si}
+            </Link>
+          ) : null}
+          <span className="text-ink-tertiary">මාධ්‍ය කිහිපයක වාර්තා එක තැනක</span>
+        </p>
+        <h1 id="event-title" className="np-headline mt-1 text-[2rem] leading-[1.35] md:text-[2.75rem] md:leading-[1.28]">
+          {data.title}
+        </h1>
+        <p className="np-meta mt-3 border-y border-ink py-2 text-[0.9375rem]">
+          <span className="font-bold text-ink">{outletsReported(outletCount)}</span>
+          {latest ? (
+            <>
+              {' · අවසන් වාර්තාව '}
+              <time dateTime={latest} title={absoluteTitle(latest)}>
+                {relativeTime(latest)}
+              </time>
+            </>
+          ) : null}
+        </p>
+
+        <HalftoneFigure src={media?.media} alt="" credit={media?.source.name} className="mt-6" priority />
+
+        {summary.length ? (
+          <section aria-labelledby="event-summary" className="mt-6 border border-ink bg-paper-raised p-4 md:p-5">
+            <h2 id="event-summary" className="np-kicker text-ink">
+              ස්වයංක්‍රීය සාරාංශය
+            </h2>
+            <p className="np-meta text-[0.8125rem]">පහත මාධ්‍ය වාර්තා {data.articles.length} ඇසුරින් ස්වයංක්‍රීයව සකස් කළකි. වාර්තා අතර වෙනස්කම් ඇත්නම් මුල් ලිපි සසඳන්න.</p>
+            <div className="np-body mt-3 text-[1.0625rem] md:text-[1.125rem]">
+              {summary.map((text, index) => (
+                <p key={index} className={index > 0 ? 'mt-4' : undefined}>
+                  {text}
+                </p>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        <SourceLedger sources={sources} className="mt-8" />
+
+        <div className="mt-8">
+          <ReportProblem entityType="event" entityId={data.id} />
+        </div>
       </div>
-      {event.data.analysis ? <CoverageSpectrum analysis={event.data.analysis} /> : <aside className="border border-rule bg-tint p-5"><h2 className="font-headline text-xl font-bold">Coverage spectrum</h2><p className="mt-2 text-sm text-muted-foreground">Analysis is still processing for this event.</p></aside>}
-    </section>
+
+      <aside className="lg:col-span-4" aria-label="ආවරණ විස්තර">
+        <div className="lg:sticky lg:top-16">
+          {data.analysis ? (
+            <CoverageSpectrum analysis={data.analysis} />
+          ) : (
+            <section className="border-t-2 border-ink pt-2">
+              <h2 className="np-kicker text-ink">වාර්තාකරණ රාමු</h2>
+              <p className="np-body mt-2 text-[1rem] text-ink-secondary">මෙම පුවතේ විශ්ලේෂණය තවම සකස් වෙමින් පවතී.</p>
+            </section>
+          )}
+        </div>
+      </aside>
+    </article>
   )
 }
 
 function CoverageSpectrum({ analysis }: { analysis: EventNarrativeAnalysis }) {
-  const groups = {
-    left: analysis.source_spectrum.filter((item) => item.label === 'left'),
-    center: analysis.source_spectrum.filter((item) => item.label === 'center'),
-    right: analysis.source_spectrum.filter((item) => item.label === 'right'),
-    unrated: analysis.source_spectrum.filter((item) => item.label === 'unrated'),
-  }
+  const groups = (['left', 'center', 'right'] as const).map((lean) => ({
+    lean,
+    items: analysis.source_spectrum.filter((item) => item.label === lean),
+  }))
+  const unrated = analysis.source_spectrum.filter((item) => item.label === 'unrated')
   return (
-    <aside className="border border-rule bg-tint p-5 xl:sticky xl:top-24">
-      <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">Coverage details</p><h2 className="font-headline mt-1 text-2xl font-bold">Bias distribution</h2></div><span className="font-headline text-3xl font-bold">{analysis.source_count}</span></div>
-      <p className="mt-2 text-sm text-muted-foreground">{analysis.rated_source_count} rated · {analysis.source_count - analysis.rated_source_count} untracked</p>
-      {analysis.rated_source_count > 0 ? <div className="mt-5 flex h-10 overflow-hidden border border-rule text-xs font-bold" aria-label={`Left ${analysis.left_percentage}%, center ${analysis.center_percentage}%, right ${analysis.right_percentage}%`}>
-        {analysis.left_percentage > 0 ? <span className="grid place-items-center bg-[#b96d70] text-white" style={{ width: `${analysis.left_percentage}%` }}>L {Math.round(analysis.left_percentage)}%</span> : null}
-        {analysis.center_percentage > 0 ? <span className="grid place-items-center bg-white text-black" style={{ width: `${analysis.center_percentage}%` }}>C {Math.round(analysis.center_percentage)}%</span> : null}
-        {analysis.right_percentage > 0 ? <span className="grid place-items-center bg-[#587ead] text-white" style={{ width: `${analysis.right_percentage}%` }}>R {Math.round(analysis.right_percentage)}%</span> : null}
-      </div> : <div className="mt-5 border border-rule bg-background/60 px-3 py-3 text-center text-xs font-bold text-muted-foreground">No politically rateable sources</div>}
-      <div className="mt-6 grid grid-cols-3 gap-2">
-        {(['left', 'center', 'right'] as const).map((label) => <SourceColumn key={label} label={label} items={groups[label]} />)}
+    <section aria-labelledby="coverage-title" className="border-t-2 border-ink pt-2">
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 id="coverage-title" className="np-kicker text-ink">
+          වාර්තාකරණ රාමු
+        </h2>
+        <span className="np-meta">
+          මාධ්‍ය <span className="np-latin text-ink">{analysis.source_count}</span>
+        </span>
       </div>
-      {groups.unrated.length ? <div className="mt-6 border-t border-rule pt-4"><p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Untracked stance</p><div className="mt-3 flex flex-wrap gap-2">{groups.unrated.map((item) => <SourceMark key={item.article_id} item={item} />)}</div></div> : null}
-      <p className="mt-6 text-xs leading-5 text-muted-foreground">Scores describe each article’s reporting frame. They are not permanent labels for a publisher.</p>
-    </aside>
+      {analysis.rated_source_count > 0 ? (
+        <SpectrumBar
+          className="mt-3"
+          left={analysis.left_percentage}
+          center={analysis.center_percentage}
+          right={analysis.right_percentage}
+        />
+      ) : (
+        <p className="np-body mt-2 text-[1rem] text-ink-secondary">දේශපාලන රාමුවක් මැනිය හැකි වාර්තා නැත.</p>
+      )}
+      <div className="mt-4 grid grid-cols-3 border-t border-rule">
+        {groups.map(({ lean, items }) => (
+          <div key={lean} className="min-w-0 border-e border-rule px-2 py-2 last:border-e-0">
+            <p className="np-meta flex items-center gap-1.5 text-[0.875rem]">
+              <Swatch lean={lean} />
+              {leanLabels[lean]}
+            </p>
+            <ul className="mt-1 flex flex-col gap-1">
+              {items.map((item) => (
+                <li key={item.article_id} className="text-[0.875rem] leading-[1.4] break-words">
+                  <a href={item.original_url} target="_blank" rel="noopener noreferrer" className="np-link">
+                    <OutletName name={item.source} className="font-bold" />
+                    <span className="sr-only"> — මුල් ලිපිය (නව පටිත්තක)</span>
+                  </a>
+                </li>
+              ))}
+              {!items.length ? <li className="np-meta text-[0.8125rem]">—</li> : null}
+            </ul>
+          </div>
+        ))}
+      </div>
+      {unrated.length ? (
+        <p className="np-meta mt-3 border-t border-rule pt-2 text-[0.875rem]">
+          {leanLabels.unrated}: {unrated.map((item) => item.source).join(', ')}
+        </p>
+      ) : null}
+      <p className="np-meta mt-3 text-[0.8125rem]">
+        ස්වයංක්‍රීය විශ්ලේෂණයකි. එක් එක් ලිපියේ වාර්තාකරණ රාමුව පමණක් විස්තර කරයි; ප්‍රකාශකයන්ට දෙන ස්ථිර ලේබල නොවේ.
+      </p>
+    </section>
   )
-}
-
-function SourceColumn({ label, items }: { label: 'left' | 'center' | 'right'; items: EventNarrativeAnalysis['source_spectrum'] }) {
-  return <div className="min-w-0 rounded-full bg-background/70 px-2 py-3 text-center"><p className="text-[0.65rem] font-bold uppercase tracking-wide text-muted-foreground">{label}</p><div className="mt-3 flex flex-col items-center gap-2">{items.map((item) => <SourceMark key={item.article_id} item={item} />)}</div></div>
-}
-
-function SourceMark({ item }: { item: EventNarrativeAnalysis['source_spectrum'][number] }) {
-  return item.source_icon ? <img src={item.source_icon} alt={item.source} title={item.source} className="size-10 rounded-full border border-rule bg-white object-contain p-1" loading="lazy" /> : <span title={item.source} className="grid size-10 place-items-center rounded-full border border-rule bg-paper text-xs font-bold">{item.source.slice(0, 2).toUpperCase()}</span>
 }
