@@ -781,6 +781,17 @@ export type WatchTowerSettings = {
   updated_at: string;
 };
 
+export type LogRetentionSummaryKey =
+  | "pipeline_runs" | "pipeline_logs" | "model_calls" | "ingestion_runs" | "crawl_attempts" | "log_files";
+
+export type LogRetentionSettings = {
+  retention_days: number;
+  last_run_at: string | null;
+  last_run_summary: Partial<Record<LogRetentionSummaryKey, number>>;
+  last_run_error: string | null;
+  updated_at: string;
+};
+
 export type NewsletterSubscriberStatus = "active" | "paused" | "unsubscribed";
 
 export type NewsletterSubscriber = {
@@ -1302,6 +1313,18 @@ export function createClient(baseUrl = "") {
         url(`/api/admin/watch-tower/threads/${encodeURIComponent(id)}`),
         { method: "DELETE" }
       ),
+    logRetentionSettings: () =>
+      request<LogRetentionSettings>(url("/api/admin/settings/log-retention")),
+    updateLogRetentionSettings: (body: { retention_days: number }) =>
+      request<LogRetentionSettings>(url("/api/admin/settings/log-retention"), {
+        method: "POST",
+        body: JSON.stringify(body)
+      }),
+    runLogCleanup: () =>
+      request<{ ok: boolean }>(url("/api/admin/settings/log-retention/run"), {
+        method: "POST",
+        body: JSON.stringify({})
+      }),
     watchTowerSettings: () =>
       request<WatchTowerSettings>(url("/api/admin/settings/watch-tower")),
     updateWatchTowerSettings: (body: { response_language: "si" | "en" }) =>

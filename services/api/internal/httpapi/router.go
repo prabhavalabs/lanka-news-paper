@@ -14,6 +14,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/newsletter"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/registry"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/retention"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/watchtower"
 )
@@ -27,6 +28,7 @@ type Dependencies struct {
 	Desk                        *desk.Store
 	IAM                         *iam.Store
 	LLM                         *llm.Gateway
+	LogRetention                *retention.Store
 	Media                       *media.Store
 	Monitor                     *desk.MonitorBroker
 	News                        *publish.Store
@@ -36,6 +38,7 @@ type Dependencies struct {
 	Registry                    *registry.Store
 	RunPipeline                 func(context.Context, string, string) error
 	RunContentBackfill          func(context.Context) error
+	RunLogCleanup               func(context.Context) error
 	RunAdminAnalysisBackfill    func(context.Context, string) error
 	PauseAdminAnalysisBackfill  func(context.Context, string) (adminanalysis.Run, error)
 	ResumeAdminAnalysisBackfill func(context.Context, string) (adminanalysis.Run, error)
@@ -50,6 +53,7 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	news := newsHandler{reader: dependencies.News}
 	auth := newAuthHandler(dependencies.IAM, dependencies.SessionTTL, dependencies.CookieSecure)
 	admin := adminHandler{registry: dependencies.Registry, poller: dependencies.Poller, llm: dependencies.LLM, desk: dependencies.Desk, monitor: newMonitorService(dependencies.Desk, dependencies.Monitor), media: dependencies.Media, adminAnalysis: dependencies.AdminAnalysis, runPipeline: dependencies.RunPipeline, runContentBackfill: dependencies.RunContentBackfill, runAdminAnalysisBackfill: dependencies.RunAdminAnalysisBackfill, pauseAdminAnalysisBackfill: dependencies.PauseAdminAnalysisBackfill, resumeAdminAnalysisBackfill: dependencies.ResumeAdminAnalysisBackfill, cancelAdminAnalysisBackfill: dependencies.CancelAdminAnalysisBackfill}
+	logRetention := logRetentionHandler{store: dependencies.LogRetention, run: dependencies.RunLogCleanup}
 	watchTower := watchTowerHandler{service: dependencies.WatchTower, llm: dependencies.LLM}
 	newsletterAdmin := newsletterAdminHandler{repository: dependencies.Newsletter, tester: dependencies.NewsletterTester}
 	newsletterPublic := newsletterUnsubscribeHandler{repository: dependencies.Newsletter}
@@ -161,6 +165,9 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("GET /api/admin/watch-tower/threads/{id}", watchTower.thread)
 	protected.HandleFunc("DELETE /api/admin/watch-tower/threads/{id}", watchTower.thread)
 	protected.HandleFunc("POST /api/admin/watch-tower/threads/{id}/messages", watchTower.messages)
+	protected.HandleFunc("GET /api/admin/settings/log-retention", logRetention.settings)
+	protected.HandleFunc("POST /api/admin/settings/log-retention", logRetention.settings)
+	protected.HandleFunc("POST /api/admin/settings/log-retention/run", logRetention.runNow)
 	protected.HandleFunc("GET /api/admin/settings/watch-tower", watchTower.settings)
 	protected.HandleFunc("POST /api/admin/settings/watch-tower", watchTower.settings)
 	protected.HandleFunc("POST /api/admin/settings/watch-tower/model", watchTower.model)

@@ -33,8 +33,17 @@ x-app-environment: &app-environment
   SNAP_R2_SECRET_ACCESS_KEY: ${SNAP_R2_SECRET_ACCESS_KEY:-}
   SNAP_SESSION_SECRET: ${SNAP_SESSION_SECRET:?set SNAP_SESSION_SECRET}
 
+# Container logs rotate by size: at most three 20 MB files per service, so the oldest
+# lines are dropped automatically. Database logs follow the retention period in Settings.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 20m
+    max-file: "3"
+
 services:
   postgres:
+    logging: *logging
     image: postgres:16.10-alpine
     restart: unless-stopped
     environment:
@@ -54,6 +63,7 @@ services:
     cpus: 1
 
   migrate:
+    logging: *logging
     image: ghcr.io/prabhavalabs/lanka-news-paper-api:${IMAGE_TAG:?set IMAGE_TAG}
     entrypoint: ["/app/migrate"]
     environment: *app-environment
@@ -65,6 +75,7 @@ services:
     cpus: 0.5
 
   api:
+    logging: *logging
     image: ghcr.io/prabhavalabs/lanka-news-paper-api:${IMAGE_TAG:?set IMAGE_TAG}
     restart: unless-stopped
     environment:
@@ -93,6 +104,7 @@ services:
     cpus: 0.75
 
   worker:
+    logging: *logging
     image: ghcr.io/prabhavalabs/lanka-news-paper-api:${IMAGE_TAG:?set IMAGE_TAG}
     entrypoint: ["/app/worker"]
     restart: unless-stopped
@@ -107,6 +119,7 @@ services:
     cpus: 4
 
   codex-login:
+    logging: *logging
     image: ghcr.io/prabhavalabs/lanka-news-paper-api:${IMAGE_TAG:?set IMAGE_TAG}
     user: root
     entrypoint: ["/bin/sh", "-c"]
@@ -120,6 +133,7 @@ services:
     tty: true
 
   web:
+    logging: *logging
     image: ghcr.io/prabhavalabs/lanka-news-paper-web:${IMAGE_TAG:?set IMAGE_TAG}
     restart: unless-stopped
     ports:
@@ -138,6 +152,7 @@ services:
     cpus: 0.15
 
   admin:
+    logging: *logging
     image: ghcr.io/prabhavalabs/lanka-news-paper-admin:${IMAGE_TAG:?set IMAGE_TAG}
     restart: unless-stopped
     ports:
