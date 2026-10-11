@@ -99,20 +99,20 @@ func (model *editorialModel) CompleteWithModel(ctx context.Context, request llm.
 func TestEditorialDropsUnknownAndDuplicateItems(t *testing.T) {
 	model := &editorialModel{response: llm.Response{Provider: "codex_cli", CallID: 42, Text: `{"items":[{"id":"one","score":30,"reason":"not urgent","publish":false},{"id":"one","score":80,"reason":"duplicate","publish":false},{"id":"unknown","reason":"unknown","publish":false}]}`}}
 	service := &Service{model: model}
-	items, callID, err := service.editorial(context.Background(), []Candidate{{ID: "one"}}, nil)
+	items, callID, err := service.editorial(context.Background(), []Candidate{{ID: "one"}}, nil, pageActivity{})
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	require.Equal(t, int64(42), *callID)
 	require.Equal(t, "social_post_editorial", model.request.Task)
 	model.response.Provider = "none"
-	_, _, err = service.editorial(context.Background(), []Candidate{{ID: "one"}}, nil)
+	_, _, err = service.editorial(context.Background(), []Candidate{{ID: "one"}}, nil, pageActivity{})
 	require.ErrorIs(t, err, ErrModelUnavailable)
 }
 
 func TestEditorialRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {
 	for _, text := range []string{`{"items":[],"unexpected":true}`, `{"items":[{"id":"one","reason":"skip","unexpected":true}]}`, `{"items":[]} {}`} {
 		service := &Service{model: &editorialModel{response: llm.Response{Provider: "codex_cli", Text: text}}}
-		_, _, err := service.editorial(context.Background(), []Candidate{{ID: "one"}}, nil)
+		_, _, err := service.editorial(context.Background(), []Candidate{{ID: "one"}}, nil, pageActivity{})
 		require.ErrorIs(t, err, ErrModelUnavailable)
 	}
 }

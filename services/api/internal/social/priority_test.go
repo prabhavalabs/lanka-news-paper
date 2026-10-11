@@ -56,3 +56,21 @@ func TestRevisionHelpers(t *testing.T) {
 	require.False(t, revisable(reviewResult{Score: 60, Issues: []ReviewIssue{{Severity: "minor"}}}))
 	require.Equal(t, "thulawanews.com", siteName("https://www.thulawanews.com/"))
 }
+
+func TestActivityOf(t *testing.T) {
+	now := time.Date(2026, 10, 11, 8, 0, 0, 0, time.UTC)
+	quiet := activityOf(nil, Settings{MaxPostsPerDay: 12}, now)
+	if quiet.PostsLast24Hours != 0 || quiet.DailyLimit != 12 || quiet.HoursSinceLastPost != nil {
+		t.Fatalf("quiet page = %+v", quiet)
+	}
+	recent := []recentPost{
+		{Status: "published", At: now.Add(-5 * time.Hour)},
+		{Status: "approved", At: now.Add(-3 * time.Hour)},
+		{Status: "pending_review", At: now.Add(-1 * time.Hour)},
+		{Status: "published", At: now.Add(-30 * time.Hour)},
+	}
+	busy := activityOf(recent, Settings{MaxPostsPerDay: 12}, now)
+	if busy.PostsLast24Hours != 2 || busy.HoursSinceLastPost == nil || *busy.HoursSinceLastPost != 3 {
+		t.Fatalf("activity = %+v", busy)
+	}
+}

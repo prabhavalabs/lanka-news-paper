@@ -140,7 +140,7 @@ func (service *Service) createFromCandidates(ctx context.Context, candidates []C
 	if err != nil {
 		return nil, err
 	}
-	items, callID, err := service.editorial(ctx, candidates, recent)
+	items, callID, err := service.editorial(ctx, candidates, recent, activityOf(recent, settings, service.now()))
 	if err != nil {
 		return nil, err
 	}
