@@ -143,11 +143,14 @@ export function lede(text: string | null | undefined, max = 320) {
 }
 
 /**
- * Splits off the first Sinhala syllable (consonant + touching conjuncts + vowel signs)
- * so a drop cap never breaks a ZWJ conjunct or orphans a vowel sign.
+ * Splits off the drop-cap initial. A short first word is set whole (so the rest of the word is
+ * never left stranded beside the initial); otherwise the first Sinhala syllable — consonant,
+ * touching conjuncts and vowel signs — so a ZWJ conjunct or vowel sign is never broken.
  */
-export function dropCapSplit(text: string): [string, string] {
-  const sinhala = /^[අ-ෆ](?:්‍[ක-ෆ])*[ඁ-ඃ්ා-ෟෲෳ]*/u.exec(text)
+export function dropCapSplit(text: string, maxWord = 6): [string, string] {
+  const word = /^\S+/u.exec(text)?.[0] ?? ''
+  if (word && [...word].length <= maxWord && !/[\p{P}]$/u.test(word)) return [word, text.slice(word.length)]
+  const sinhala = /^[\u0D85-\u0DC6](?:\u0DCA\u200D[\u0D9A-\u0DC6])*[\u0D81-\u0D83\u0DCA\u0DCF-\u0DDF\u0DF2\u0DF3]*/u.exec(text)
   if (sinhala?.[0]) return [sinhala[0], text.slice(sinhala[0].length)]
   const segmenter = new Intl.Segmenter('si', { granularity: 'grapheme' })
   const first = segmenter.segment(text)[Symbol.iterator]().next().value?.segment ?? ''

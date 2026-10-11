@@ -1,10 +1,10 @@
 @import "tailwindcss";
 @import "@snap/ui/tokens.css";
+/* Self-hosted type. Swap families in the FONT CONFIG block below; add @imports here. */
+@import "@fontsource/abhaya-libre/400.css";
 @import "@fontsource/abhaya-libre/500.css";
 @import "@fontsource/abhaya-libre/700.css";
 @import "@fontsource/abhaya-libre/800.css";
-@import "@fontsource/noto-serif-sinhala/400.css";
-@import "@fontsource/noto-serif-sinhala/600.css";
 @import "@fontsource/noto-sans-sinhala/400.css";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -14,6 +14,7 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  --font-label: var(--font-label);
   --color-ink-secondary: var(--ink-secondary);
   --color-ink-tertiary: var(--ink-tertiary);
   --color-paper-raised: var(--paper-raised);
@@ -23,8 +24,27 @@
  * Reader site: newsprint only. Paper, ink and greys from tokens.css; the brand
  * navy/gold are deliberately not used on reading surfaces.
  */
+/*
+ * ===== FONT CONFIG — the only place type families are chosen. =====
+ * Swapping a family is a one-line change here (plus its @import above).
+ * Candidates: "Galle" (one weight), "Abhaya Libre", "Kaputa", "Maname",
+ * "Noto Serif Sinhala", "Gemunu Libre". For a single-weight family set the
+ * matching --weight-* to 400: hierarchy then comes from size and rules only.
+ */
 :root {
-  --font-latin: "Abhaya Libre", "Noto Serif Sinhala", Georgia, serif;
+  --font-headline: "Abhaya Libre", "Noto Serif Sinhala", serif;
+  --font-body: "Abhaya Libre", "Noto Serif Sinhala", serif;
+  --font-label: "Abhaya Libre", "Noto Serif Sinhala", serif;
+  --font-latin: "Abhaya Libre", Georgia, serif;
+  --font-ui: "Abhaya Libre", "Noto Sans Sinhala", system-ui, sans-serif;
+  --weight-headline: 800;
+  --weight-subhead: 700;
+  --weight-label: 700;
+  --weight-meta: 500;
+  --weight-body: 400;
+}
+
+:root {
   --rule-hatch: repeating-linear-gradient(135deg, var(--ink) 0 1.5px, transparent 1.5px 5px);
   --rule-dots: radial-gradient(var(--ink-tertiary) 1px, transparent 1.2px) 0 0 / 4px 4px;
 }
@@ -33,6 +53,8 @@
   html {
     background: var(--paper);
     color: var(--ink);
+    /* Never fake bold or italic: candidate faces may have a single weight. */
+    font-synthesis: none;
     -webkit-text-size-adjust: 100%;
     scroll-padding-top: 4rem;
   }
@@ -41,6 +63,7 @@
     margin: 0;
     min-height: 100vh;
     font-family: var(--font-body);
+    font-weight: var(--weight-body);
     font-size: 1.0625rem;
     line-height: 1.85;
     letter-spacing: 0;
@@ -80,7 +103,7 @@
   /* Headlines: Abhaya Libre, the voice of Sri Lankan print. Never letter-spaced. */
   .np-headline {
     font-family: var(--font-headline);
-    font-weight: 800;
+    font-weight: var(--weight-headline);
     letter-spacing: 0;
     text-wrap: balance;
     font-kerning: normal;
@@ -88,23 +111,23 @@
 
   .np-body {
     font-family: var(--font-body);
+    font-weight: var(--weight-body);
     line-height: 1.9;
-    word-spacing: -0.04em;
     text-wrap: pretty;
   }
 
   /* Section label: bold Sinhala between hairlines — the broadsheet section head. */
   .np-kicker {
-    font-family: var(--font-headline);
-    font-weight: 700;
+    font-family: var(--font-label);
+    font-weight: var(--weight-label);
     font-size: 0.9375rem;
     line-height: 1.5;
     color: var(--ink-secondary);
   }
 
   .np-meta {
-    font-family: var(--font-headline);
-    font-weight: 500;
+    font-family: var(--font-label);
+    font-weight: var(--weight-meta);
     font-size: 0.9375rem;
     line-height: 1.6;
     color: var(--ink-tertiary);
@@ -147,8 +170,8 @@
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    font-family: var(--font-headline);
-    font-weight: 800;
+    font-family: var(--font-label);
+    font-weight: var(--weight-subhead);
     font-size: 1.125rem;
     line-height: 1.5;
   }
@@ -215,7 +238,7 @@
   .np-dropcap {
     float: left;
     font-family: var(--font-headline);
-    font-weight: 800;
+    font-weight: var(--weight-headline);
     font-size: 4.25em;
     line-height: 0.95;
     padding: 0.1em 0.12em 0 0;
@@ -230,8 +253,8 @@
     justify-content: center;
     gap: 0.5rem;
     padding: 0 1rem;
-    font-family: var(--font-headline);
-    font-weight: 700;
+    font-family: var(--font-label);
+    font-weight: var(--weight-label);
     font-size: 1rem;
     line-height: 1.3;
     border: 1px solid var(--ink);
@@ -302,5 +325,67 @@
   .np-columns {
     column-gap: 2rem;
     column-rule: 1px solid var(--rule);
+  }
+
+  /*
+   * Newsprint copy: paragraphs are indented, never spaced apart; the first is flush.
+   * Justified on word spaces only — inter-character justification would letter-space
+   * Sinhala, which the type rules forbid.
+   */
+  .np-copy {
+    font-family: var(--font-body);
+    font-weight: var(--weight-body);
+    font-size: 1.125rem;
+    line-height: 1.85;
+    text-align: justify;
+    text-justify: inter-word;
+    hyphens: manual;
+    overflow-wrap: break-word;
+  }
+
+  .np-copy p {
+    margin: 0;
+    text-indent: 1.4em;
+  }
+
+  .np-copy p:first-child,
+  .np-copy .np-flush {
+    text-indent: 0;
+  }
+
+  /* Text columns inside a block: balanced, hairline column rules. */
+  .np-cols-2,
+  .np-cols-3 {
+    column-gap: 1.25rem;
+    column-rule: 1px solid var(--rule);
+    column-fill: balance;
+  }
+
+  .np-cols-2 {
+    column-count: 2;
+  }
+
+  .np-cols-3 {
+    column-count: 3;
+  }
+
+  .np-avoid-break {
+    break-inside: avoid;
+  }
+
+  /* Leftover space at the foot of a lane gets a printer's ornament, if it fits. */
+  .np-filler {
+    container-type: size;
+    min-height: 0;
+  }
+
+  .np-filler > * {
+    display: none;
+  }
+
+  @container (min-height: 3.5rem) {
+    .np-filler > * {
+      display: flex;
+    }
   }
 }
