@@ -66,12 +66,21 @@ type editorialModel struct {
 	reviews     []llm.Response // successive review answers, used before review
 	revision    llm.Response   // answer to the rewrite request after a failed review
 	revisions   int
+	repeat      llm.Response // answer to the publisher's repeat check; empty means not a repeat
+	repeatCalls int
 }
 
 func (model *editorialModel) Complete(_ context.Context, request llm.Request) (llm.Response, error) {
 	if request.System == revisionPrompt {
 		model.revisions++
 		return model.revision, nil
+	}
+	if request.System == repeatPrompt {
+		model.repeatCalls++
+		if model.repeat.Provider == "" {
+			return llm.Response{Provider: "codex_cli", Text: `{"repeats":false,"reason":"A different story."}`}, nil
+		}
+		return model.repeat, nil
 	}
 	if request.Task == "social_post_review" {
 		model.reviewCalls++
