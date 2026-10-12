@@ -151,9 +151,9 @@ Every new article creates one persisted run immediately after insertion. The com
 1. `content_cleaning` — captures the combined result and validates faithful Markdown, with standalone cleaning as fallback;
 2. `summarization` — validates the combined summary/key points, with standalone summary as fallback;
 3. `categorization` — uses deterministic rules and the combined category, with individual Codex classification when needed;
-4. `event_clustering` — attaches published reports to a cross-source event or creates one;
+4. `event_clustering` — attaches published reports to a cross-source event or creates one. Headline similarity misses one incident told in different words or with different figures, so a report still alone in its event is then offered, with up to 12 earlier events from the last 36 hours with the closest headlines, to the `event_matching` model. When it names one, the report joins that event and its own event is marked `merged`. Only earlier events are offered (so two lone reports cannot join each other both ways), and only while nothing (a social post, front-page placement or report) refers to the report's own event. Without a model answer the report keeps its own event;
 5. `stance_evaluation` — persists the combined model-applied political relevance and narration, with individual Codex narration when needed;
-6. `event_synthesis` — refreshes the cross-source event analysis from approved reports.
+6. `event_synthesis` — refreshes the cross-source event analysis from approved reports. Where outlets give different figures for the same thing (such as a death toll), the summary states each figure with the outlet that reported it.
 
 River retries transient failures at most five times. A retry starts the same run, skips steps already marked `succeeded` or `skipped`, and resumes the failed step. The dispatcher recreates runs missing after an interrupted insertion and recovers runs left `running` for more than 50 minutes. An editor can retry the failed step from the article detail page; resetting an earlier step also resets its dependent later steps.
 

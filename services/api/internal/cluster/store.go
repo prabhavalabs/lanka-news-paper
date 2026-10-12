@@ -8,6 +8,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -89,6 +90,14 @@ func (store *Store) Attach(ctx context.Context, articleID string) error {
 	if _, err := tx.Exec(ctx, `UPDATE articles SET event_id = $1 WHERE id = $2`, eventID, current.id); err != nil {
 		return fmt.Errorf("link article event: %w", err)
 	}
+	if err := refresh(ctx, tx, eventID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// refresh recomputes an event's timing, confidence and breaking flag from its articles.
+func refresh(ctx context.Context, tx pgx.Tx, eventID uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `
 		UPDATE event_clusters ec
 		SET first_seen_at = stats.first_seen,
@@ -111,7 +120,7 @@ func (store *Store) Attach(ctx context.Context, articleID string) error {
 	`, eventID, algorithmVersion); err != nil {
 		return fmt.Errorf("update event: %w", err)
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (store *Store) Backfill(ctx context.Context, limit int) error {
