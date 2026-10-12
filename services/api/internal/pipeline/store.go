@@ -527,7 +527,7 @@ func (store *Store) execute(ctx context.Context, articleID, runID string, item s
 	case "categorization":
 		return store.categorize(ctx, articleID, runID, item.id, selection)
 	case "event_clustering":
-		return store.cluster(ctx, articleID)
+		return store.cluster(ctx, articleID, runID, item.id, selection)
 	case "stance_evaluation", "narration_analysis":
 		combined, err := store.loadCombinedAnalysis(ctx, runID)
 		if err != nil {
@@ -619,7 +619,7 @@ func completionSlug(value string) (string, bool) {
 	return slug, classify.ValidSlug(slug)
 }
 
-func (store *Store) cluster(ctx context.Context, articleID string) (stepResult, error) {
+func (store *Store) cluster(ctx context.Context, articleID, runID, stepID string, selection modelSelection) (stepResult, error) {
 	var status string
 	var eventID *string
 	if err := store.pool.QueryRow(ctx, `SELECT public_status, event_id::text FROM articles WHERE id = $1`, articleID).Scan(&status, &eventID); err != nil {
@@ -632,11 +632,19 @@ func (store *Store) cluster(ctx context.Context, articleID string) (stepResult, 
 		if err := store.clusters.Attach(ctx, articleID); err != nil {
 			return stepResult{}, err
 		}
-		if err := store.pool.QueryRow(ctx, `SELECT event_id::text FROM articles WHERE id = $1`, articleID).Scan(&eventID); err != nil {
-			return stepResult{}, err
-		}
 	}
-	return stepResult{output: map[string]any{"event_id": eventID}}, nil
+	matched, err := store.matchEvent(ctx, articleID, runID, stepID, selection)
+	if err != nil {
+		return stepResult{}, err
+	}
+	if err := store.pool.QueryRow(ctx, `SELECT event_id::text FROM articles WHERE id = $1`, articleID).Scan(&eventID); err != nil {
+		return stepResult{}, err
+	}
+	output := map[string]any{"event_id": eventID}
+	for key, value := range matched {
+		output[key] = value
+	}
+	return stepResult{output: output}, nil
 }
 
 func (store *Store) appendLog(ctx context.Context, runID, stepID, level, event, message string, details any) {
