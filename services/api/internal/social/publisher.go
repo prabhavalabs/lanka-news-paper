@@ -115,7 +115,8 @@ func (service *Service) nextInQueue(ctx context.Context, reader historyReader) (
 			published = append(published, post)
 		}
 	}
-	rows, err := reader.Query(ctx, `SELECT p.id::text,p.kind='breaking',p.score,COALESCE(c.slug,''),p.headline_si,p.summary_si,p.created_at,p.approved_by IS NOT NULL
+	rows, err := reader.Query(ctx, `SELECT p.id::text,p.kind='breaking',p.score,COALESCE(c.slug,''),p.headline_si,p.summary_si,p.created_at,p.approved_by IS NULL,
+ COALESCE(p.repeat_checked_at,p.approved_at,p.created_at)
  FROM social_posts p LEFT JOIN event_clusters e ON e.id=p.event_id LEFT JOIN articles a ON a.id=p.article_id
  LEFT JOIN categories c ON c.id=COALESCE(e.category_id,a.category_id)
  WHERE p.status='approved' AND COALESCE(p.scheduled_for,$1)<=$1 ORDER BY p.created_at LIMIT 100`, now)
@@ -126,12 +127,11 @@ func (service *Service) nextInQueue(ctx context.Context, reader historyReader) (
 	found, repeats := false, make([]string, 0)
 	for rows.Next() {
 		var post queuedPost
-		var byEditor bool
-		if err := rows.Scan(&post.ID, &post.Breaking, &post.Score, &post.CategorySlug, &post.Headline, &post.Summary, &post.CreatedAt, &byEditor); err != nil {
+		if err := rows.Scan(&post.ID, &post.Breaking, &post.Score, &post.CategorySlug, &post.Headline, &post.Summary, &post.CreatedAt, &post.Automatic, &post.CheckedSince); err != nil {
 			rows.Close()
 			return queuedPost{}, false, err
 		}
-		if !byEditor && repeatsPublished(post, published) != nil {
+		if post.Automatic && repeatsPublished(post, published) != nil {
 			repeats = append(repeats, post.ID)
 			continue
 		}
@@ -195,16 +195,27 @@ func (service *Service) Publish(ctx context.Context) error {
  WHERE status='approved' AND approved_by IS NULL AND created_at<$1`, service.now().Add(-autoPublishMaxAge)); err != nil {
 		return err
 	}
-	next, found, err := service.nextInQueue(ctx, connection)
-	if err != nil || !found {
-		return err
-	}
-	eligible, err := NextEligible(service.now(), limitsFor(next, settings), history)
-	if err != nil {
-		return err
-	}
-	if eligible.After(service.now()) {
-		return nil
+	var next queuedPost
+	for {
+		var found bool
+		next, found, err = service.nextInQueue(ctx, connection)
+		if err != nil || !found {
+			return err
+		}
+		eligible, err := NextEligible(service.now(), limitsFor(next, settings), history)
+		if err != nil {
+			return err
+		}
+		if eligible.After(service.now()) {
+			return nil
+		}
+		repeated, err := service.guardRepeat(ctx, next)
+		if err != nil {
+			return err
+		}
+		if !repeated {
+			break
+		}
 	}
 	tx, err := connection.Begin(ctx)
 	if err != nil {

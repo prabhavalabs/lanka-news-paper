@@ -129,3 +129,47 @@ func TestSocialPublisherPrioritisesImportantPostsIntegration(t *testing.T) {
 	require.NoError(t, service.Publish(ctx))
 	require.Equal(t, 1, graph.uploads, "a routine post waits for tomorrow's limit")
 }
+
+func TestSocialPublisherDropsSameStoryFromAnotherOutletIntegration(t *testing.T) {
+	service, first, actor := publisherFixture(t)
+	ctx := context.Background()
+	now := service.now()
+	settings := testSettings()
+	queue := func(headline string) string {
+		id := fixtureEvent(t, service.store, 2, now)
+		candidates, err := service.store.Candidates(ctx, settings, now, "https://news.invalid", id, "")
+		require.NoError(t, err)
+		p, err := service.insertPost(ctx, candidates[0], editorialItem{Score: 90, Reason: "Important", HeadlineSI: headline, SummarySI: headline, CaptionSI: "පුවත", Hashtags: []string{}}, "pending_review", nil, TriggerScheduled, uuid.Nil)
+		require.NoError(t, err)
+		_, err = service.Render(ctx, p.ID, actor)
+		require.NoError(t, err)
+		_, err = service.store.pool.Exec(ctx, `UPDATE social_posts SET status='approved',approved_at=$2,scheduled_for=$2,review_status='passed' WHERE id=$1`, p.ID, now.Add(-4*time.Hour))
+		require.NoError(t, err)
+		return p.ID
+	}
+	// Two outlets' reports of one shipwreck, worded differently and with different tolls.
+	_, err := service.store.pool.Exec(ctx, `UPDATE social_posts SET status='rejected' WHERE id=$1`, first.ID)
+	require.NoError(t, err)
+	published := queue("ජිබුටි වෙරළට ඔබ්බෙන් යාත්‍රාවක් පෙරළී අවම වශයෙන් 109ක් මරුට")
+	_, err = service.store.pool.Exec(ctx, `UPDATE social_posts SET status='published',published_at=$2 WHERE id=$1`, published, now.Add(-3*time.Hour))
+	require.NoError(t, err)
+	waiting := queue("ජිබුටි යාත්‍රා අනතුරින් 139ක් මරුට බව වාර්තාවක්")
+	model := &editorialModel{repeat: llm.Response{Provider: "codex_cli", Text: `{"repeats":true,"reason":"The same Djibouti shipwreck with another toll."}`}}
+	service.model = model
+	require.NoError(t, service.Publish(ctx))
+	require.Equal(t, 1, model.repeatCalls)
+	require.Zero(t, service.graph.(*fakeGraph).uploads)
+	p, err := service.store.GetPost(ctx, waiting)
+	require.NoError(t, err)
+	require.Equal(t, "skipped", p.Status)
+	require.Contains(t, *p.LastError, "same story went out first")
+
+	// A different story is checked once, then published.
+	other := queue("පාර්ලිමේන්තුව අයවැය සම්මත කරයි")
+	model.repeat = llm.Response{}
+	require.NoError(t, service.Publish(ctx))
+	require.Equal(t, 2, model.repeatCalls)
+	p, err = service.store.GetPost(ctx, other)
+	require.NoError(t, err)
+	require.Equal(t, "published", p.Status)
+}

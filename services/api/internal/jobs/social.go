@@ -58,7 +58,8 @@ func (worker *SocialPublishWorker) Work(ctx context.Context, _ *river.Job[Social
 	return worker.Social.Publish(ctx)
 }
 func (worker *SocialPublishWorker) Timeout(*river.Job[SocialPublishArgs]) time.Duration {
-	return 3 * time.Minute
+	// Leaves room for the AI repeat check that runs just before an automatic post goes out.
+	return 10 * time.Minute
 }
 
 func EnqueueSocialSelection(ctx context.Context, client *river.Client[pgx.Tx]) error {

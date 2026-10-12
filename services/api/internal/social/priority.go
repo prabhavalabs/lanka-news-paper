@@ -157,6 +157,10 @@ type queuedPost struct {
 	Headline     string
 	Summary      string
 	CreatedAt    time.Time
+	// Automatic is true when no editor approved the post.
+	Automatic bool
+	// CheckedSince is when the post was last confirmed not to repeat the Page's published posts.
+	CheckedSince time.Time
 }
 
 // rank orders the publishing queue: breaking news first, then the most important story,
