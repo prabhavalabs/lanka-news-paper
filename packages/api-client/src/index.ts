@@ -89,6 +89,7 @@ export type FrontPageSlot = "lead" | "top" | "more";
 
 /** A story on the front page: an event covered by one or more outlets, or a single article. */
 export type FrontPageStory = {
+  storyline?: StorylineReference;
   kind: "event" | "article";
   id: string;
   headline: string;
@@ -220,7 +221,19 @@ export type CursorPage<T> = {
   next_cursor: string | null;
 };
 
+export type StorylineReference = { id: string; slug: string; title_si: string; trending: boolean; trend_score: number };
+export type StorylineEvent = { id: string; display_title: string; time: string; source_count: number; article_count: number; summary: string | null };
+export type StorylineMetrics = { articles_3h: number; articles_6h: number; articles_24h: number; sources_24h: number; events_24h: number; baseline_daily: number; acceleration: number; decay: number };
+export type Storyline = StorylineReference & {
+  summary_si: string; status: 'active' | 'archived'; pinned: boolean; hidden: boolean; title_locked: boolean;
+  summary_locked: boolean; archived_by_admin: boolean; metrics: StorylineMetrics; first_seen_at: string; last_activity_at: string; trending_since: string | null;
+  latest_event: StorylineEvent | null; event_count: number; source_count: number; article_count: number; events?: StorylineEvent[];
+};
+export type PublicStoryline = Omit<Storyline, "pinned" | "hidden" | "title_locked" | "summary_locked" | "archived_by_admin" | "metrics">;
+export type StorylinePatch = Partial<Pick<Storyline, 'title_si' | 'summary_si' | 'pinned' | 'hidden' | 'status'>>;
+
 export type PublicEvent = {
+  storyline?: StorylineReference;
   id: string;
   title: string;
   is_breaking: boolean;
@@ -1098,6 +1111,7 @@ export type SocialAccount = {
   last_verified_at: string | null; token_expires_at: string | null; last_error: string | null;
 };
 export type SocialPost = {
+  storyline?: StorylineReference;
   id: string; account_id: string | null; subject_kind: string; event_id: string | null; article_id: string | null;
   subject_title: string; category: string; status: SocialPostStatus; score: number; selection_reason: string;
   kind: string; headline_si: string; summary_si: string; caption: string; hashtags: string[]; link_url: string;
@@ -1144,6 +1158,13 @@ export function createClient(baseUrl = "") {
     sources: () => request<{ items: PublicSource[] }>(url("/api/v1/sources")),
     getSource: (id: string) =>
       request<PublicSource>(url(`/api/v1/sources/${id}`)),
+    trending: () => request<{ items: PublicStoryline[] }>(url("/api/v1/trending")),
+    storyline: (idOrSlug: string) => request<PublicStoryline>(url(`/api/v1/storylines/${encodeURIComponent(idOrSlug)}`)),
+    adminStorylines: () => request<{ items: Storyline[] }>(url("/api/admin/storylines")),
+    updateStoryline: (id: string, body: StorylinePatch) => request<Storyline>(url(`/api/admin/storylines/${encodeURIComponent(id)}`), { method: "PATCH", body: JSON.stringify(body) }),
+    addStorylineEvent: (id: string, eventID: string) => request<{ ok: boolean }>(url(`/api/admin/storylines/${encodeURIComponent(id)}/events/${encodeURIComponent(eventID)}`), { method: "POST", body: "{}" }),
+    removeStorylineEvent: (id: string, eventID: string) => request<{ ok: boolean }>(url(`/api/admin/storylines/${encodeURIComponent(id)}/events/${encodeURIComponent(eventID)}`), { method: "DELETE" }),
+    refreshStorylines: () => request<{ ok: boolean }>(url("/api/admin/storylines/refresh"), { method: "POST", body: "{}" }),
     listEvents: () => request<{ items: PublicEvent[] }>(url("/api/v1/events")),
     getEvent: (id: string) => request<PublicEvent>(url(`/api/v1/events/${id}`)),
     publicKnowledgeGraph: (params: {

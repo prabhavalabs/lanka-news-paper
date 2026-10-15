@@ -3,6 +3,7 @@ package card
 import (
 	"bytes"
 	"context"
+	"github.com/stretchr/testify/require"
 	"image/png"
 	"os"
 	"strings"
@@ -209,4 +210,15 @@ func TestCoverageSpectrum(t *testing.T) {
 	if Validate(c) == nil {
 		t.Fatal("out-of-range lean accepted")
 	}
+}
+
+func TestUpdateCardBadge(t *testing.T) {
+	c := sampleCard()
+	c.Kind = KindUpdate
+	c.Kicker = "අඛණ්ඩ පුවත් පෙළ"
+	html, err := renderHTML(c)
+	require.NoError(t, err)
+	require.Contains(t, html, "යාවත්කාලීන")
+	require.Contains(t, html, "UPDATE")
+	require.Contains(t, html, c.Kicker)
 }

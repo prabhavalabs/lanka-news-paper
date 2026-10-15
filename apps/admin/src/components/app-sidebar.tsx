@@ -51,6 +51,7 @@ const curatorNavigation: NavItem[] = [
 const administratorNavigation: NavItem[] = [
   { title: 'Workflow manager', url: '/workflows', icon: SparklesIcon },
   { title: 'Mailing list', url: '/mailing-list', icon: MailIcon },
+  { title: 'Trending', url: '/trending', icon: SparklesIcon },
   { title: 'Social publishing', url: '/social', icon: Share2Icon },
   { title: 'Content calendar', url: '/social/content', icon: CalendarDaysIcon },
   { title: 'Brand kit', url: '/brand', icon: PaletteIcon },

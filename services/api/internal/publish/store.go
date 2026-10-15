@@ -3,6 +3,7 @@ package publish
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/storyline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/textcheck"
 )
 
@@ -172,6 +174,7 @@ func (store *Store) Sources(ctx context.Context) ([]Source, error) {
 }
 
 type Event struct {
+	Storyline  *storyline.Reference    `json:"storyline,omitempty"`
 	ID         string                  `json:"id"`
 	Title      string                  `json:"title"`
 	IsBreaking bool                    `json:"is_breaking"`
@@ -199,6 +202,14 @@ func (store *Store) GetEvent(ctx context.Context, id string) (Event, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return Event{}, err
+	}
+	var ref storyline.Reference
+	err = store.pool.QueryRow(ctx, `SELECT s.id::text,s.slug,s.title_si,s.trending,s.trend_score FROM storylines s JOIN storyline_events se ON se.storyline_id=s.id WHERE se.event_id=$1 AND NOT s.hidden`, id).Scan(&ref.ID, &ref.Slug, &ref.Title, &ref.Trending, &ref.Score)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return Event{}, err
+	}
+	if err == nil {
+		event.Storyline = &ref
 	}
 	event.Analysis, err = store.eventNarrativeAnalysis(ctx, id)
 	if err != nil {

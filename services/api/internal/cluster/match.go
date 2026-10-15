@@ -21,7 +21,7 @@ type MatchCandidate struct {
 
 // MatchCandidates returns the event an article is in and the earlier events, from the last
 // 36 hours, with the most similar headlines. It returns none unless the article is alone in
-// an open event that nothing else (a social post, the front page, a report) refers to yet.
+// an open event that nothing else (a social post, the front page, a report, a storyline) refers to yet.
 // Only earlier events are offered, so two lone reports never join each other both ways.
 func (store *Store) MatchCandidates(ctx context.Context, articleID string) (string, []MatchCandidate, error) {
 	rows, err := store.pool.Query(ctx, `
@@ -34,6 +34,7 @@ func (store *Store) MatchCandidates(ctx context.Context, articleID string) (stri
 		    AND NOT EXISTS (SELECT 1 FROM social_posts post WHERE post.event_id = a.event_id)
 		    AND NOT EXISTS (SELECT 1 FROM front_page_placements placement WHERE placement.event_id = a.event_id)
 		    AND NOT EXISTS (SELECT 1 FROM story_reports report WHERE report.event_id = a.event_id)
+		    AND NOT EXISTS (SELECT 1 FROM storyline_events member WHERE member.event_id = a.event_id)
 		)
 		SELECT current.event_id::text, ec.id::text, ec.first_seen_at,
 		       (array_agg(member.headline ORDER BY member.published_at))[1:3],
@@ -95,7 +96,7 @@ func (store *Store) Join(ctx context.Context, articleID, fromEventID, toEventID,
 	}
 	var alone bool
 	if err := tx.QueryRow(ctx, `
-		SELECT count(*) = 1 AND bool_and(id = $2) FROM articles WHERE event_id = $1
+		SELECT count(*) = 1 AND bool_and(id = $2) AND NOT EXISTS(SELECT 1 FROM storyline_events WHERE event_id=$1) FROM articles WHERE event_id = $1
 	`, from, articleID).Scan(&alone); err != nil {
 		return false, err
 	}

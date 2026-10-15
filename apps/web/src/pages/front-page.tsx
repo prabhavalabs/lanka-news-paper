@@ -4,6 +4,7 @@ import {
   type FrontPage as FrontPageData,
   type FrontPageStory,
   type PublicArticle,
+ type PublicStoryline,
 } from '@snap/api-client'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -206,6 +207,7 @@ function Galley({ blocks, editorial }: { blocks: EditionBlock[]; editorial: Fron
 }
 
 export function FrontPage() {
+ const trending=useQuery({queryKey:['trending'],queryFn:()=>client.trending(),staleTime:60_000})
   const { edition, pending, error, retry } = useEdition()
 
   useEffect(() => {
@@ -237,6 +239,7 @@ export function FrontPage() {
     <>
       <h1 className="sr-only">අද මුල් පිටුව — {sinhalaLongDate(editionDate(edition.edition_date))}</h1>
       <BreakingLine stories={breaking} />
+ <TrendingStories items={trending.data?.items ?? []} />
       {blocks.length ? (
         <>
           <Broadsheet blocks={blocks} editorial={edition.editorial} />
@@ -257,4 +260,19 @@ export function FrontPage() {
       </p>
     </>
   )
+}
+
+function TrendingStories({ items }: { items: PublicStoryline[] }) {
+  const top = items[0]
+  if (!top) return null
+  return <section aria-labelledby="trending-heading" className="border-b border-ink py-4">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <h2 id="trending-heading" className="font-headline text-sm font-bold">දැන් කතාබහට ලක්වන</h2>
+      <ul className="flex min-w-0 flex-wrap gap-2">{items.map((item) => <li key={item.id} className="min-w-0 max-w-full"><Link to={`/s/${item.slug}`} className="inline-flex min-h-11 max-w-full items-center rounded-full border border-rule px-3 py-1 font-headline text-sm hover:border-ink focus-visible:outline-2"><span className="truncate">{item.title_si}</span></Link></li>)}</ul>
+    </div>
+    <div className="mt-4 grid gap-3 border-t border-rule pt-4 md:grid-cols-[2fr_1fr] md:gap-6">
+      <div className="min-w-0"><p className="mb-2 font-headline text-xs text-ink-tertiary">අඛණ්ඩ පුවත් පෙළ</p><h3 className="font-headline text-xl font-bold leading-relaxed sm:text-2xl"><Link className="np-headline-link" to={`/s/${top.slug}`}>{top.title_si}</Link></h3>{top.summary_si && <p className="mt-2 font-body text-base leading-relaxed">{top.summary_si}</p>}</div>
+      <div className="min-w-0 border-t border-rule pt-3 md:border-s md:border-t-0 md:ps-5 md:pt-0">{top.latest_event && <><p className="font-headline text-xs text-ink-tertiary">නවතම වර්ධනය</p><Link to={`/e/${top.latest_event.id}`} className="np-headline-link mt-2 block font-headline text-base font-bold leading-relaxed">{top.latest_event.display_title}</Link></>}<p className="mt-3 text-sm text-ink-secondary">වාර්තා {top.article_count} · මාධ්‍ය ආයතන {top.source_count}</p><Link to={`/s/${top.slug}`} className="np-headline-link mt-2 inline-flex min-h-11 items-center font-headline text-sm">සම්පූර්ණ පුවත් පෙළ →</Link></div>
+    </div>
+  </section>
 }

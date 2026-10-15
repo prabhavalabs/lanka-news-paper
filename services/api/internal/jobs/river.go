@@ -28,6 +28,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/retention"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/storyline"
 )
 
 type PollArgs struct{}
@@ -618,6 +619,7 @@ func periodicJobDefinitions(newsletterSchedule ...river.PeriodicSchedule) []peri
 			},
 			Constructor: func() (river.JobArgs, *river.InsertOpts) { return SocialPublishArgs{}, nil },
 		},
+		{PeriodicJobMetadata: PeriodicJobMetadata{Kind: StorylinesRefreshArgs{}.Kind(), Name: "Running storylines", Description: "Groups ongoing news sagas and refreshes their trend scores.", Queue: "storylines", Interval: 15 * time.Minute}, Constructor: func() (river.JobArgs, *river.InsertOpts) { return StorylinesRefreshArgs{}, nil }},
 	}
 }
 
@@ -663,6 +665,7 @@ func QueueCatalog() []QueueMetadata {
 		{Name: adminAnalysisDispatchQueue, MaxWorkers: 1},
 		{Name: adminAnalysisQueue, MaxWorkers: min(configuredAdminAnalysisWorkers(os.Getenv), codex.ConcurrencyLimit())},
 		{Name: "social", MaxWorkers: 1},
+		{Name: "storylines", MaxWorkers: 1},
 		{Name: editionQueue, MaxWorkers: 1},
 	}
 }
@@ -700,12 +703,14 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 
 // Extras are optional services whose jobs run only when they are configured.
 type Extras struct {
-	Social    *social.Service
-	FrontPage *frontpage.Service
+	Storylines *storyline.Service
+	Social     *social.Service
+	FrontPage  *frontpage.Service
 }
 
 func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, pipelineStore *pipeline.Store, contentStore *content.Store, news *publish.Store, newsletterService *newsletter.Service, adminAnalysis *adminanalysis.Service, extras Extras) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
+	river.AddWorker(workers, &StorylinesRefreshWorker{Storylines: extras.Storylines})
 	socialService := extras.Social
 	river.AddWorker(workers, &EditionBuildWorker{FrontPage: extras.FrontPage})
 	river.AddWorker(workers, &SocialSelectionWorker{Social: socialService})

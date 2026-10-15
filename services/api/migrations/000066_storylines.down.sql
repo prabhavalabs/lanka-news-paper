@@ -1,0 +1,10 @@
+BEGIN;
+UPDATE social_posts SET kind='top_story' WHERE kind='update';
+ALTER TABLE social_posts DROP CONSTRAINT social_posts_kind_check;
+ALTER TABLE social_posts ADD CONSTRAINT social_posts_kind_check CHECK (kind IN ('breaking','top_story'));
+DROP TABLE storyline_events;
+DROP TABLE storylines;
+DELETE FROM agent_workflow_versions WHERE task='storyline_grouping';
+DELETE FROM agent_workflows WHERE task='storyline_grouping';
+DELETE FROM llm_task_profiles WHERE task='storyline_grouping';
+COMMIT;

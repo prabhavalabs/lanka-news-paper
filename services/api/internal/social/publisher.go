@@ -116,7 +116,11 @@ func (service *Service) nextInQueue(ctx context.Context, reader historyReader) (
 		}
 	}
 	rows, err := reader.Query(ctx, `SELECT p.id::text,p.kind='breaking',p.score,COALESCE(c.slug,''),p.headline_si,p.summary_si,p.created_at,p.approved_by IS NULL,
- COALESCE(p.repeat_checked_at,p.approved_at,p.created_at)
+ COALESCE(p.repeat_checked_at,p.approved_at,p.created_at),
+ `+storylineJSON("p.event_id")+`,p.kind,
+ (SELECT count(*) FROM social_posts prior JOIN storyline_events member ON member.event_id=prior.event_id
+ WHERE member.storyline_id=(SELECT storyline_id FROM storyline_events WHERE event_id=p.event_id)
+ AND prior.status='published' AND prior.kind='update' AND prior.published_at >= $1::timestamptz-interval '24 hours')
  FROM social_posts p LEFT JOIN event_clusters e ON e.id=p.event_id LEFT JOIN articles a ON a.id=p.article_id
  LEFT JOIN categories c ON c.id=COALESCE(e.category_id,a.category_id)
  WHERE p.status='approved' AND COALESCE(p.scheduled_for,$1)<=$1 ORDER BY p.created_at LIMIT 100`, now)
@@ -127,9 +131,18 @@ func (service *Service) nextInQueue(ctx context.Context, reader historyReader) (
 	found, repeats := false, make([]string, 0)
 	for rows.Next() {
 		var post queuedPost
-		if err := rows.Scan(&post.ID, &post.Breaking, &post.Score, &post.CategorySlug, &post.Headline, &post.Summary, &post.CreatedAt, &post.Automatic, &post.CheckedSince); err != nil {
+		post.Now = now
+		if err := rows.Scan(&post.ID, &post.Breaking, &post.Score, &post.CategorySlug, &post.Headline, &post.Summary, &post.CreatedAt, &post.Automatic, &post.CheckedSince, &post.Storyline, &post.Kind, &post.Updates24h); err != nil {
 			rows.Close()
 			return queuedPost{}, false, err
+		}
+		// Spacing and the daily update cap defer a post; they never mark it skipped.
+		blocked := post.Kind == "update" && post.Updates24h >= storylineDailyUpdateCap
+		for _, prior := range published {
+			blocked = blocked || storylineBlocked(post.Storyline, post.Breaking, prior, now)
+		}
+		if blocked {
+			continue
 		}
 		if post.Automatic && repeatsPublished(post, published) != nil {
 			repeats = append(repeats, post.ID)

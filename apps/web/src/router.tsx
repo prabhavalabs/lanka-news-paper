@@ -38,6 +38,7 @@ export const router = createBrowserRouter([
       { path: 'sources/:id', lazy: lazyFeedPage('source') },
       { path: 'search', lazy: lazyFeedPage('search') },
       { path: 'a/:id', lazy: lazyPage(() => import('./pages/article-page'), 'ArticlePage') },
+      { path: 's/:slug', lazy: lazyPage(() => import('./pages/storyline-page'), 'StorylinePage') },
       { path: 'e/:id', lazy: lazyPage(() => import('./pages/event-page'), 'EventPage') },
       { path: 'analysis/knowledge', lazy: lazyPage(() => import('./pages/knowledge-analysis-page'), 'KnowledgeAnalysisPage') },
       { path: 'brief', lazy: lazyPage(() => import('./pages/brief-page'), 'BriefPage') },

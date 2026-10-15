@@ -33,6 +33,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/retention"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social/card"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/storyline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/watchtower"
 )
 
@@ -154,25 +155,27 @@ func run(logger *slog.Logger) error {
 	server := &http.Server{
 		Addr: loaded.Address,
 		Handler: httpapi.NewRouter(httpapi.Dependencies{
-			AdminAnalysis:    adminAnalysis,
-			Social:           socialService,
-			AllowedOrigins:   loaded.AllowedOrigins,
-			CookieSecure:     loaded.SessionCookieSecure,
-			Database:         pool,
-			Desk:             deskStore,
-			FrontPage:        frontPage,
-			IAM:              users,
-			LLM:              gateway,
-			Media:            mediaStore,
-			Monitor:          monitorBroker,
-			News:             news,
-			Newsletter:       newsletterStore,
-			NewsletterTester: newsletterTester,
-			Poller:           poller,
-			Registry:         registry.NewStore(pool),
-			LogRetention:     retention.NewStore(pool, nil),
-			RunLogCleanup:    func(ctx context.Context) error { return jobs.EnqueueLogCleanup(ctx, producer) },
-			RebuildEdition:   func(ctx context.Context) error { return jobs.EnqueueEditionBuild(ctx, producer) },
+			AdminAnalysis:     adminAnalysis,
+			Social:            socialService,
+			Storylines:        storyline.NewStore(pool),
+			RefreshStorylines: func(ctx context.Context) error { return jobs.EnqueueStorylinesRefresh(ctx, producer) },
+			AllowedOrigins:    loaded.AllowedOrigins,
+			CookieSecure:      loaded.SessionCookieSecure,
+			Database:          pool,
+			Desk:              deskStore,
+			FrontPage:         frontPage,
+			IAM:               users,
+			LLM:               gateway,
+			Media:             mediaStore,
+			Monitor:           monitorBroker,
+			News:              news,
+			Newsletter:        newsletterStore,
+			NewsletterTester:  newsletterTester,
+			Poller:            poller,
+			Registry:          registry.NewStore(pool),
+			LogRetention:      retention.NewStore(pool, nil),
+			RunLogCleanup:     func(ctx context.Context) error { return jobs.EnqueueLogCleanup(ctx, producer) },
+			RebuildEdition:    func(ctx context.Context) error { return jobs.EnqueueEditionBuild(ctx, producer) },
 			RunContentBackfill: func(ctx context.Context) error {
 				return jobs.EnqueueContentBackfill(ctx, producer)
 			},

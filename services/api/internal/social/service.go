@@ -155,6 +155,9 @@ func (service *Service) createFromCandidates(ctx context.Context, candidates []C
 	posts := make([]Post, 0, len(items))
 	for _, item := range items {
 		candidate := byID[item.ID]
+		item.Storyline = candidate.Storyline
+		item.Breaking = candidate.Breaking
+		item.At = service.now()
 		status := "skipped"
 		if manual {
 			if item.HeadlineSI == "" || item.SummarySI == "" || item.CaptionSI == "" || !containsSinhala(item.HeadlineSI) || !containsSinhala(item.SummarySI) || !containsSinhala(item.CaptionSI) {
@@ -195,7 +198,7 @@ func (service *Service) createFromCandidates(ctx context.Context, candidates []C
 				return posts, err
 			}
 			recent = append(recent, recentPost{ID: p.ID, Headline: p.HeadlineSI, Summary: p.SummarySI, Category: candidate.Category,
-				CategorySlug: candidate.CategorySlug, Breaking: candidate.Breaking, Status: p.Status, At: service.now()})
+				CategorySlug: candidate.CategorySlug, Breaking: candidate.Breaking, Status: p.Status, At: service.now(), StorylineID: storylineID(candidate.Storyline)})
 		}
 		posts = append(posts, p)
 	}
@@ -223,9 +226,18 @@ func (service *Service) insertPost(ctx context.Context, candidate Candidate, ite
 	if !manual {
 		var sources int
 		var breaking bool
-		err = tx.QueryRow(ctx, `SELECT evaluated_source_count,evaluated_breaking FROM social_posts WHERE (event_id::text=$1 OR article_id::text=$1) AND status='skipped' ORDER BY created_at DESC,id DESC LIMIT 1`, candidate.ID).Scan(&sources, &breaking)
+		var previousKind string
+		err = tx.QueryRow(ctx, `SELECT evaluated_source_count,evaluated_breaking,kind FROM social_posts WHERE (event_id::text=$1 OR article_id::text=$1) AND status='skipped' ORDER BY created_at DESC,id DESC LIMIT 1`, candidate.ID).Scan(&sources, &breaking, &previousKind)
 		if err == nil && !reevaluateSkipped(candidate, sources, breaking) {
-			return Post{}, ErrConflict
+			var eligible bool
+			if previousKind == "top_story" && candidate.SubjectKind == "event" && !candidate.Breaking {
+				if err = tx.QueryRow(ctx, `SELECT `+storylineReevaluationSQL("$1::uuid", "$2::timestamptz"), candidate.ID, service.now()).Scan(&eligible); err != nil {
+					return Post{}, err
+				}
+			}
+			if !eligible {
+				return Post{}, ErrConflict
+			}
 		}
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return Post{}, err
@@ -233,6 +245,15 @@ func (service *Service) insertPost(ctx context.Context, candidate Candidate, ite
 	}
 	id := uuid.NewString()
 	kind := "top_story"
+	if candidate.Storyline != nil && candidate.Storyline.Trending && !candidate.Breaking {
+		var published bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM social_posts p JOIN storyline_events se ON se.event_id=p.event_id WHERE se.storyline_id=$1 AND p.status='published')`, candidate.Storyline.ID).Scan(&published); err != nil {
+			return Post{}, err
+		}
+		if published {
+			kind = "update"
+		}
+	}
 	if candidate.Breaking {
 		kind = "breaking"
 	}

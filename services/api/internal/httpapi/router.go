@@ -17,10 +17,13 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/registry"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/retention"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/storyline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/watchtower"
 )
 
 type Dependencies struct {
+	Storylines                  *storyline.Store
+	RefreshStorylines           func(context.Context) error
 	Social                      *social.Service
 	AdminAnalysis               *adminanalysis.Service
 	AllowedOrigins              []string
@@ -63,6 +66,9 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	workflowAdmin := workflowAdminHandler{gateway: dependencies.LLM}
 	frontPage := frontPageHandler{service: dependencies.FrontPage, media: dependencies.Media, rebuild: dependencies.RebuildEdition}
 
+	storylines := storylineHandler{store: dependencies.Storylines, refresh: dependencies.RefreshStorylines}
+	mux.HandleFunc("GET /api/v1/trending", storylines.public)
+	mux.HandleFunc("GET /api/v1/storylines/{idOrSlug}", storylines.public)
 	mux.HandleFunc("GET /api/v1/health/live", health.liveness)
 	mux.HandleFunc("GET /api/v1/health/ready", health.readiness)
 	mux.HandleFunc("GET /api/v1/news", news.list)
@@ -90,6 +96,9 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	mux.Handle("POST /api/admin/logout", withCSRF(http.HandlerFunc(auth.logout)))
 
 	protected := http.NewServeMux()
+	for _, route := range []string{"GET /api/admin/storylines", "PATCH /api/admin/storylines/{id}", "POST /api/admin/storylines/{id}/events/{eventID}", "DELETE /api/admin/storylines/{id}/events/{eventID}", "POST /api/admin/storylines/refresh"} {
+		protected.HandleFunc(route, storylines.admin)
+	}
 	socialAdmin := socialHandler{service: dependencies.Social}
 	callbackLimiter := &loginLimiter{}
 	mux.HandleFunc("GET /api/admin/social/facebook/callback", func(w http.ResponseWriter, request *http.Request) {

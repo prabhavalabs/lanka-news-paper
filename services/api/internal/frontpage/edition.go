@@ -162,6 +162,9 @@ func editionFingerprint(candidates []Story, placements []Placement) string {
 	limit := min(len(candidates), maxBlocks)
 	for _, story := range candidates[:limit] {
 		fmt.Fprintf(hash, "%s:%s:%d:%d|", story.Kind, story.ID, story.UpdatedAt.Unix(), story.SourceCount)
+		if story.Storyline != nil {
+			fmt.Fprintf(hash, "s%s:%t|", story.Storyline.ID, story.Storyline.Trending)
+		}
 	}
 	for _, placement := range placements {
 		fmt.Fprintf(hash, "p%s:%s:%s|", placement.Slot, placement.Story.Kind, placement.Story.ID)
@@ -170,16 +173,18 @@ func editionFingerprint(candidates []Story, placements []Placement) string {
 }
 
 type layoutCandidate struct {
-	Kind       string `json:"kind"`
-	ID         string `json:"id"`
-	Headline   string `json:"headline"`
-	Summary    string `json:"summary"`
-	Section    string `json:"section"`
-	Breaking   bool   `json:"breaking"`
-	Outlets    int    `json:"outlets"`
-	HoursOld   int    `json:"hours_since_update"`
-	FixedSlot  string `json:"fixed_slot,omitempty"`
-	OnPrevious bool   `json:"on_previous_edition"`
+	StorylineTitle    string `json:"storyline_title,omitempty"`
+	StorylineTrending bool   `json:"storyline_trending"`
+	Kind              string `json:"kind"`
+	ID                string `json:"id"`
+	Headline          string `json:"headline"`
+	Summary           string `json:"summary"`
+	Section           string `json:"section"`
+	Breaking          bool   `json:"breaking"`
+	Outlets           int    `json:"outlets"`
+	HoursOld          int    `json:"hours_since_update"`
+	FixedSlot         string `json:"fixed_slot,omitempty"`
+	OnPrevious        bool   `json:"on_previous_edition"`
 }
 
 var layoutSchema = map[string]any{
@@ -211,6 +216,10 @@ func (service *Service) layout(ctx context.Context, candidates []Story, placemen
 	add := func(story Story, slot string) {
 		item := layoutCandidate{Kind: story.Kind, ID: story.ID, Headline: story.Headline, Breaking: story.Breaking, Outlets: story.SourceCount,
 			HoursOld: int(now.Sub(story.UpdatedAt).Hours()), FixedSlot: slot, OnPrevious: onPrevious[story.Kind+":"+story.ID]}
+		if story.Storyline != nil {
+			item.StorylineTitle = story.Storyline.Title
+			item.StorylineTrending = story.Storyline.Trending
+		}
 		if story.Summary != nil {
 			item.Summary = truncateRunes(*story.Summary, 300)
 		}

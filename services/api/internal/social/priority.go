@@ -10,6 +10,10 @@ import (
 
 const (
 	candidatePoolFactor = 3
+	// A trending saga adds the weight of roughly four outlets to selection priority.
+	trendingStorylineBoost  = 30
+	storylineCooldown       = 3 * time.Hour
+	storylineDailyUpdateCap = 4
 	// Recent posts the editor and the duplicate check compare new candidates with.
 	recentPostWindow = 48 * time.Hour
 	// Each post from the same category published within topicWindow lowers a queued post's rank
@@ -40,6 +44,9 @@ var topicWeights = map[string]int{
 // priority scores a candidate for selection order; higher goes first.
 func priority(c Candidate, now time.Time) int {
 	score := topicWeights[c.CategorySlug] + 8*min(c.SourceCount, 8) + 2*min(c.ArticleCount, 10)
+	if c.Storyline != nil && c.Storyline.Trending {
+		score += trendingStorylineBoost
+	}
 	if !c.LatestAt.IsZero() && now.After(c.LatestAt) {
 		score -= 4 * min(int(now.Sub(c.LatestAt).Hours()), 24)
 	}
@@ -48,6 +55,7 @@ func priority(c Candidate, now time.Time) int {
 
 // recentPost is a post already on, or headed for, the Page.
 type recentPost struct {
+	StorylineID  string    `json:"storyline_id,omitempty"`
 	ID           string    `json:"-"`
 	Headline     string    `json:"headline"`
 	Summary      string    `json:"-"`
@@ -61,8 +69,9 @@ type recentPost struct {
 func (store *Store) recentPosts(ctx context.Context, now time.Time) ([]recentPost, error) {
 	rows, err := store.pool.Query(ctx, `
  SELECT p.id::text,p.headline_si,p.summary_si,COALESCE(c.name_si,''),COALESCE(c.slug,''),p.kind='breaking',p.status,
- COALESCE(p.published_at,p.created_at)
+ COALESCE(p.published_at,p.created_at),COALESCE(se.storyline_id::text,'')
  FROM social_posts p
+ LEFT JOIN storyline_events se ON se.event_id=p.event_id
  LEFT JOIN event_clusters e ON e.id=p.event_id LEFT JOIN articles a ON a.id=p.article_id
  LEFT JOIN categories c ON c.id=COALESCE(e.category_id,a.category_id)
  WHERE p.status IN ('pending_review','approved','publishing','published') AND p.created_at>=$1
@@ -74,7 +83,7 @@ func (store *Store) recentPosts(ctx context.Context, now time.Time) ([]recentPos
 	result := make([]recentPost, 0)
 	for rows.Next() {
 		var item recentPost
-		if err := rows.Scan(&item.ID, &item.Headline, &item.Summary, &item.Category, &item.CategorySlug, &item.Breaking, &item.Status, &item.At); err != nil {
+		if err := rows.Scan(&item.ID, &item.Headline, &item.Summary, &item.Category, &item.CategorySlug, &item.Breaking, &item.Status, &item.At, &item.StorylineID); err != nil {
 			return nil, err
 		}
 		result = append(result, item)
@@ -141,7 +150,12 @@ func overlap(a, b map[string]bool) float64 {
 func duplicateOf(item editorialItem, recent []recentPost) *recentPost {
 	headline, summary := words(item.HeadlineSI), words(item.SummarySI)
 	for i := range recent {
-		if overlap(headline, words(recent[i].Headline)) >= headlineOverlap || overlap(summary, words(recent[i].Summary)) >= summaryOverlap {
+		if storylineBlocked(item.Storyline, item.Breaking, recent[i], item.At) {
+			return &recent[i]
+		}
+		// Updates in one saga share background in their summaries, so they are compared by headline.
+		sameSaga := item.Storyline != nil && item.Storyline.Trending && item.Storyline.ID == recent[i].StorylineID
+		if overlap(headline, words(recent[i].Headline)) >= headlineOverlap || (!sameSaga && overlap(summary, words(recent[i].Summary)) >= summaryOverlap) {
 			return &recent[i]
 		}
 	}
@@ -150,6 +164,10 @@ func duplicateOf(item editorialItem, recent []recentPost) *recentPost {
 
 // queuedPost is an approved post waiting for a publishing slot.
 type queuedPost struct {
+	Kind         string
+	Updates24h   int
+	Storyline    *StorylineInfo
+	Now          time.Time
 	ID           string
 	Breaking     bool
 	Score        int
@@ -195,5 +213,18 @@ func limitsFor(post queuedPost, settings Settings) Settings {
 
 // repeatsPublished returns the published post a queued post repeats, if any.
 func repeatsPublished(post queuedPost, published []recentPost) *recentPost {
-	return duplicateOf(editorialItem{HeadlineSI: post.Headline, SummarySI: post.Summary}, published)
+	return duplicateOf(editorialItem{HeadlineSI: post.Headline, SummarySI: post.Summary, Storyline: post.Storyline, Breaking: post.Breaking, At: post.Now}, published)
+}
+
+// Breaking developments bypass saga spacing, but still face the normal overlap check.
+func storylineBlocked(story *StorylineInfo, breaking bool, post recentPost, now time.Time) bool {
+	return !breaking && !post.Breaking && story != nil && story.Trending && story.ID == post.StorylineID &&
+		(post.Status != "published" || !post.At.Before(now.Add(-storylineCooldown)))
+}
+
+func storylineID(story *StorylineInfo) string {
+	if story == nil {
+		return ""
+	}
+	return story.ID
 }

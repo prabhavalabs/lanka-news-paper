@@ -26,6 +26,7 @@ Check:
 5. Safety and law: no defamation, hate speech, graphic violence, identification of minors or victims of sexual crimes, or content that could prejudice an ongoing court case.
 6. Completeness: the headline reflects the story fairly, the caption keeps the source credit line "මූලාශ්‍ර: ..." and speaks to readers, never about the drafting process.
 7. Repetition: you also receive recent_posts, the posts already published or queued on the Page in the last 48 hours. Set repeats_recent_post=true when this post reports the same story or event as one of them without a major new development (such as an arrest, a verdict or an official decision). The same incident reported by another outlet, in other words, or with a different or updated figure (such as a death toll) is a repeat; a revised figure is a new development only when the earlier post is more than 12 hours old and the scale has changed markedly. A different story of the same kind (another accident, another court case) is not a repeat. Repetition is not a text problem: do not list it as an issue.
+For a trending storyline, a genuine new development (a protest reaching its destination, a memorandum handed over, a court outcome, an official response) is an update, not a repeat of the saga. Still reject updates that add nothing new, and same-storyline updates within the supplied storyline_cooldown_hours cooldown or while another update is queued. Breaking posts on either side are exempt from storyline spacing; judge them only on whether they repeat a development. Storyline IDs, breaking flags and times are supplied for this purpose.
 The Thulawa News website is shown on the image by the system; never raise an issue about a missing or unverified link or URL.
 
 Severity, applied strictly as defined:
@@ -248,13 +249,13 @@ func (service *Service) callReview(ctx context.Context, p Post) (reviewResult, *
 	others := make([]map[string]any, 0, len(recent))
 	for _, post := range recent {
 		if post.ID != p.ID && post.Status != "pending_review" {
-			others = append(others, map[string]any{"headline": post.Headline, "summary": post.Summary, "status": post.Status, "at": post.At})
+			others = append(others, map[string]any{"headline": post.Headline, "summary": post.Summary, "status": post.Status, "at": post.At, "storyline_id": post.StorylineID, "breaking": post.Breaking})
 		}
 	}
 	input, err := json.Marshal(map[string]any{
 		"post": map[string]any{
 			"headline": p.HeadlineSI, "summary": p.SummarySI, "caption": captionForReview(p), "hashtags": p.Hashtags,
-			"kind": p.Kind, "category": p.Category, "credited_sources": p.SourceNames,
+			"storyline": p.Storyline, "now": service.now(), "storyline_cooldown_hours": storylineCooldown.Hours(), "kind": p.Kind, "category": p.Category, "credited_sources": p.SourceNames,
 		},
 		"evidence":     evidence,
 		"recent_posts": others,

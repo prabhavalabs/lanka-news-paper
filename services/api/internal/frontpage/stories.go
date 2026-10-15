@@ -4,6 +4,7 @@ package frontpage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/storyline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/textcheck"
 )
 
@@ -32,20 +34,21 @@ type StorySource struct {
 }
 
 type Story struct {
-	Kind        string        `json:"kind"`
-	ID          string        `json:"id"`
-	Headline    string        `json:"headline"`
-	Summary     *string       `json:"summary"`
-	Category    *Category     `json:"category"`
-	Breaking    bool          `json:"breaking"`
-	PublishedAt time.Time     `json:"published_at"`
-	UpdatedAt   time.Time     `json:"updated_at"`
-	SourceCount int           `json:"source_count"`
-	Sources     []StorySource `json:"sources"`
-	Curated     bool          `json:"curated"`
-	Slot        string        `json:"slot"`
-	EditorNote  *string       `json:"editor_note"`
-	Media       *string       `json:"media"`
+	Storyline   *storyline.Reference `json:"storyline,omitempty"`
+	Kind        string               `json:"kind"`
+	ID          string               `json:"id"`
+	Headline    string               `json:"headline"`
+	Summary     *string              `json:"summary"`
+	Category    *Category            `json:"category"`
+	Breaking    bool                 `json:"breaking"`
+	PublishedAt time.Time            `json:"published_at"`
+	UpdatedAt   time.Time            `json:"updated_at"`
+	SourceCount int                  `json:"source_count"`
+	Sources     []StorySource        `json:"sources"`
+	Curated     bool                 `json:"curated"`
+	Slot        string               `json:"slot"`
+	EditorNote  *string              `json:"editor_note"`
+	Media       *string              `json:"media"`
 }
 
 const (
@@ -142,6 +145,9 @@ func (store *Store) eventStories(ctx context.Context, ids []string, frontPageOnl
 	for id, story := range stories {
 		sort.SliceStable(story.Sources, func(i, j int) bool { return story.Sources[i].PublishedAt.Before(story.Sources[j].PublishedAt) })
 		stories[id] = story
+	}
+	if err := store.storylines(ctx, ids, stories); err != nil {
+		return nil, err
 	}
 	return stories, store.preferWritten(ctx, "event_id", stories)
 }
@@ -261,9 +267,15 @@ var sectionWeights = map[string]int{
 	"education": 4, "environment": 3, "world": 3, "technology": 2, "sport": 1, "entertainment": -4,
 }
 
+// TrendingStorylineBoost gives sustained national coverage the weight of three extra outlets.
+const TrendingStorylineBoost = 30
+
 // score ranks a story for automatic placement: wider coverage, important sections and freshness.
 func score(story Story, now time.Time) int {
 	value := 10 * min(story.SourceCount, 6)
+	if story.Storyline != nil && story.Storyline.Trending {
+		value += TrendingStorylineBoost
+	}
 	if story.Category != nil {
 		value += sectionWeights[story.Category.Slug]
 	}
@@ -351,4 +363,28 @@ func readable(text *string) *string {
 		return nil
 	}
 	return text
+}
+
+func (store *Store) storylines(ctx context.Context, ids []string, stories map[string]Story) error {
+	rows, err := store.pool.Query(ctx, `SELECT se.event_id::text,to_jsonb(s) FROM storyline_events se JOIN storylines s ON s.id=se.storyline_id WHERE se.event_id=ANY($1::uuid[]) AND NOT s.hidden AND s.status='active'`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var data []byte
+		var ref storyline.Reference
+		if err = rows.Scan(&id, &data); err != nil {
+			return err
+		}
+		if err = json.Unmarshal(data, &ref); err != nil {
+			return err
+		}
+		if item, ok := stories[id]; ok {
+			item.Storyline = &ref
+			stories[id] = item
+		}
+	}
+	return rows.Err()
 }
