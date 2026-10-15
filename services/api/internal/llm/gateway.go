@@ -391,6 +391,7 @@ var taskDefinitions = map[string]struct{ name, purpose string }{
 		name:    "Narration analysis",
 		purpose: "Identifies political-economic framing and supporting evidence.",
 	},
+	"storyline_grouping": {name: "Storyline grouping", purpose: "Groups distinct developments of an ongoing news saga into a running storyline."},
 	"event_matching": {
 		name:    "Event matching",
 		purpose: "Decides whether a new report covers the same news event as an earlier one, so outlets' coverage is grouped.",
@@ -426,7 +427,7 @@ var taskDefinitions = map[string]struct{ name, purpose string }{
 }
 
 var orderedTasks = []string{
-	"article_analysis", "content_cleaning", "article_summary", "classify", "event_matching", "event_synthesis",
+	"article_analysis", "content_cleaning", "article_summary", "classify", "storyline_grouping", "event_matching", "event_synthesis",
 	"narration_framing", "admin_article_analysis", "watch_tower_retrieval",
 	"watch_tower_answer", "newsletter_editorial", "social_post_editorial", "social_post_review",
 }
@@ -436,7 +437,7 @@ func (gateway *Gateway) ListProfiles(ctx context.Context) ([]TaskProfile, error)
 		SELECT task, provider_id, model, timeout_seconds, enabled, COALESCE(reasoning_effort, '')
 		FROM llm_task_profiles
 		WHERE task IN (
-		  'article_analysis', 'content_cleaning', 'article_summary', 'classify', 'event_matching', 'event_synthesis',
+		  'article_analysis', 'content_cleaning', 'article_summary', 'classify', 'storyline_grouping', 'event_matching', 'event_synthesis',
 		  'narration_framing', 'admin_article_analysis', 'watch_tower_retrieval',
 		  'watch_tower_answer', 'newsletter_editorial', 'social_post_editorial', 'social_post_review'
 		)

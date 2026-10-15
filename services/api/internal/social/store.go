@@ -82,8 +82,22 @@ func (store *Store) UpdateSettings(ctx context.Context, s Settings, actor uuid.U
 	return result, tx.Commit(ctx)
 }
 
-const postSelect = `SELECT to_jsonb(p) || jsonb_build_object('subject_title',COALESCE(e.display_title,a.headline,''),
- 'category',COALESCE(c.name_si,'')) FROM social_posts p
+// storylineJSON uses an event expression supplied only by internal query constants.
+func storylineJSON(event string) string {
+	return `(SELECT jsonb_build_object('id',sl.id,'slug',sl.slug,'title_si',sl.title_si,'trending',sl.trending,'trend_score',sl.trend_score) FROM storyline_events se JOIN storylines sl ON sl.id=se.storyline_id WHERE se.event_id=` + event + ` AND NOT sl.hidden AND sl.status='active')`
+}
+
+func storylineReevaluationSQL(event, now string) string {
+	return `EXISTS(SELECT 1 FROM storyline_events se JOIN storylines sl ON sl.id=se.storyline_id
+ WHERE se.event_id=` + event + ` AND sl.trending AND NOT sl.hidden AND sl.status='active'
+ AND se.event_id=(SELECT member.event_id FROM storyline_events member JOIN articles latest ON latest.event_id=member.event_id
+ WHERE member.storyline_id=sl.id AND latest.public_status='published' AND latest.published_at<=` + now + `
+ GROUP BY member.event_id HAVING max(latest.published_at)>=` + now + `-interval '6 hours'
+ ORDER BY max(latest.published_at) DESC,member.event_id LIMIT 1))`
+}
+
+var postSelect = `SELECT to_jsonb(p) || jsonb_build_object('subject_title',COALESCE(e.display_title,a.headline,''),
+ 'category',COALESCE(c.name_si,''),'storyline',` + storylineJSON("p.event_id") + `) FROM social_posts p
  LEFT JOIN event_clusters e ON e.id=p.event_id LEFT JOIN articles a ON a.id=p.article_id
  LEFT JOIN categories c ON c.id=COALESCE(e.category_id,a.category_id) `
 

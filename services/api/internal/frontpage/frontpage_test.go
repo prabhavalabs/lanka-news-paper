@@ -1,6 +1,7 @@
 package frontpage
 
 import (
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/storyline"
 	"testing"
 	"time"
 )
@@ -52,5 +53,28 @@ func TestValidatePlacements(t *testing.T) {
 	}
 	if err := validatePlacements([]PlacementInput{{Slot: SlotLead, Kind: KindEvent, ID: id}, {Slot: SlotTop, Kind: KindArticle, ID: id}}, now); err != nil {
 		t.Fatalf("valid placements rejected: %v", err)
+	}
+}
+
+func TestTrendingStorylineBoostAndEditionFingerprint(t *testing.T) {
+	now := time.Now()
+	story := Story{ID: "event", UpdatedAt: now, SourceCount: 2}
+	before := score(story, now)
+	fingerprint := editionFingerprint([]Story{story}, nil)
+	story.Storyline = &storyline.Reference{ID: "running", Title: "පුවත්", Trending: true}
+	if got := score(story, now); got != before+TrendingStorylineBoost {
+		t.Fatalf("score=%d, want %d", got, before+TrendingStorylineBoost)
+	}
+	if editionFingerprint([]Story{story}, nil) == fingerprint {
+		t.Fatal("newly trending storyline must invalidate the edition")
+	}
+	stable := editionFingerprint([]Story{story}, nil)
+	story.Storyline.Title = "නව සාරාංශය සහ නම"
+	if editionFingerprint([]Story{story}, nil) != stable {
+		t.Fatal("editorial wording alone must not invalidate the edition")
+	}
+	story.Storyline.Trending = false
+	if got := score(story, now); got != before {
+		t.Fatalf("inactive storyline score=%d, want %d", got, before)
 	}
 }

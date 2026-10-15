@@ -26,6 +26,7 @@ type Kind string
 const (
 	KindBreaking Kind = "breaking"
 	KindTopStory Kind = "top_story"
+	KindUpdate   Kind = "update"
 )
 
 type Spectrum struct{ Left, Center, Right int }
@@ -74,7 +75,7 @@ var _ Renderer = (*ChromeRenderer)(nil)
 var renderMu sync.Mutex
 
 func Validate(c Card) error {
-	if c.Kind != KindBreaking && c.Kind != KindTopStory {
+	if c.Kind != KindBreaking && c.Kind != KindTopStory && c.Kind != KindUpdate {
 		return fmt.Errorf("invalid card kind %q", c.Kind)
 	}
 	if !utf8.ValidString(c.Headline) || strings.TrimSpace(c.Headline) == "" || utf8.RuneCountInString(c.Headline) > 90 {

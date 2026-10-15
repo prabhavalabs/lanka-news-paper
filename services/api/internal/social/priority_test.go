@@ -100,3 +100,55 @@ func TestActivityOf(t *testing.T) {
 		t.Fatalf("activity = %+v", busy)
 	}
 }
+
+func TestTrendingStorylineRepeatCooldownAndPriority(t *testing.T) {
+	now := time.Now()
+	story := &StorylineInfo{ID: "saga", Trending: true}
+	item := editorialItem{HeadlineSI: "ගමන කොළඹ අවසන් වී ඇත", SummarySI: "ජනාධිපති ලේකම් වෙත සංදේශයක්", Storyline: story, At: now}
+	recent := []recentPost{{ID: "old", Headline: item.HeadlineSI, Summary: item.SummarySI, StorylineID: "saga", Status: "published", At: now.Add(-4 * time.Hour)}}
+	require.NotNil(t, duplicateOf(item, recent), "identical development still repeats after cooldown")
+	recent[0].Headline = "ගමන කොළඹ අවසන් වීම"
+	require.NotNil(t, duplicateOf(item, recent), "near-identical development still repeats")
+	recent[0].Headline = "අධිකරණ තීන්දුව නිකුත් කළා"
+	recent[0].Summary = "සැකකරු ඇප මත මුදා හැරේ"
+	require.Nil(t, duplicateOf(item, recent), "genuinely different development after cooldown")
+	recent[0].Summary = item.SummarySI
+	require.Nil(t, duplicateOf(item, recent), "shared saga background in the summary is not a repeat")
+	recent[0].Summary = "සැකකරු ඇප මත මුදා හැරේ"
+	recent[0].At = now.Add(-3 * time.Hour)
+	require.NotNil(t, duplicateOf(item, recent), "exact cooldown boundary is protected")
+	recent[0].At = now.Add(-time.Hour)
+	recent[0].Headline = "වෙනස් පුවත"
+	recent[0].Summary = "වෙනස් වාර්තාව"
+	require.NotNil(t, duplicateOf(item, recent), "same storyline within cooldown blocks even low word overlap")
+	recent[0].At = now.Add(-4 * time.Hour)
+	recent[0].Status = "approved"
+	require.NotNil(t, duplicateOf(item, recent))
+	recent[0].Status = "published"
+	recent[0].StorylineID = "other"
+	recent[0].Headline = item.HeadlineSI
+	require.NotNil(t, duplicateOf(item, recent), "unrelated storyline never gets exemption")
+	base := Candidate{SourceCount: 2, ArticleCount: 3, LatestAt: now}
+	before := priority(base, now)
+	base.Storyline = story
+	require.Equal(t, before+trendingStorylineBoost, priority(base, now))
+	story.Trending = false
+	require.Equal(t, before, priority(base, now))
+}
+
+func TestBreakingStorylineUsesNormalOverlap(t *testing.T) {
+	now := time.Now()
+	story := &StorylineInfo{ID: "saga", Trending: true}
+	prior := recentPost{StorylineID: "saga", Status: "published", At: now.Add(-time.Hour), Headline: "අධිකරණ තීන්දුව නිකුත් කළා"}
+	item := editorialItem{Storyline: story, At: now, HeadlineSI: "ගමන කොළඹ අවසන් වී ඇත"}
+	require.NotNil(t, duplicateOf(item, []recentPost{prior}))
+	item.Breaking = true
+	require.Nil(t, duplicateOf(item, []recentPost{prior}))
+	require.Nil(t, repeatsPublished(queuedPost{Storyline: story, Now: now, Breaking: true, Headline: item.HeadlineSI}, []recentPost{prior}))
+	prior.Headline = item.HeadlineSI
+	require.NotNil(t, duplicateOf(item, []recentPost{prior}), "breaking still rejects identical developments")
+	item.Breaking = false
+	prior.Breaking = true
+	prior.Headline = "අධිකරණ තීන්දුව නිකුත් කළා"
+	require.Nil(t, duplicateOf(item, []recentPost{prior}), "earlier breaking posts do not impose saga spacing")
+}

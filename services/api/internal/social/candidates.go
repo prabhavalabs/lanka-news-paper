@@ -101,15 +101,16 @@ func (store *Store) Candidates(ctx context.Context, s Settings, now time.Time, b
  WHERE a.summary_text IS NOT NULL
  AND (($2 AND a.id::text=$4) OR (NOT $2 AND $6::boolean AND a.event_id IS NULL AND a.published_at >= $5))
  )
- SELECT to_jsonb(s) FROM subjects s
+ SELECT to_jsonb(s) || jsonb_build_object('storyline',`+storylineJSON("CASE WHEN s.subject_kind='event' THEN s.id END")+`) FROM subjects s
  WHERE NOT EXISTS (SELECT 1 FROM social_posts p WHERE
  ((s.subject_kind='event' AND p.event_id=s.id) OR (s.subject_kind='article' AND p.article_id=s.id))
  AND p.status NOT IN ('rejected','skipped','failed'))
  AND ($2 OR NOT EXISTS (
- SELECT 1 FROM (SELECT p.evaluated_source_count,p.evaluated_breaking FROM social_posts p
+ SELECT 1 FROM (SELECT p.evaluated_source_count,p.evaluated_breaking,p.kind FROM social_posts p
  WHERE p.status='skipped' AND ((s.subject_kind='event' AND p.event_id=s.id) OR (s.subject_kind='article' AND p.article_id=s.id))
  ORDER BY p.created_at DESC,p.id DESC LIMIT 1) previous
  WHERE NOT (s.breaking AND NOT previous.evaluated_breaking) AND s.source_count<previous.evaluated_source_count+2
+ AND NOT (previous.kind='top_story' AND NOT s.breaking AND s.subject_kind='event' AND `+storylineReevaluationSQL("s.id", "$1::timestamptz")+`)
  ))
  ORDER BY breaking DESC,source_count DESC,article_count DESC,latest_at DESC,id
  LIMIT $7`, now, manual, eventID, articleID, now.Add(-time.Duration(s.LookbackHours)*time.Hour), s.IncludeSingleArticles, s.CandidatesPerRun*candidatePoolFactor)

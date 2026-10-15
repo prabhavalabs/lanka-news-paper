@@ -35,7 +35,7 @@ func integrationStore(t *testing.T) *Store {
 	require.NoError(t, err)
 	// Shadow migrated tables to keep settings and queues isolated, including from other test packages.
 	t.Cleanup(func() { _, _ = root.Exec(ctx, `DROP SCHEMA `+schema+` CASCADE`); root.Close() })
-	for _, table := range []string{"social_settings", "social_accounts", "social_oauth_states", "social_posts", "audit_logs", "admin_users", "sources", "source_endpoints", "rights_profiles", "articles", "categories", "event_clusters", "article_analysis_documents", "event_narrative_analyses"} {
+	for _, table := range []string{"storylines", "storyline_events", "social_settings", "social_accounts", "social_oauth_states", "social_posts", "audit_logs", "admin_users", "sources", "source_endpoints", "rights_profiles", "articles", "categories", "event_clusters", "article_analysis_documents", "event_narrative_analyses"} {
 		_, err = root.Exec(ctx, `CREATE TABLE `+schema+`.`+table+` (LIKE public.`+table+` INCLUDING ALL)`)
 		require.NoError(t, err)
 	}
@@ -723,4 +723,143 @@ func TestSocialReviewGateIntegration(t *testing.T) {
 	fixtureEvent(t, store, 2, now)
 	require.NoError(t, service.Select(ctx, TriggerRealtime))
 	require.Zero(t, model.calls, "realtime runs are ignored when turned off")
+}
+
+func TestStorylineCandidatesAndQueuedPostsIntegration(t *testing.T) {
+	store := integrationStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	event := fixtureEvent(t, store, 3, now)
+	saga := uuid.NewString()
+	_, err := store.pool.Exec(ctx, `INSERT INTO storylines(id,slug,title_si,trending,trend_score) VALUES($1,$2,'අඛණ්ඩ පුවත්',true,150)`, saga, "story-"+saga)
+	require.NoError(t, err)
+	_, err = store.pool.Exec(ctx, `INSERT INTO storyline_events(storyline_id,event_id,added_by) VALUES($1,$2,'admin')`, saga, event)
+	require.NoError(t, err)
+	settings, err := store.GetSettings(ctx)
+	require.NoError(t, err)
+	candidates, err := store.Candidates(ctx, settings, now, "https://thulawa.test", event, "")
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	candidate := candidates[0]
+	require.NotNil(t, candidate.Storyline)
+	require.Equal(t, saga, candidate.Storyline.ID)
+	require.True(t, candidate.Storyline.Trending)
+	service := NewService(store, config.SocialConfig{}, nil, nil, nil, func() time.Time { return now })
+	p, err := service.insertPost(ctx, candidate, editorialItem{Score: 90, HeadlineSI: "අලුත් වර්ධනය", SummarySI: "පුවත පිළිබඳ සාරාංශය", CaptionSI: "පුවත පිළිබඳ සාරාංශය", Hashtags: []string{}}, "approved", nil, TriggerScheduled, uuid.Nil)
+	require.NoError(t, err)
+	require.Equal(t, "top_story", p.Kind, "first storyline post keeps the normal kind")
+	require.Equal(t, saga, p.Storyline.ID)
+	recent, err := store.recentPosts(ctx, now)
+	require.NoError(t, err)
+	require.Len(t, recent, 1)
+	require.Equal(t, saga, recent[0].StorylineID)
+	queued, found, err := service.nextInQueue(ctx, store.pool)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.NotNil(t, queued.Storyline)
+	require.Equal(t, saga, queued.Storyline.ID)
+}
+
+func TestStorylineQueueSpacingBreakingAndDailyCapIntegration(t *testing.T) {
+	store := integrationStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	service := NewService(store, config.SocialConfig{}, nil, nil, nil, func() time.Time { return now })
+	id := uuid.NewString()
+	_, err := store.pool.Exec(ctx, `INSERT INTO storylines(id,slug,title_si,trending) VALUES($1,$2,'අඛණ්ඩ පුවත්',true)`, id, "story-"+id)
+	require.NoError(t, err)
+	create := func(headline, summary string) Post {
+		t.Helper()
+		event := fixtureEvent(t, store, 3, now.Add(-time.Hour))
+		_, err := store.pool.Exec(ctx, `INSERT INTO storyline_events(storyline_id,event_id,added_by) VALUES($1,$2,'admin')`, id, event)
+		require.NoError(t, err)
+		candidate := Candidate{ID: event, SubjectKind: "event", Storyline: &StorylineInfo{ID: id, Trending: true}, SourceCount: 3, SourceNames: []string{}, EvidenceArticleIDs: []string{}}
+		post, err := service.insertPost(ctx, candidate, editorialItem{Score: 90, HeadlineSI: headline, SummarySI: summary, CaptionSI: summary, Hashtags: []string{}}, "approved", nil, TriggerScheduled, uuid.Nil)
+		require.NoError(t, err)
+		return post
+	}
+	first := create("විරෝධතාකරුවන් නුවරින් පිටත් වුණා", "පළමු පුවත")
+	require.Equal(t, "top_story", first.Kind)
+	_, err = store.pool.Exec(ctx, `UPDATE social_posts SET status='published',published_at=$2 WHERE id=$1`, first.ID, now.Add(-4*time.Hour))
+	require.NoError(t, err)
+	update := create("අධිකරණය ඇප ඉල්ලීම සලකා බලයි", "විනිසුරු නියෝගය හෙට ලැබේ")
+	require.Equal(t, "update", update.Kind)
+	queued, found, err := service.nextInQueue(ctx, store.pool)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, update.ID, queued.ID)
+	_, err = store.pool.Exec(ctx, `UPDATE social_posts SET published_at=$2 WHERE id=$1`, first.ID, now.Add(-time.Hour))
+	require.NoError(t, err)
+	_, found, err = service.nextInQueue(ctx, store.pool)
+	require.NoError(t, err)
+	require.False(t, found, "saga spacing defers ordinary updates")
+	post, err := store.GetPost(ctx, update.ID)
+	require.NoError(t, err)
+	require.Equal(t, "approved", post.Status, "cooldown does not discard a queued post")
+	_, err = store.pool.Exec(ctx, `UPDATE social_posts SET kind='breaking' WHERE id=$1`, update.ID)
+	require.NoError(t, err)
+	queued, found, err = service.nextInQueue(ctx, store.pool)
+	require.NoError(t, err)
+	require.True(t, found, "queued breaking news bypasses spacing")
+	require.Equal(t, update.ID, queued.ID)
+	_, err = store.pool.Exec(ctx, `UPDATE social_posts SET kind=CASE WHEN id=$1 THEN 'breaking' ELSE 'update' END WHERE id=ANY($2::uuid[])`, first.ID, []string{first.ID, update.ID})
+	require.NoError(t, err)
+	_, found, err = service.nextInQueue(ctx, store.pool)
+	require.NoError(t, err)
+	require.True(t, found, "earlier breaking news does not impose saga spacing")
+	published := []string{}
+	for range storylineDailyUpdateCap {
+		p := create("විදුලි ජනන ව්‍යාපෘතිය අරඹයි", "ඉන්ධන සැපයුම යළි ක්‍රියාත්මකයි")
+		published = append(published, p.ID)
+		_, err = store.pool.Exec(ctx, `UPDATE social_posts SET status='published',published_at=$2 WHERE id=$1`, p.ID, now.Add(-4*time.Hour))
+		require.NoError(t, err)
+	}
+	_, found, err = service.nextInQueue(ctx, store.pool)
+	require.NoError(t, err)
+	require.False(t, found, "four published updates exhaust the rolling daily cap")
+	post, err = store.GetPost(ctx, update.ID)
+	require.NoError(t, err)
+	require.Equal(t, "approved", post.Status)
+	_, err = store.pool.Exec(ctx, `UPDATE social_posts SET published_at=$2 WHERE id=$1`, published[0], now.Add(-25*time.Hour))
+	require.NoError(t, err)
+	_, found, err = service.nextInQueue(ctx, store.pool)
+	require.NoError(t, err)
+	require.True(t, found, "cap clears when an update leaves the rolling window")
+}
+
+func TestTrendingReevaluationOnlyLatestRecentEventIntegration(t *testing.T) {
+	store := integrationStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	service := NewService(store, config.SocialConfig{}, nil, nil, nil, func() time.Time { return now })
+	events := []string{}
+	for _, age := range []time.Duration{7 * time.Hour, 2 * time.Hour, time.Hour} {
+		event := fixtureEvent(t, store, 3, now.Add(-age))
+		events = append(events, event)
+		_, err := service.insertPost(ctx, Candidate{ID: event, SubjectKind: "event", SourceCount: 3, SourceNames: []string{}, EvidenceArticleIDs: []string{}}, editorialItem{Hashtags: []string{}}, "skipped", nil, TriggerScheduled, uuid.Nil)
+		require.NoError(t, err)
+	}
+	id := uuid.NewString()
+	_, err := store.pool.Exec(ctx, `INSERT INTO storylines(id,slug,title_si,trending) VALUES($1,$2,'අඛණ්ඩ පුවත්',true)`, id, "story-"+id)
+	require.NoError(t, err)
+	for _, event := range events {
+		_, err = store.pool.Exec(ctx, `INSERT INTO storyline_events(storyline_id,event_id,added_by) VALUES($1,$2,'admin')`, id, event)
+		require.NoError(t, err)
+	}
+	settings, err := store.GetSettings(ctx)
+	require.NoError(t, err)
+	candidates, err := store.Candidates(ctx, settings, now, "https://thulawa.test", "", "")
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, events[2], candidates[0].ID)
+	// The write path repeats the bounded eligibility check for stale candidate snapshots.
+	_, err = service.insertPost(ctx, Candidate{ID: events[1], SubjectKind: "event", SourceNames: []string{}, EvidenceArticleIDs: []string{}, SourceCount: 3, Storyline: &StorylineInfo{ID: id, Trending: true}}, editorialItem{Hashtags: []string{}}, "skipped", nil, TriggerScheduled, uuid.Nil)
+	require.ErrorIs(t, err, ErrConflict)
+	_, err = service.insertPost(ctx, candidates[0], editorialItem{Hashtags: []string{}}, "skipped", nil, TriggerScheduled, uuid.Nil)
+	require.NoError(t, err)
+	_, err = store.pool.Exec(ctx, `UPDATE articles SET published_at=$1`, now.Add(-7*time.Hour))
+	require.NoError(t, err)
+	candidates, err = store.Candidates(ctx, settings, now, "https://thulawa.test", "", "")
+	require.NoError(t, err)
+	require.Empty(t, candidates, "no old development is re-evaluated merely for starting to trend")
 }

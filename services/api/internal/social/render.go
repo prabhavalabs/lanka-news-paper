@@ -120,7 +120,11 @@ func (service *Service) render(ctx context.Context, id string, actor uuid.UUID) 
 		if marksErr != nil {
 			marks = nil // Fall back to names only; the card stays renderable.
 		}
-		png, renderError = service.renderer.Render(ctx, card.Card{Kind: card.Kind(p.Kind), Kicker: p.Category, Headline: p.HeadlineSI, Summary: p.SummarySI, Sources: p.SourceNames, Marks: marks, SourceCount: p.SourceCount, Spectrum: spectrum, PublishedAt: service.now(), SiteURL: siteURL})
+		kicker := p.Category
+		if p.Kind == "update" && p.Storyline != nil {
+			kicker = p.Storyline.Title
+		}
+		png, renderError = service.renderer.Render(ctx, card.Card{Kind: card.Kind(p.Kind), Kicker: kicker, Headline: p.HeadlineSI, Summary: p.SummarySI, Sources: p.SourceNames, Marks: marks, SourceCount: p.SourceCount, Spectrum: spectrum, PublishedAt: service.now(), SiteURL: siteURL})
 		if renderError == nil && len(png) == 0 {
 			renderError = errors.New("social renderer returned an empty image")
 		}

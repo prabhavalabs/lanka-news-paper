@@ -1,6 +1,6 @@
 import { createClient } from '@snap/api-client'
 import { useQuery } from '@tanstack/react-query'
-import { useParams } from 'react-router'
+import { Link, useParams } from 'react-router'
 
 import { eventCoverage } from '@/components/newsprint/coverage-sidebar'
 import { GalleyPlaceholder, Notice } from '@/components/newsprint/states'
@@ -20,6 +20,8 @@ export function EventPage() {
   const latest = data.articles.reduce<string>((max, article) => (article.published_at > max ? article.published_at : max), '')
   const withPhoto = data.articles.find((article) => article.media)
   return (
+    <>
+      {data.storyline && <p className="mb-4 border-b border-rule pb-3 font-headline text-sm leading-relaxed">අඛණ්ඩ පුවත් පෙළක කොටසක්: <Link className="np-headline-link inline-flex min-h-11 items-center font-bold" to={`/s/${data.storyline.slug}`}>{data.storyline.title_si} →</Link></p>}
     <StoryReader
       key={data.id}
       kind="event"
@@ -42,5 +44,6 @@ export function EventPage() {
       photo={withPhoto ? { url: withPhoto.media, credit: withPhoto.source.name } : undefined}
       updatedAt={latest || undefined}
     />
+ </>
   )
 }

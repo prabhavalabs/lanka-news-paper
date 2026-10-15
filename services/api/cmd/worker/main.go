@@ -27,6 +27,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social/card"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/storyline"
 )
 
 func main() {
@@ -107,7 +108,7 @@ func run(logger *slog.Logger) error {
 	poller := ingest.NewPoller(pool, logger, clusters)
 	frontPage := frontpage.NewService(frontpage.NewStore(pool), time.Now)
 	frontPage.SetDesk(frontpage.Desk{Model: model, Illustrator: codexClient, Media: mediaStore, ImageModel: imageModel()})
-	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news, newsletterService, adminAnalysis, jobs.Extras{Social: socialService, FrontPage: frontPage})
+	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news, newsletterService, adminAnalysis, jobs.Extras{Social: socialService, FrontPage: frontPage, Storylines: storyline.NewService(storyline.NewStore(pool), model)})
 	if err != nil {
 		return err
 	}

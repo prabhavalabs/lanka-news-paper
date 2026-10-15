@@ -12,6 +12,7 @@ const titles: Record<string, string> = {
   '/routing': 'AI & routing',
   '/watch-tower': 'Watch Tower',
   '/social': 'Social publishing',
+  '/trending': 'Trending',
   '/mailing-list': 'Mailing list',
   '/brand': 'Brand kit',
   '/social/content': 'Content calendar',
