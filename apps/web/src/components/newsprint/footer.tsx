@@ -53,6 +53,16 @@ export function SiteFooter() {
         <span lang="en" className="np-latin">
           Thulawa News · thulawanews.com · Colombo
         </span>
+        <Asterism className="text-ink-tertiary" />
+        <span lang="en" className="np-latin inline-flex gap-x-3">
+          {/* Plain links: these are static pages outside the app's router. */}
+          <a href="/en/privacy-policy" className="np-link">
+            Privacy Policy
+          </a>
+          <a href="/en/terms" className="np-link">
+            Terms of Use
+          </a>
+        </span>
       </p>
     </footer>
   )
