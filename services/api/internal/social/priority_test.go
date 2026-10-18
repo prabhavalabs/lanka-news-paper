@@ -1,8 +1,10 @@
 package social
 
 import (
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 )
@@ -151,4 +153,11 @@ func TestBreakingStorylineUsesNormalOverlap(t *testing.T) {
 	prior.Breaking = true
 	prior.Headline = "අධිකරණ තීන්දුව නිකුත් කළා"
 	require.Nil(t, duplicateOf(item, []recentPost{prior}), "earlier breaking posts do not impose saga spacing")
+}
+
+func TestLimitCaptionKeepsLineBreaks(t *testing.T) {
+	caption := "පුවත.\n\nමූලාශ්‍ර: Hiru News"
+	require.Equal(t, caption, limitCaption(caption))
+	long := strings.Repeat("අ", maxCaptionRunes+50)
+	require.Equal(t, maxCaptionRunes, utf8.RuneCountInString(limitCaption(long)))
 }

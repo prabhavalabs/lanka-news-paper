@@ -1,14 +1,31 @@
 package social
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social/meta"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social/loomcast"
+)
+
+const (
+	// Loomcast schedules posts at least two minutes ahead; the rest covers the upload.
+	loomcastLeadTime = 150 * time.Second
+	// A post handed to Loomcast that is still not live after this long needs an editor.
+	handoffStaleAfter = 6 * time.Hour
+	// Loomcast failures that may pass are retried automatically while a post has fewer attempts.
+	maxPublishAttempts = 5
+	// Captions longer than Loomcast accepts are cut; the publisher never sends more.
+	maxCaptionRunes = 2200
 )
 
 type historyReader interface {
@@ -19,8 +36,11 @@ func (store *Store) publishHistory(ctx context.Context, now time.Time) ([]time.T
 	return publishHistory(ctx, store.pool, now)
 }
 
+// publishHistory returns when recent posts went out. A post handed to Loomcast counts from its
+// handoff time, so the caps and the minimum gap hold before Loomcast reports it live.
 func publishHistory(ctx context.Context, reader historyReader, now time.Time) ([]time.Time, error) {
-	rows, err := reader.Query(ctx, `SELECT published_at FROM social_posts WHERE status='published' AND published_at>=$1 ORDER BY published_at`, now.Add(-48*time.Hour))
+	rows, err := reader.Query(ctx, `SELECT COALESCE(published_at,handed_off_at) FROM social_posts
+ WHERE (status='published' AND published_at>=$1) OR (status='publishing' AND handed_off_at IS NOT NULL) ORDER BY 1`, now.Add(-48*time.Hour))
 	if err != nil {
 		return nil, err
 	}
@@ -45,11 +65,12 @@ func (service *Service) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return result, err
 	}
-	result.Account, err = service.store.Account(ctx)
+	lookup := service.publishChannel(ctx, false)
+	result.Channel, result.Problem, result.Warning, result.Ready = publishChannelOf(lookup), lookup.problem, lookup.warning, lookup.ready()
+	result.PublishRetryAt, err = service.store.publishRetryAt(ctx, service.store.pool)
 	if err != nil {
 		return result, err
 	}
-	result.Connected = result.Account != nil && result.Account.Status == "connected"
 	rows, err := service.store.pool.Query(ctx, `SELECT status,count(*)::int FROM social_posts GROUP BY status`)
 	if err != nil {
 		return result, err
@@ -68,18 +89,14 @@ func (service *Service) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return result, err
 	}
-	if result.Settings.Enabled && result.Configured && result.Connected {
+	if result.Settings.Enabled && result.Ready {
 		history, err := service.store.publishHistory(ctx, service.now())
 		if err != nil {
 			return result, err
 		}
 		start := service.now()
-		var retryAt *time.Time
-		if err = service.store.pool.QueryRow(ctx, `SELECT (SELECT publish_retry_at FROM social_accounts WHERE status='connected')`).Scan(&retryAt); err != nil {
-			return result, err
-		}
-		if retryAt != nil && retryAt.After(start) {
-			start = *retryAt
+		if result.PublishRetryAt != nil && result.PublishRetryAt.After(start) {
+			start = *result.PublishRetryAt
 		}
 		next, err := NextEligible(start, result.Settings, history)
 		if err != nil {
@@ -164,6 +181,9 @@ func (service *Service) nextInQueue(ctx context.Context, reader historyReader) (
 	return best, found, nil
 }
 
+// Publish first settles posts already handed to Loomcast, then hands over the next post in the
+// queue when the caps, the minimum gap and quiet hours allow. Loomcast publishes it on the
+// Facebook Page a little over two minutes later; a later run records the outcome.
 func (service *Service) Publish(ctx context.Context) error {
 	if !service.config.Configured() {
 		return nil
@@ -180,7 +200,7 @@ func (service *Service) Publish(ctx context.Context) error {
 	if !locked {
 		return nil
 	}
-	// Retain this session lock across the network request, not only the claim transaction.
+	// Retain this session lock across the network requests, not only the claim transaction.
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -188,8 +208,7 @@ func (service *Service) Publish(ctx context.Context) error {
 			_ = connection.Conn().Close(cleanup)
 		}
 	}()
-	// A process may have died after Meta accepted the upload. Never reclaim it for an automatic retry.
-	if _, err = connection.Exec(ctx, `UPDATE social_posts SET status='needs_attention',last_error='Publisher stopped before recording the outcome; check the Page before retrying' WHERE status='publishing' AND updated_at<$1`, service.now().Add(-10*time.Minute)); err != nil {
+	if err = service.syncHandedOff(ctx, connection); err != nil {
 		return err
 	}
 	settings, err := scanSettings(connection.QueryRow(ctx, `SELECT `+settingsColumns+` FROM social_settings WHERE singleton`))
@@ -197,6 +216,17 @@ func (service *Service) Publish(ctx context.Context) error {
 		return err
 	}
 	if !settings.Enabled {
+		return nil
+	}
+	retryAt, err := service.store.publishRetryAt(ctx, connection)
+	if err != nil {
+		return err
+	}
+	if retryAt != nil && retryAt.After(service.now()) {
+		return nil
+	}
+	lookup := service.publishChannel(ctx, true)
+	if !lookup.ready() {
 		return nil
 	}
 	history, err := publishHistory(ctx, connection, service.now())
@@ -235,35 +265,6 @@ func (service *Service) Publish(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var accountID, pageID, keyVersion string
-	var encrypted, nonce []byte
-	var expires, retryAt *time.Time
-	err = tx.QueryRow(ctx, `SELECT id::text,page_id,token_ciphertext,token_nonce,COALESCE(key_version,''),token_expires_at,publish_retry_at FROM social_accounts WHERE status='connected' FOR UPDATE SKIP LOCKED`).Scan(&accountID, &pageID, &encrypted, &nonce, &keyVersion, &expires, &retryAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if retryAt != nil && retryAt.After(service.now()) {
-		return nil
-	}
-	if expires != nil && !expires.After(service.now()) {
-		if _, err = tx.Exec(ctx, `UPDATE social_accounts SET status='needs_reconnect',last_error='Facebook Page token has expired; reconnect' WHERE id=$1`, accountID); err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
-	}
-	if keyVersion != "v1" {
-		return errors.New("unsupported social token key version; reconnect the Page")
-	}
-	token, err := service.cipher.decrypt(encrypted, nonce, "social:"+pageID)
-	if err != nil {
-		if _, updateErr := tx.Exec(ctx, `UPDATE social_accounts SET status='needs_reconnect',last_error='Page token could not be decrypted; reconnect' WHERE id=$1`, accountID); updateErr != nil {
-			return updateErr
-		}
-		return tx.Commit(ctx)
-	}
 	p, err := scanPost(tx.QueryRow(ctx, postSelect+`WHERE p.id=$1 AND p.status='approved' FOR UPDATE OF p SKIP LOCKED`, next.ID))
 	if errors.Is(err, ErrNotFound) {
 		return nil
@@ -281,7 +282,6 @@ func (service *Service) Publish(ctx context.Context) error {
 		}
 		return tx.Commit(ctx)
 	}
-
 	if p.ImageKey == nil || service.media == nil {
 		if _, err = tx.Exec(ctx, `UPDATE social_posts SET status='failed',last_error='A rendered image is required before publishing; render this post again and retry' WHERE id=$1`, p.ID); err != nil {
 			return err
@@ -295,71 +295,253 @@ func (service *Service) Publish(ctx context.Context) error {
 		}
 		return tx.Commit(ctx)
 	}
-	png, readErr := io.ReadAll(io.LimitReader(file, (20<<20)+1))
+	image, readErr := io.ReadAll(io.LimitReader(file, (4<<20)+1))
 	closeErr := file.Close()
-	if readErr != nil || closeErr != nil || len(png) == 0 || len(png) > 20<<20 {
+	if readErr != nil || closeErr != nil || len(image) == 0 || len(image) > 4<<20 {
 		// Fail the post rather than the job so one bad image cannot hold up the queue.
-		if _, err = tx.Exec(ctx, `UPDATE social_posts SET status='failed',last_error='Rendered image could not be read or exceeds 20 MB; render this post again and retry' WHERE id=$1`, p.ID); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE social_posts SET status='failed',last_error='Rendered image could not be read or exceeds the 4 MB Facebook photo limit; render this post again and retry' WHERE id=$1`, p.ID); err != nil {
 			return err
 		}
 		return tx.Commit(ctx)
 	}
-	if _, err = tx.Exec(ctx, `UPDATE social_posts SET status='publishing',account_id=$2,attempts=attempts+1,last_error=NULL WHERE id=$1`, p.ID, accountID); err != nil {
+	at := service.now().Add(loomcastLeadTime).UTC().Truncate(time.Second)
+	var attempt int
+	if err = tx.QueryRow(ctx, `UPDATE social_posts SET status='publishing',attempts=attempts+1,last_error=NULL,loomcast_post_id=NULL,handed_off_at=$2
+ WHERE id=$1 RETURNING attempts`, p.ID, at).Scan(&attempt); err != nil {
 		return err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return err
 	}
-	photo, publishErr := service.graph.PublishPhoto(ctx, pageID, string(token), png, p.Caption)
-	// Persist a known outcome even if the River/request context was canceled.
-	resultContext, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	return service.handOff(ctx, connection, p, attempt, image, at, lookup.channel.ID)
+}
+
+// handOff creates the post in Loomcast, uploads the card and finalizes it. Nothing is published
+// before finalize, so a handoff that fails part way is cancelled and queued again.
+func (service *Service) handOff(ctx context.Context, connection *pgxpool.Conn, p Post, attempt int, image []byte, at time.Time, channelID string) error {
+	digest := sha256.Sum256(image)
+	file := loomcast.Media{Filename: "thulawa-" + p.ID + ".png", MIME: "image/png", Bytes: len(image), SHA256: hex.EncodeToString(digest[:]), AltText: truncate(p.HeadlineSI, 1000)}
+	if config, err := png.DecodeConfig(bytes.NewReader(image)); err == nil {
+		file.Width, file.Height = config.Width, config.Height
+	}
+	request := loomcast.NewPost{Format: "image", Title: truncate(p.HeadlineSI, 200), Caption: limitCaption(p.Caption),
+		Media: []loomcast.Media{file}, Channels: []loomcast.ChannelRef{{ChannelID: channelID}}, ScheduledAt: at, ExternalRef: p.ID}
+	created, err := service.loomcast.CreatePost(ctx, fmt.Sprintf("thulawa-social-%s-%d", p.ID, attempt), request)
+	// Persist a known outcome even if the River context was canceled.
+	resultContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if publishErr == nil {
-		// Reserve time to save a confirmed upload even if the optional lookup times out.
-		linkContext, cancelLink := context.WithTimeout(resultContext, 10*time.Second)
-		permalink, linkErr := service.graph.Permalink(linkContext, photo.PostID, string(token))
-		cancelLink()
-		var lastError *string
-		if linkErr != nil {
-			value := "Published successfully; permalink lookup failed"
-			lastError = &value
-		}
-		_, err = connection.Exec(resultContext, `UPDATE social_posts SET status='published',published_at=$2,fb_post_id=$3,fb_permalink=NULLIF($4,''),last_error=$5 WHERE id=$1 AND status='publishing'`, p.ID, service.now(), photo.PostID, permalink, lastError)
+	if err != nil {
+		return service.handOffFailed(resultContext, connection, p.ID, "", err)
+	}
+	if _, err = connection.Exec(resultContext, `UPDATE social_posts SET loomcast_post_id=$2 WHERE id=$1 AND status='publishing'`, p.ID, created.ID); err != nil {
 		return err
 	}
-	message := truncate(meta.Redact(publishErr.Error(), string(token), service.config.AppSecret), 1000)
-	status := "failed"
-	var scheduled *time.Time
-	var graphError *meta.Error
-	var transport *meta.TransportError
-	if errors.As(publishErr, &graphError) {
-		switch graphError.Classification() {
-		case "needs_reconnect":
-			status = "approved"
-			if _, err = connection.Exec(resultContext, `UPDATE social_accounts SET status='needs_reconnect',last_error=$2 WHERE id=$1 AND status='connected' AND token_ciphertext=$3`, accountID, message, encrypted); err != nil {
-				return err
-			}
-		case "rate_limited":
-			status = "approved"
-			value := service.now().Add(30 * time.Minute)
-			scheduled = &value
-			// Meta limits apply to the account, including other queued and newly selected posts.
-			if _, err = connection.Exec(resultContext, `UPDATE social_accounts SET publish_retry_at=$2,last_error=$3 WHERE id=$1 AND status='connected' AND token_ciphertext=$4`, accountID, value, message, encrypted); err != nil {
-				return err
-			}
-		}
-	} else if errors.As(publishErr, &transport) {
-		if transport.Sent {
-			status = "needs_attention"
-		} else {
-			status = "approved"
-			value := service.now().Add(5 * time.Minute)
-			scheduled = &value
+	for _, upload := range created.Uploads {
+		if err = service.loomcast.Upload(ctx, upload, image); err != nil {
+			return service.handOffFailed(resultContext, connection, p.ID, created.ID, err)
 		}
 	}
-	_, err = connection.Exec(resultContext, `UPDATE social_posts SET status=$2,scheduled_for=COALESCE($3,scheduled_for),last_error=$4 WHERE id=$1 AND status='publishing'`, p.ID, status, scheduled, message)
+	final, err := service.loomcast.Finalize(ctx, created.ID)
 	if err != nil {
-		return fmt.Errorf("save social publish outcome: %w", err)
+		var transport *loomcast.TransportError
+		if errors.As(err, &transport) {
+			// Finalize may have taken effect; the next run reads the post back before acting.
+			_, err = connection.Exec(resultContext, `UPDATE social_posts SET last_error='Handed to Loomcast; waiting to confirm it is scheduled' WHERE id=$1 AND status='publishing'`, p.ID)
+			return err
+		}
+		return service.handOffFailed(resultContext, connection, p.ID, created.ID, err)
+	}
+	return service.applyRemote(resultContext, connection, p.ID, final, channelID)
+}
+
+// handOffFailed records a handoff that did not reach finalize. The unfinished Loomcast post is
+// withdrawn, and the post is queued again when the failure may pass.
+func (service *Service) handOffFailed(ctx context.Context, connection *pgxpool.Conn, id, remoteID string, failure error) error {
+	if remoteID != "" {
+		_, _ = service.loomcast.Cancel(ctx, remoteID)
+	}
+	message := truncate("Loomcast: "+failure.Error(), 1000)
+	var apiError *loomcast.APIError
+	var transport *loomcast.TransportError
+	retryIn := time.Duration(0)
+	switch {
+	case errors.As(failure, &apiError) && apiError.Unauthorized():
+		// The key or its grants need the owner; hold every post until then.
+		service.forgetChannel()
+		if err := service.pausePublishing(ctx, connection, 30*time.Minute); err != nil {
+			return err
+		}
+		retryIn = time.Minute
+	case errors.As(failure, &apiError) && apiError.Status == 429:
+		if err := service.pausePublishing(ctx, connection, max(apiError.RetryAfter, time.Minute)); err != nil {
+			return err
+		}
+		retryIn = time.Minute
+	case errors.As(failure, &apiError) && apiError.Temporary(), errors.As(failure, &transport):
+		retryIn = 5 * time.Minute
+	}
+	if retryIn > 0 {
+		_, err := connection.Exec(ctx, `UPDATE social_posts SET status=CASE WHEN attempts<$4 THEN 'approved' ELSE 'failed' END,
+ scheduled_for=CASE WHEN attempts<$4 THEN $2 ELSE scheduled_for END,loomcast_post_id=NULL,handed_off_at=NULL,last_error=$3
+ WHERE id=$1 AND status='publishing'`, id, service.now().Add(retryIn), message, maxPublishAttempts)
+		return err
+	}
+	_, err := connection.Exec(ctx, `UPDATE social_posts SET status='failed',loomcast_post_id=NULL,handed_off_at=NULL,last_error=$2 WHERE id=$1 AND status='publishing'`, id, message)
+	return err
+}
+
+func (service *Service) pausePublishing(ctx context.Context, connection *pgxpool.Conn, wait time.Duration) error {
+	_, err := connection.Exec(ctx, `UPDATE social_settings SET publish_retry_at=$1 WHERE singleton`, service.now().Add(wait))
+	return err
+}
+
+// syncHandedOff reads back every post handed to Loomcast and records how it went.
+func (service *Service) syncHandedOff(ctx context.Context, connection *pgxpool.Conn) error {
+	// The process stopped before Loomcast had the post id saved, so nothing was finalized.
+	if _, err := connection.Exec(ctx, `UPDATE social_posts SET status='approved',handed_off_at=NULL,last_error='The handoff to Loomcast was interrupted; queued again'
+ WHERE status='publishing' AND loomcast_post_id IS NULL AND updated_at<$1`, service.now().Add(-10*time.Minute)); err != nil {
+		return err
+	}
+	rows, err := connection.Query(ctx, `SELECT id::text,loomcast_post_id,handed_off_at FROM social_posts
+ WHERE status='publishing' AND loomcast_post_id IS NOT NULL ORDER BY handed_off_at LIMIT 50`)
+	if err != nil {
+		return err
+	}
+	type handedOff struct {
+		id, remoteID string
+		at           *time.Time
+	}
+	pending := make([]handedOff, 0)
+	for rows.Next() {
+		var item handedOff
+		if err := rows.Scan(&item.id, &item.remoteID, &item.at); err != nil {
+			rows.Close()
+			return err
+		}
+		pending = append(pending, item)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	channelID := service.config.LoomcastChannelID
+	if lookup := service.publishChannel(ctx, false); lookup.channel != nil {
+		channelID = lookup.channel.ID
+	}
+	for _, item := range pending {
+		remote, err := service.loomcast.Post(ctx, item.remoteID)
+		var apiError *loomcast.APIError
+		switch {
+		case errors.As(err, &apiError) && apiError.Status == 404:
+			if _, err = connection.Exec(ctx, `UPDATE social_posts SET status='needs_attention',last_error='Loomcast no longer shows this post; check the Page before retrying' WHERE id=$1 AND status='publishing'`, item.id); err != nil {
+				return err
+			}
+			continue
+		case errors.As(err, &apiError) && apiError.Unauthorized():
+			service.forgetChannel()
+			return nil
+		case err != nil:
+			// Loomcast is busy or unreachable; the next run tries again.
+			continue
+		}
+		if remote.Status == "awaiting_media" {
+			// The earlier handoff stopped before finalize; withdraw it and start over.
+			if _, err := service.loomcast.Cancel(ctx, remote.ID); err != nil {
+				continue
+			}
+			if _, err := connection.Exec(ctx, `UPDATE social_posts SET status='approved',scheduled_for=$2,loomcast_post_id=NULL,handed_off_at=NULL,
+ last_error='The handoff to Loomcast did not finish; queued again' WHERE id=$1 AND status='publishing'`, item.id, service.now()); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := service.applyRemote(ctx, connection, item.id, remote, channelID); err != nil {
+			return err
+		}
+		if item.at != nil && item.at.Before(service.now().Add(-handoffStaleAfter)) {
+			if _, err := connection.Exec(ctx, `UPDATE social_posts SET status='needs_attention',last_error='Loomcast has not published this post after six hours; check Loomcast and the Page before retrying'
+ WHERE id=$1 AND status='publishing'`, item.id); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+// applyRemote records what Loomcast reports for a handed-off post.
+func (service *Service) applyRemote(ctx context.Context, connection *pgxpool.Conn, id string, remote loomcast.Post, channelID string) error {
+	target := remote.Target(channelID)
+	if target == nil && len(remote.Targets) > 0 {
+		target = &remote.Targets[len(remote.Targets)-1]
+	}
+	targetStatus := ""
+	if target != nil && target.Status != nil {
+		targetStatus = *target.Status
+	}
+	targetError := ""
+	if target != nil && target.LastError != nil {
+		targetError = target.LastError.Message
+	}
+	var err error
+	switch {
+	case targetStatus == "published" || (target == nil && remote.Status == "published"):
+		if target != nil && target.DryRun {
+			_, err = connection.Exec(ctx, `UPDATE social_posts SET status='failed',last_error=$2 WHERE id=$1 AND status='publishing'`, id,
+				"Loomcast published this as a dry run, so nothing reached Facebook. Turn dry run off for the channel in Loomcast, then retry.")
+			return err
+		}
+		publishedAt := service.now()
+		var externalID, permalink *string
+		if target != nil {
+			if target.PublishedAt != nil {
+				publishedAt = *target.PublishedAt
+			}
+			externalID, permalink = target.ExternalID, target.Permalink
+		}
+		_, err = connection.Exec(ctx, `UPDATE social_posts SET status='published',published_at=$2,fb_post_id=$3,fb_permalink=$4,last_error=NULL WHERE id=$1 AND status='publishing'`,
+			id, publishedAt, externalID, permalink)
+	case remote.Status == "pending_approval":
+		_, err = connection.Exec(ctx, `UPDATE social_posts SET last_error='Waiting for the owner to approve it in Loomcast' WHERE id=$1 AND status='publishing'`, id)
+	case remote.Status == "cancelled" || targetStatus == "cancelled":
+		_, err = connection.Exec(ctx, `UPDATE social_posts SET status='failed',last_error='Cancelled in Loomcast: withdrawn or rejected by the owner' WHERE id=$1 AND status='publishing'`, id)
+	case targetStatus == "failed" || targetStatus == "missed" || remote.Status == "failed" || remote.Status == "partially_published":
+		message := "Loomcast could not publish it"
+		if targetStatus == "missed" {
+			message = "Missed its time in Loomcast while it waited for approval"
+		}
+		if targetError != "" {
+			message += ": " + targetError
+		}
+		retry := target != nil && target.LastError != nil && target.LastError.Retryable && targetStatus == "failed"
+		wait := 10 * time.Minute
+		if target != nil && target.LastError != nil && time.Duration(target.LastError.RetryAfterMs)*time.Millisecond > wait {
+			wait = time.Duration(target.LastError.RetryAfterMs) * time.Millisecond
+		}
+		_, err = connection.Exec(ctx, `UPDATE social_posts SET status=CASE WHEN $3 AND attempts<$5 THEN 'approved' ELSE 'failed' END,
+ scheduled_for=CASE WHEN $3 AND attempts<$5 THEN $4 ELSE scheduled_for END,
+ loomcast_post_id=CASE WHEN $3 AND attempts<$5 THEN NULL ELSE loomcast_post_id END,
+ handed_off_at=CASE WHEN $3 AND attempts<$5 THEN NULL ELSE handed_off_at END,last_error=$2 WHERE id=$1 AND status='publishing'`,
+			id, truncate(message, 1000), retry, service.now().Add(wait), maxPublishAttempts)
+	default:
+		// Scheduled or publishing: Loomcast holds it, possibly for a Facebook rate-limit window.
+		var note *string
+		if targetError != "" {
+			value := truncate("Loomcast is holding it for a publishing window: "+targetError, 1000)
+			note = &value
+		}
+		_, err = connection.Exec(ctx, `UPDATE social_posts SET last_error=$2 WHERE id=$1 AND status='publishing' AND last_error IS DISTINCT FROM $2`, id, note)
+	}
+	return err
+}
+
+// limitCaption cuts a caption to Loomcast's limit and keeps its line breaks.
+func limitCaption(caption string) string {
+	runes := []rune(caption)
+	if len(runes) <= maxCaptionRunes {
+		return caption
+	}
+	return strings.TrimSpace(string(runes[:maxCaptionRunes-1])) + "…"
 }

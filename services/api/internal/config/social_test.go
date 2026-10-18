@@ -1,9 +1,9 @@
 package config
 
 import (
-	"encoding/base64"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestSocialConfigOptionalAndValidated(t *testing.T) {
@@ -12,8 +12,7 @@ func TestSocialConfigOptionalAndValidated(t *testing.T) {
 	configured, err := loadSocialConfig(lookup, "local", "")
 	require.NoError(t, err)
 	require.False(t, configured.Configured())
-	require.Equal(t, "v26.0", configured.GraphVersion)
-	require.Equal(t, "http://127.0.0.1:5174/api/admin/social/facebook/callback", configured.RedirectURL)
+	require.Equal(t, "https://loomcast.prabhavalabs.com", configured.LoomcastURL)
 	require.False(t, configured.IncludeLink)
 	values["SNAP_SOCIAL_INCLUDE_LINK"] = "true"
 	configured, err = loadSocialConfig(lookup, "local", "")
@@ -26,24 +25,26 @@ func TestSocialConfigOptionalAndValidated(t *testing.T) {
 	configured, err = loadSocialConfig(lookup, "production", "https://news.invalid")
 	require.NoError(t, err)
 	require.Equal(t, "https://news.invalid", configured.PublicBaseURL)
-	values["SNAP_META_APP_ID"] = "app"
-	values["SNAP_META_APP_SECRET"] = "secret"
-	values["SNAP_SOCIAL_TOKEN_KEY"] = base64.StdEncoding.EncodeToString(make([]byte, 32))
-	configured, err = loadSocialConfig(lookup, "local", "")
+	values["SNAP_LOOMCAST_API_KEY"] = "lc_api_abc123"
+	values["SNAP_LOOMCAST_CHANNEL_ID"] = "A3E1C0DE-1234-4ABC-9DEF-0123456789AB"
+	values["SNAP_LOOMCAST_URL"] = "https://loomcast.invalid/"
+	configured, err = loadSocialConfig(lookup, "production", "")
 	require.NoError(t, err)
 	require.True(t, configured.Configured())
-	values["SNAP_SOCIAL_TOKEN_KEY"] = base64.StdEncoding.EncodeToString(make([]byte, 31))
+	require.Equal(t, "https://loomcast.invalid", configured.LoomcastURL)
+	require.Equal(t, "a3e1c0de-1234-4abc-9def-0123456789ab", configured.LoomcastChannelID)
+	values["SNAP_LOOMCAST_API_KEY"] = "lc_mcp_wrongkind"
 	_, err = loadSocialConfig(lookup, "local", "")
-	require.ErrorContains(t, err, "32 bytes")
-	values["SNAP_SOCIAL_TOKEN_KEY"] = ""
-	values["SNAP_META_REDIRECT_URL"] = "https://user:pass@admin.invalid/callback"
+	require.ErrorContains(t, err, "SNAP_LOOMCAST_API_KEY")
+	values["SNAP_LOOMCAST_API_KEY"] = "lc_api_abc123"
+	values["SNAP_LOOMCAST_CHANNEL_ID"] = "facebook"
+	_, err = loadSocialConfig(lookup, "local", "")
+	require.ErrorContains(t, err, "SNAP_LOOMCAST_CHANNEL_ID")
+	values["SNAP_LOOMCAST_CHANNEL_ID"] = ""
+	values["SNAP_LOOMCAST_URL"] = "https://user:pass@loomcast.invalid"
 	_, err = loadSocialConfig(lookup, "local", "")
 	require.Error(t, err)
-	values["SNAP_META_REDIRECT_URL"] = "http://admin.invalid/callback"
+	values["SNAP_LOOMCAST_URL"] = "http://loomcast.invalid"
 	_, err = loadSocialConfig(lookup, "production", "")
-	require.Error(t, err)
-	values["SNAP_META_REDIRECT_URL"] = ""
-	values["SNAP_META_GRAPH_VERSION"] = "v26.0/evil"
-	_, err = loadSocialConfig(lookup, "local", "")
-	require.Error(t, err)
+	require.ErrorContains(t, err, "HTTPS")
 }

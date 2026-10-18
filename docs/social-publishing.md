@@ -2,7 +2,7 @@
 
 The backend prepares original Sinhala image posts from publishable news evidence. Selection runs every 15 minutes, makes one `social_post_editorial` gateway call for the batch, and writes a review queue. Publishing checks the queue every three minutes and is also enqueued after approval. Both settings `enabled` and `auto_publish` default to false. Enabling selection alone keeps human approval required.
 
-Cards contain our headline, summary and the credited sources placed on the coverage spectrum (left, centre and right by each source's average analysed lean; unanalysed sources are listed separately). Publisher logos come from the bundled copies in `services/api/internal/social/assets/source-logos` or local media storage; remote logo URLs are not fetched, so those sources show their initial. Captions credit the sources and never contain a URL; when `SNAP_SOCIAL_INCLUDE_LINK` is true the card footer shows the website name (for example `thulawanews.com`). Cards render at 2× (2160×2700) so text stays sharp after Facebook recompresses the image. Publisher images and verbatim publisher text are never used. The card renderer returns a 1080×1350 PNG; media storage saves it as `social/posts/{postId}.png`. Facebook receives the bytes through a multipart `/photos` upload, so media need not be public. The API and worker must share local media storage, or both use the same R2 bucket.
+Cards contain our headline, summary and the credited sources placed on the coverage spectrum (left, centre and right by each source's average analysed lean; unanalysed sources are listed separately). Publisher logos come from the bundled copies in `services/api/internal/social/assets/source-logos` or local media storage; remote logo URLs are not fetched, so those sources show their initial. Captions credit the sources and never contain a URL; when `SNAP_SOCIAL_INCLUDE_LINK` is true the card footer shows the website name (for example `thulawanews.com`). Cards render at 2× (2160×2700) so text stays sharp after Facebook recompresses the image. Publisher images and verbatim publisher text are never used. The card renderer returns a 1080×1350 PNG; media storage saves it as `social/posts/{postId}.png`. The publisher hands the PNG to [Loomcast](https://loomcast.prabhavalabs.com/llms.txt), which posts it on the Facebook Page through its own published Meta app; media need not be public. The API and worker must share local media storage, or both use the same R2 bucket.
 
 ## Automated pipeline
 
@@ -16,7 +16,7 @@ The pipeline runs end to end without a person. Nothing publishes unless the AI q
 4. **AI quality review.** A second model call (`social_post_review`) checks the post against the evidence (event synthesis and the evidence articles' summaries) for accuracy, attribution, neutrality, natural Sinhala, legal safety and completeness. It returns pass/fail, a 0–100 score, a summary and issues graded blocker, major or minor. The result is saved on the post (`review_status`, `review_score`, `review_summary`, `review_issues`).
 5. **Automatic rewrite.** When the review fails (a blocker or major issue, or a score below `min_review_score`), the editor model rewrites the post to fix the listed issues, the card is re-rendered and the rewrite is reviewed again, up to two rewrites (`review_revisions`). The reviewer also receives the posts published or queued in the last 48 hours and sets `repeats_recent_post` when the post reports the same story without a major new development (the same incident from another outlet, or with a different or updated figure such as a death toll, is a repeat unless the earlier post is more than 12 hours old and the scale changed markedly); a repeat is dropped (`skipped`) rather than rewritten.
 6. **Decision.** If `auto_publish` is on and the review passes (pass, score ≥ `min_review_score`, no blocker or major issue, not a repeat), the post is approved, scheduled immediately and the publisher is enqueued. `enabled` and `auto_publish` are re-checked under lock at that moment. A post that still fails after two rewrites is dropped with the reviewer's summary in `last_error`. When the model is unavailable the post waits, and each selection run first settles up to four waiting automatic posts (highest score first) before drafting new ones; posts still waiting 12 hours after drafting are dropped as stale. Manual posts keep one review and one rewrite and wait for their editor.
-7. **Publishing.** The publisher sends the highest-ranked due post: breaking news first, then by selection score, lowered for categories just carried and by two points per hour of age. The limits are soft: breaking news and posts scored 85 or more may pass the daily and hourly limits, and breaking news may also publish during quiet hours with only a five-minute gap after the previous post. Other posts keep the hourly limit, the minimum gap and quiet hours. Just before upload, an automatic post that repeats one published since it was queued is dropped: first by word overlap, then by an AI check (the `social_post_review` model) against every post published since the post was approved or last checked (`repeat_checked_at`). This catches two outlets' reports of one incident that were both queued before either went out. If the AI check cannot run, the post publishes on the strength of its review. A post approved automatically that is still queued 12 hours after it was drafted is dropped as stale (`skipped`); editor approvals are kept.
+7. **Publishing.** The publisher sends the highest-ranked due post: breaking news first, then by selection score, lowered for categories just carried and by two points per hour of age. The limits are soft: breaking news and posts scored 85 or more may pass the daily and hourly limits, and breaking news may also publish during quiet hours with only a five-minute gap after the previous post. Other posts keep the hourly limit, the minimum gap and quiet hours. Just before upload, an automatic post that repeats one published since it was queued is dropped: first by word overlap, then by an AI check (the `social_post_review` model) against every post published since the post was approved or last checked (`repeat_checked_at`). This catches two outlets' reports of one incident that were both queued before either went out. If the AI check cannot run, the post publishes on the strength of its review. The post is then handed to Loomcast, scheduled about two and a half minutes ahead (Loomcast needs at least two); see [Publishing through Loomcast](#publishing-through-loomcast). A post approved automatically that is still queued 12 hours after it was drafted is dropped as stale (`skipped`); editor approvals are kept.
 
 Post lists from `GET /api/admin/social/posts` and `GET /api/admin/social/content` include a `plan` for each post: whether it will publish (`published`, `publishing`, `scheduled`, `paused`, `in_review` for automatic posts the AI desk is still settling, `needs_editor`, `not_publishing`), the time (an estimate for `scheduled`, replaying the queue against the caps, gap and quiet hours) and a plain-English note. The calendar and review queue show it. A failed or unavailable AI review never publishes automatically; an editor can still fix a post and re-run the review, or approve it anyway.
 
@@ -24,43 +24,42 @@ The reviewer sees each evidence article's summary and up to 1,800 characters of 
 
 Every post records its `channel` (currently only `facebook`) and its `trigger` (`scheduled`, `realtime` or `manual`). The admin **Content calendar** (`/social/content`) shows posts by the day they published, are scheduled, or were drafted, with a filterable content log and the channel list (Instagram, X, WhatsApp Channel and Telegram are listed as planned).
 
-## Set up a new Meta Business app
+## Publishing through Loomcast
 
-This version is intended for the owner's own Page with a dedicated app kept in Development mode. It does not implement an App Review submission or support connecting arbitrary customers' Pages.
+Thulawa News does not hold a Facebook token. Loomcast's machine API publishes on the Page with Loomcast's own published Meta app, so posts are public without a Meta app of ours going through App Review or business verification.
 
-1. Open [Meta for Developers](https://developers.facebook.com/apps/) with the Facebook user who manages the Page. Create a new app, select the **Business** app type / **Manage everything on your Page** use case, and enter an app name and contact address. Meta's dashboard may group these choices under use cases.
-2. In the app's basic settings, record the App ID and App Secret in the deployment environment. Keep the app in **Development** mode.
-3. Add **Facebook Login for Business**. In its settings, enable web OAuth login and add this exact **Valid OAuth Redirect URI**:
-   `https://admin.thulawanews.com/api/admin/social/facebook/callback`.
-   Register any local callback separately when testing locally; local default is `http://127.0.0.1:5174/api/admin/social/facebook/callback`. Redirect URI, port, scheme and path must match the configured value exactly.
-4. Optionally create a Facebook Login for Business login configuration using a **User access token**, with `pages_show_list`, `pages_read_engagement` and `pages_manage_posts`. Assign the managed Page asset and content creation task. Put its configuration ID in `SNAP_META_LOGIN_CONFIG_ID`. Without this value, the authorization request asks for the three permissions using `scope`.
-5. Add the owner as an **app administrator**, accept any pending app-role invitation, and confirm that the same Facebook user has Page access that includes creating content / managing the Page. A user who only analyzes or advertises on the Page is insufficient.
-6. Sign in to the news admin using the administrator role, open `/social`, and connect Facebook. Accept the login permissions and select the Page assets. The backend lists only Pages whose tasks include `CREATE_CONTENT` or `MANAGE`.
-7. With one eligible Page the account connects immediately. With several, choose a Page within ten minutes. The backend verifies the token's app, expiry and Page permissions before saving it.
-8. Create and inspect a review post, approve it, and check the resulting Page post and its permalink. Development-mode access and post visibility must be checked with the intended audience; a successful API upload alone does not establish public visibility. This workflow does not switch the Meta app to Live mode.
+### Connect
 
-Meta references: [Facebook Login for Business](https://developers.facebook.com/docs/facebook-login/facebook-login-for-business/), [manual OAuth flow](https://developers.facebook.com/docs/facebook-login/guides/advanced/manual-flow/), [Page access tokens](https://developers.facebook.com/docs/pages-api/getting-started/), [securing Graph requests](https://developers.facebook.com/docs/graph-api/securing-requests/). The official documentation returned access/rate-limit errors during implementation, so verify dashboard labels and Development-mode visibility in the actual app before operating it.
+1. In Loomcast, connect the Thulawa News Facebook Page under **Settings → Channels** and turn its **Dry run** switch off.
+2. Under **Settings → API clients**, create a client for this site, choose its project and grant the Thulawa News Facebook channel at **publish** access. With `write` access, or with **Requires approval** on the channel, every post waits for the owner in Loomcast's approvals (the admin Social page warns about this).
+3. Put the key (`lc_api_…`, shown once) in the server's `.env` as `SNAP_LOOMCAST_API_KEY` and restart the API and worker. When the client is granted more than one Facebook channel, also set `SNAP_LOOMCAST_CHANNEL_ID`.
+4. Open `/social` in the admin. The **Publishing through Loomcast** card shows the channel and says what to fix when publishing is not ready: a refused key, no or several granted Facebook channels, a channel that needs reconnecting, read-only access, or dry run. Publishing holds until it is ready; posts stay approved.
+
+### How a post goes out
+
+1. The publisher claims the next due post (`publishing`, attempts + 1, `handed_off_at` = now + 150 s) and creates an `image` post in Loomcast with the caption, the card (PNG, at most 4 MB), the channel, that time and `externalRef` = our post id. The `Idempotency-Key` is `thulawa-social-{postId}-{attempt}`, so a repeated request returns the same Loomcast post. The Loomcast post id is saved at once (`loomcast_post_id`).
+2. It uploads the card to the presigned URL Loomcast returns and finalizes the post. Loomcast approves it on the owner's behalf (publish access) and queues it for its time.
+3. Each run (every three minutes) first reads back every handed-off post and records the outcome: `published` with Facebook's post id and permalink; `failed` with Loomcast's reason; queued again when Loomcast marks the failure retryable (up to five attempts); a note while Loomcast waits for approval or holds the post for a Facebook rate-limit window.
+
+A handed-off post counts against the caps and the minimum gap from its handoff time. Loomcast also keeps its own limit of 30 Facebook posts per channel in a rolling 24 hours; keep `max_posts_per_day` below that.
+
+Loomcast publishes nothing before finalize. A handoff that fails part way is therefore withdrawn (`cancel`) and queued again, and a run that finds a post still awaiting its files in Loomcast withdraws it and starts over. An editor's retry withdraws the earlier Loomcast copy first; when Loomcast has already published or is publishing it, the retry is refused.
 
 ## Environment
 
-All variables are optional. `configured` requires App ID, App Secret and a valid token key; Chrome availability is independent.
+All variables are optional. `configured` requires a Loomcast API key; Chrome availability is independent.
 
 | Variable | Default / purpose |
 | --- | --- |
-| `SNAP_META_APP_ID` | Dedicated Meta app ID |
-| `SNAP_META_APP_SECRET` | App Secret; server only |
-| `SNAP_META_REDIRECT_URL` | Production callback above; local callback on port 5174 |
-| `SNAP_META_LOGIN_CONFIG_ID` | Optional Business Login configuration ID |
-| `SNAP_META_GRAPH_VERSION` | `v26.0` |
-| `SNAP_SOCIAL_TOKEN_KEY` | Base64 encoded, exactly 32 decoded bytes; AES-256-GCM |
+| `SNAP_LOOMCAST_API_KEY` | Loomcast API client key (`lc_api_…`); server only |
+| `SNAP_LOOMCAST_URL` | `https://loomcast.prabhavalabs.com` |
+| `SNAP_LOOMCAST_CHANNEL_ID` | Only when the client is granted several Facebook channels: the Thulawa News channel id |
 | `SNAP_SOCIAL_INCLUDE_LINK` | `false`. When true, the card footer shows the website name from `SNAP_SOCIAL_PUBLIC_BASE_URL`. Captions never contain a URL. |
 | `SNAP_SOCIAL_PUBLIC_BASE_URL` | `SNAP_NEWSLETTER_BASE_URL`, otherwise `https://thulawanews.com` |
 | `SNAP_SOCIAL_CHROME_PATH` | Chrome/Chromium executable; production defaults to `/usr/bin/chromium`, local empty uses auto-detection |
 | `SNAP_SOCIAL_CHROME_NO_SANDBOX` | Production defaults to `true`; renderer parses a boolean, root always requires no sandbox |
 
-Generate the encryption key once with `openssl rand -base64 32` and save it privately. API and worker must use the same key. Preserve it across redeployments. Key version is currently `v1`; changing the key requires reconnecting the Page. Never place these secrets in client configuration or source control.
-
-Production Compose forwards the variables to API and worker and shares `/data/media` with both. The admin Vite proxy forwards `/api` to port 8090. The admin frontend nginx forwards `/api/` to the API; the host nginx forwards the admin origin to that frontend. The callback therefore stays on the admin origin. The session cookie remains `SameSite=Strict`. The rate-limited OAuth callback authenticates only the single-use state and uses its stored initiating admin as the actor. The SPA's subsequent same-origin requests carry the session cookie; pending Page lookup and selection require the administrator session and matching state owner, with write-CSRF protection on selection.
+Production Compose forwards the variables to the API and worker and shares `/data/media` with both. Never place the key in client configuration or source control.
 
 ## Selection and review
 
@@ -76,38 +75,35 @@ Review the source evidence, headline, summary, caption and card. Edits are permi
 
 Defaults: two posts per rolling hour, thirty per local calendar day (a soft limit, see step 7), at least twenty minutes between posts, and quiet hours 00:00–06:00 in `Asia/Colombo`. The timezone is configurable and validated. Quiet windows can span midnight; equal start/end hours disable quiet hours. All successful posts count against caps, including manual approvals and auto-publish. The publisher selects the highest-ranked due approved post (see step 7), claims it using a row lock and increments attempts. River uniqueness, a single social worker queue and a database session advisory lock prevent simultaneous publishers across processes.
 
-`scheduled_for` is an earliest publishing time, not a guarantee of exact delivery. Quiet hours, account state, caps and image readiness can postpone delivery. Disabling `enabled` pauses both scheduled selection and publishing. Manual creation/editing remain available. `next_publish_eligible_at` reports the earliest time permitted by account configuration, caps, quiet hours and approved schedules; it does not guarantee image readiness.
+`scheduled_for` is an earliest publishing time, not a guarantee of exact delivery. Quiet hours, account state, caps and image readiness can postpone delivery. Disabling `enabled` pauses both scheduled selection and publishing. Manual creation/editing remain available. `next_publish_eligible_at` reports the earliest time permitted by the Loomcast connection, a Loomcast-requested pause, caps, quiet hours and approved schedules; it does not guarantee image readiness.
 
 ## Failure states
 
 | State / failure | Behavior |
 | --- | --- |
 | `pending_review` | Await approval or rejection |
-| `approved` | Await schedule, caps, connected account and image |
-| `publishing` | Upload claimed; editing/retry blocked |
-| `published` | Facebook post ID, publication time and optional permalink saved |
-| `rejected` / `skipped` | No upload; reason/history retained |
-| Authentication/permission error | Account becomes `needs_reconnect`; post returns to approved |
-| Rate limit | Post returns to approved with a 30-minute account-wide cooldown |
-| Transport failure before send | Post returns to approved with a five-minute delay |
-| Timeout/network failure after send, malformed success, missing post ID | `needs_attention`; no automatic retry |
-| Worker stopped while uploading | After ten minutes the claim becomes `needs_attention` |
-| Definite Graph rejection | `failed`; manual retry available |
-| Permalink lookup failure after confirmed upload | Remains published; post ID saved, diagnostic noted |
+| `approved` | Await schedule, caps, a ready Loomcast channel and image |
+| `publishing` | Handed to Loomcast, waiting for it to go out; editing/retry blocked |
+| `published` | Facebook post ID, publication time and permalink saved from Loomcast |
+| `rejected` / `skipped` | Not published; reason/history retained |
+| Loomcast refuses the key (401/403) | Post returns to approved; publishing pauses 30 minutes; the Social page shows the problem |
+| Loomcast rate limit (429) | Post returns to approved; publishing pauses for `Retry-After` (at least a minute) |
+| Loomcast unreachable or 5xx before finalize | Unfinished Loomcast post withdrawn; post returns to approved five minutes later |
+| Loomcast refuses the post (validation, media) | `failed`; manual retry available |
+| Finalize answer lost | Stays `publishing`; the next run reads it back, and withdraws and requeues it if it was never finalized |
+| Worker stopped before saving the Loomcast id | After ten minutes the post returns to approved (nothing was finalized) |
+| Loomcast reports failed, missed or cancelled | `failed` with the reason, or approved again when Loomcast marks it retryable |
+| Loomcast published it as a dry run | `failed`; turn dry run off for the channel, then retry |
+| Still not published six hours after handoff, or Loomcast no longer shows it | `needs_attention`; check Loomcast and the Page |
 
-Before retrying `needs_attention`, check the actual Page for the post. Retry requires `confirm_not_published: true`. If it exists, do not retry; retain the ambiguous record for investigation. Disconnect deletes stored token ciphertext/nonce/key version and pending Page tokens. Reconnect safely replaces the previous account.
+Before retrying `needs_attention`, check the actual Page for the post. Retry requires `confirm_not_published: true` and withdraws the earlier Loomcast copy first.
 
 ## Admin API
 
-Except the state-authenticated OAuth callback, all routes use existing admin sessions, require the administrator role, and mutations require `X-SNAP-CSRF: 1` and a JSON object body, including `{}` for actions without fields. Unknown JSON fields are rejected.
+All routes use existing admin sessions, require the administrator role, and mutations require `X-SNAP-CSRF: 1` and a JSON object body, including `{}` for actions without fields. Unknown JSON fields are rejected.
 
-- `GET /api/admin/social/status`: configuration, account metadata, settings, status counts, next eligible time.
+- `GET /api/admin/social/status`: `configured`, `ready`, the Loomcast `channel`, `problem` / `warning`, `publish_retry_at`, settings, status counts, next eligible time.
 - `GET` / `POST /api/admin/social/settings`: complete settings object.
-- `POST /api/admin/social/facebook/connect`: `{}` → `{authorize_url}`.
-- `GET /api/admin/social/facebook/callback?code=...&state=...`: 303 to `/social?facebook=connected`, `/social?facebook=choose_page&state_id=...`, or `/social?error=...`.
-- `GET /api/admin/social/facebook/pending-pages?state_id=...`: `{items:[{id,name,picture}]}`; no tokens.
-- `POST /api/admin/social/facebook/select`: `{state_id,page_id}`.
-- `POST /api/admin/social/facebook/disconnect`: `{}`.
 - `GET /api/admin/social/posts?status=&limit=30&cursor=`: `{items,next_cursor}`; limit 1–100. Cursor is opaque; stable newest-first ordering.
 - `GET /api/admin/social/posts/{id}`: post, subject title/link and authenticated media URL.
 - `PATCH /api/admin/social/posts/{id}`: optional `headline_si`, `summary_si`, `caption`, `hashtags`; requires at least one field.
@@ -119,12 +115,10 @@ Except the state-authenticated OAuth callback, all routes use existing admin ses
 - `POST /api/admin/social/run-selection`: `{}`; returns 202 after enqueueing; disabled settings make the job a no-op.
 - `POST /api/admin/social/posts/{id}/review`: `{}`; re-runs the AI quality review on the current text. Never changes the post status.
 - `GET /api/admin/social/content?from=&to=&channel=&status=`: RFC3339 range (at most 400 days), up to 1,000 posts by calendar time, newest first.
-- `GET /api/admin/social/channels`: publishing channels and their status (`connected`, `needs_reconnect`, `disconnected` or `planned`).
+- `GET /api/admin/social/channels`: publishing channels and their status (`connected`, `needs_attention`, `disconnected` or `planned`).
 
 ## Security and verification
 
-OAuth state is 32 random bytes; only SHA-256 is stored. It is bound to the signed-in admin, expires after ten minutes and is consumed atomically once. Page choices and their tokens are encrypted pending selection, never returned to the browser, and cleared on selection, expiry cleanup or disconnect. Page tokens use AES-256-GCM with random nonces and `social:{pageId}` AAD; pending choices use `social:oauth:{stateId}`. Derived long-lived Page tokens normally have no fixed expiry, but an expiry returned by token inspection is recorded and respected; token revocation and permission changes still require reconnecting.
+The Loomcast key stays on the server: it is read from the environment, sent only to Loomcast as a bearer token, never to the presigned upload URL, and never stored or returned. Loomcast error messages are saved on posts without the key. Administrator mutations write the existing audit log in the same transaction as the corresponding state change.
 
-Graph calls that use tokens send `appsecret_proof` (HMAC-SHA256 with the App Secret). Token-bearing redirects are refused; Page pagination uses Graph cursor values on the configured host. Stored/returned diagnostics exclude token values, OAuth codes and proof values. Callback redirects contain only a fixed error code or state row ID, never tokens. Administrator mutations write the existing audit log in the same transaction as the corresponding state change.
-
-Migration `000054_social_publishing` adds settings, encrypted accounts, single-use OAuth states, the post queue and indexes, and the editorial task/workflow profile. Down migration removes those objects and its workflow history. Migration `000056_social_automation` adds `realtime_enabled` and `min_review_score` settings, the post `channel`, `trigger` and review columns, a calendar index, and the `social_post_review` task/workflow profile. Migration `000055_social_publishing_safety` persists the account-wide rate-limit cooldown and the exact article IDs used as evidence. Posts created before that snapshot must be rejected and prepared again before publishing. Integration tests follow `SNAP_TEST_DATABASE_URL` and create temporary schemas that clone the migrated tables, keeping fixture settings, accounts, articles and posts isolated. Unit tests cover crypto, fake Graph responses/proofs, editorial validation/captions, ranking/dedupe and scheduling. No live Meta app connection or real upload is part of the automated tests.
+Migration `000054_social_publishing` adds settings, the post queue and indexes, and the editorial task/workflow profile. Migration `000055_social_publishing_safety` persists the exact article IDs used as evidence. Migration `000056_social_automation` adds `realtime_enabled` and `min_review_score` settings, the post `channel`, `trigger` and review columns, a calendar index, and the `social_post_review` task/workflow profile. Migration `000069_loomcast_publishing` retires the Meta app's Page token and OAuth tables, and adds `loomcast_post_id` and `handed_off_at` to posts and the publishing pause `publish_retry_at` to settings. Integration tests follow `SNAP_TEST_DATABASE_URL` and create temporary schemas that clone the migrated tables. They drive the publisher against a fake Loomcast client; the Loomcast client itself is tested against a local HTTP server. No live Loomcast call or real Facebook post is part of the automated tests.

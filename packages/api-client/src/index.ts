@@ -1106,19 +1106,20 @@ export type SocialChannelKey = "facebook";
 export type SocialTrigger = "scheduled" | "realtime" | "manual";
 export type SocialReviewStatus = "not_reviewed" | "passed" | "failed" | "unavailable";
 export type SocialReviewIssue = { severity: "blocker" | "major" | "minor"; field: string; message: string };
-export type SocialAccount = {
-  id: string; page_id: string; page_name: string; picture: string; status: string; connected_at: string;
-  last_verified_at: string | null; token_expires_at: string | null; last_error: string | null;
+/** The Loomcast channel posts go out on: the Facebook Page Loomcast publishes to. */
+export type SocialPublishChannel = {
+  id: string; platform: string; name: string; status: string; access: string; dry_run: boolean; requires_approval: boolean;
 };
 export type SocialPost = {
   storyline?: StorylineReference;
-  id: string; account_id: string | null; subject_kind: string; event_id: string | null; article_id: string | null;
+  id: string; subject_kind: string; event_id: string | null; article_id: string | null;
   subject_title: string; category: string; status: SocialPostStatus; score: number; selection_reason: string;
   kind: string; headline_si: string; summary_si: string; caption: string; hashtags: string[]; link_url: string;
   source_names: string[]; source_count: number; spectrum: { left: number; center: number; right: number } | null;
   image_key: string | null; image_url: string; image_rendered_at: string | null; scheduled_for: string | null;
   approved_by: string | null; approved_at: string | null; rejected_by: string | null; rejected_at: string | null;
   published_at: string | null; fb_post_id: string | null; fb_permalink: string | null; attempts: number;
+  loomcast_post_id: string | null; handed_off_at: string | null;
   last_error: string | null; llm_call_id: number | null; evaluated_source_count: number;
   created_by: string; created_at: string; updated_at: string;
   channel: SocialChannelKey; trigger: SocialTrigger; review_status: SocialReviewStatus; review_score: number | null;
@@ -1133,13 +1134,14 @@ export type SocialPublishPlan = {
 export type SocialChannel = { key: string; name: string; available: boolean; status: string };
 export type SocialContentList = { items: SocialPost[]; from: string; to: string };
 export type SocialStatus = {
-  configured: boolean; connected: boolean; account: SocialAccount | null; settings: SocialSettings;
+  /** configured: a Loomcast API key is set. ready: posts can go out now; otherwise problem says why. */
+  configured: boolean; ready: boolean; channel: SocialPublishChannel | null; problem?: string; warning?: string;
+  publish_retry_at: string | null; settings: SocialSettings;
   counts: Partial<Record<SocialPostStatus, number>>; next_publish_eligible_at: string | null;
 };
 export type SocialPostList = { items: SocialPost[]; next_cursor: string };
 export type SocialEditInput = Pick<SocialPost, "headline_si" | "summary_si" | "caption" | "hashtags">;
 export type SocialCreateInput = { event_id: string; article_id?: never } | { article_id: string; event_id?: never };
-export type SocialPendingPage = { id: string; name: string; picture: string };
 
 export function createClient(baseUrl = "") {
   const url = (path: string) => `${baseUrl}${path}`;
@@ -1562,10 +1564,6 @@ export function createClient(baseUrl = "") {
     socialStatus: () => request<SocialStatus>(url("/api/admin/social/status")),
     socialSettings: () => request<SocialSettings>(url("/api/admin/social/settings")),
     updateSocialSettings: (body: SocialSettings) => request<SocialSettings>(url("/api/admin/social/settings"), { method: "POST", body: JSON.stringify(body) }),
-    connectFacebook: () => request<{ authorize_url: string }>(url("/api/admin/social/facebook/connect"), { method: "POST", body: "{}" }),
-    pendingFacebookPages: (state_id: string) => request<{ items: SocialPendingPage[] }>(url(withQuery("/api/admin/social/facebook/pending-pages", { state_id }))),
-    selectFacebookPage: (body: { state_id: string; page_id: string }) => request<{ ok: boolean }>(url("/api/admin/social/facebook/select"), { method: "POST", body: JSON.stringify(body) }),
-    disconnectFacebook: () => request<{ ok: boolean }>(url("/api/admin/social/facebook/disconnect"), { method: "POST", body: "{}" }),
     socialPosts: (params: { status?: SocialPostStatus; limit?: number; cursor?: string } = {}) => request<SocialPostList>(url(withQuery("/api/admin/social/posts", params))),
     socialPost: (id: string) => request<SocialPost>(url(`/api/admin/social/posts/${encodeURIComponent(id)}`)),
     createSocialPost: (body: SocialCreateInput) => request<SocialPost>(url("/api/admin/social/posts"), { method: "POST", body: JSON.stringify(body) }),

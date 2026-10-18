@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social/card"
-	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social/meta"
 )
 
 func editable(status string) bool {
@@ -134,7 +133,7 @@ func (service *Service) render(ctx context.Context, id string, actor uuid.UUID) 
 		renderError = service.media.Put(ctx, key, "image/png", png)
 	}
 	if renderError != nil {
-		message := meta.Redact(renderError.Error(), service.config.AppSecret)
+		message := renderError.Error()
 		if _, err = tx.Exec(ctx, `UPDATE social_posts SET image_key=NULL,image_rendered_at=NULL,last_error=$2 WHERE id=$1`, id, truncate(message, 1000)); err != nil {
 			return err
 		}

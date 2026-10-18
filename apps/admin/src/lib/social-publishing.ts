@@ -31,12 +31,6 @@ export function hashtagError(tags: string[]) {
   if (new Set(tags.map((tag) => tag.toLowerCase())).size !== tags.length) return 'Remove duplicate hashtags.'
   return null
 }
-export function facebookAuthorizeURL(value: string) {
-  try {
-    const url = new URL(value)
-    return url.protocol === 'https:' && url.hostname === 'www.facebook.com' && !url.port && !url.username && !url.password ? url.href : null
-  } catch { return null }
-}
 export function safeSocialLink(value: string) {
   try { const url = new URL(value); return url.protocol === 'https:' ? url.href : undefined } catch { return undefined }
 }

@@ -248,7 +248,9 @@ func (store *Store) transition(ctx context.Context, id, action string, actor uui
  approved_by=CASE WHEN $2='approved' THEN $4 ELSE approved_by END,
  approved_at=CASE WHEN $2='approved' THEN $5 ELSE approved_at END,
  rejected_by=CASE WHEN $2='rejected' THEN $4 ELSE rejected_by END,
- rejected_at=CASE WHEN $2='rejected' THEN $5 ELSE rejected_at END,last_error=NULL WHERE id=$1`, id, status, scheduled, actor, now); err != nil {
+ rejected_at=CASE WHEN $2='rejected' THEN $5 ELSE rejected_at END,
+ loomcast_post_id=CASE WHEN $2='approved' THEN NULL ELSE loomcast_post_id END,
+ handed_off_at=CASE WHEN $2='approved' THEN NULL ELSE handed_off_at END,last_error=NULL WHERE id=$1`, id, status, scheduled, actor, now); err != nil {
 		return p, storeError(err)
 	}
 	if err = audit(ctx, tx, actor, "social_post_"+action, id); err != nil {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { facebookAuthorizeURL, hashtagError, parseSocialHashtags, parseSocialSubject, runeCount, runeLimitError } from './social-publishing.ts'
+import { hashtagError, parseSocialHashtags, parseSocialSubject, runeCount, runeLimitError } from './social-publishing.ts'
 const id = '12345678-1234-1234-1234-123456789abc'
 test('extracts event and article IDs from public links and raw IDs', () => {
   assert.deepEqual(parseSocialSubject(` https://lankanewspaper.prabhavalabs.com/e/${id}?ref=social `, 'article'), { event_id: id })
@@ -19,6 +19,4 @@ test('validates backend hashtag limits and Facebook redirect origin', () => {
   assert.deepEqual(parseSocialHashtags('#සිංහල #News'), ['සිංහල', 'News'])
   assert.equal(hashtagError(['සිංහල', 'News']), null)
   for (const tags of [['a', 'A'], ['a', 'b', 'c', 'd'], ['a-b'], ['²'], ['x'.repeat(61)]]) assert.ok(hashtagError(tags))
-  assert.ok(facebookAuthorizeURL('https://www.facebook.com/v26.0/dialog/oauth'))
-  for (const url of ['http://www.facebook.com/', 'https://www.facebook.com.evil/', 'javascript:alert(1)', 'https://evil@www.facebook.com/']) assert.equal(facebookAuthorizeURL(url), null)
 })
