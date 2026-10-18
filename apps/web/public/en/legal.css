@@ -1,0 +1,102 @@
+/* Shared style for the English legal pages. They are plain HTML so crawlers read them without JavaScript. */
+:root {
+  --paper: #f7f5f0;
+  --ink: #13223a;
+  --ink-secondary: #3d4a5c;
+  --gold: #b8913a;
+  --rule: #d9d3c4;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.0625rem;
+  line-height: 1.7;
+}
+
+a {
+  color: var(--ink);
+  text-decoration-color: var(--gold);
+  text-underline-offset: 3px;
+}
+
+header,
+main,
+footer {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 0 1.25rem;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-top: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 3px double var(--ink);
+}
+
+header img {
+  width: 48px;
+  height: 48px;
+}
+
+header a {
+  font-weight: 700;
+  font-size: 1.25rem;
+  text-decoration: none;
+}
+
+h1 {
+  margin: 2rem 0 0.25rem;
+  font-size: 2rem;
+  line-height: 1.25;
+}
+
+h2 {
+  margin: 2rem 0 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--rule);
+  font-size: 1.25rem;
+}
+
+.meta {
+  margin: 0;
+  color: var(--ink-secondary);
+  font-size: 0.9375rem;
+}
+
+ul {
+  padding-left: 1.25rem;
+}
+
+li + li {
+  margin-top: 0.35rem;
+}
+
+footer {
+  margin-top: 3rem;
+  padding-top: 1rem;
+  padding-bottom: 2.5rem;
+  border-top: 3px double var(--ink);
+  color: var(--ink-secondary);
+  font-size: 0.9375rem;
+}
+
+footer nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  margin-bottom: 0.5rem;
+}

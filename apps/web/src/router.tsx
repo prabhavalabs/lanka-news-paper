@@ -51,7 +51,13 @@ export const router = createBrowserRouter([
           <StaticPage
             title="රහස්‍යතාව"
             body="පොදු වෙබ් අඩවිය කියවීමට ගිණුමක් අවශ්‍ය නැත. එකතු කරන දත්ත අවමයි."
-          />
+          >
+            <p>
+              <a href="/en/privacy-policy" lang="en" className="np-link np-latin">
+                Privacy Policy (English)
+              </a>
+            </p>
+          </StaticPage>
         ),
       },
       {
