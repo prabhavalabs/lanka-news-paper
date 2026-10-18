@@ -1,7 +1,7 @@
 import { createClient, type SocialPost, type SocialPostStatus, type SocialSettings, type SocialStatus } from '@snap/api-client'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Share2, ImagePlus, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { CreateSocialPost } from '@/components/create-social-post'
 import { PublishPlanPanel, ReviewBadge, ReviewPanel, triggerLabel } from '@/components/social-review'
@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { formatDateTime } from '@/lib/date-time'
-import { facebookAuthorizeURL, hashtagError, parseSocialHashtags, runeCount, runeLimitError, safeSocialLink, socialTextLimits } from '@/lib/social-publishing'
+import { hashtagError, parseSocialHashtags, runeCount, runeLimitError, safeSocialLink, socialTextLimits } from '@/lib/social-publishing'
 
 const client = createClient()
 const tabs: { label: string; statuses: SocialPostStatus[] }[] = [
@@ -32,55 +32,17 @@ export function SocialPage() {
   const administrator = me.data?.role === 'administrator'
   const status = useQuery({ queryKey: ['social', 'status'], queryFn: () => client.socialStatus(), enabled: administrator, refetchInterval: refreshInterval })
   const [tab, setTab] = useState(0)
-  const [stateID, setStateID] = useState('')
-  const [disconnectOpen, setDisconnectOpen] = useState(false)
-  // Stays true after the API answers, until the browser leaves for Facebook, so the button cannot be clicked twice.
-  const [redirecting, setRedirecting] = useState(false)
-  useEffect(() => {
-    // Returning with the browser Back button restores this page from cache; unlock the button again.
-    const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) setRedirecting(false) }
-    window.addEventListener('pageshow', onPageShow)
-    return () => window.removeEventListener('pageshow', onPageShow)
-  }, [])
-  const handledCallback = useRef(false)
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ['social'] })
   useEffect(() => {
     const onVisible = () => { if (document.visibilityState === 'visible') void queryClient.invalidateQueries({ queryKey: ['social'] }) }
     document.addEventListener('visibilitychange', onVisible)
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [queryClient])
-  useEffect(() => {
-    if (!administrator || handledCallback.current) return
-    handledCallback.current = true
-    const url = new URL(window.location.href)
-    const outcome = url.searchParams.get('facebook')
-    const error = url.searchParams.get('error')
-    if (outcome === 'connected') { toast.success('Facebook Page connected'); void refresh() }
-    if (outcome === 'choose_page') {
-      const id = url.searchParams.get('state_id')
-      if (id) setStateID(id)
-      else toast.error('Page selection expired. Connect Facebook again.')
-    }
-    if (error) toast.error(({ invalid_state: 'Connection expired. Connect Facebook again.', not_configured: 'Facebook publishing is not configured.', authorization_failed: 'Facebook authorization failed.', administrator_required: 'An administrator must connect the Page.' } as Record<string, string>)[error] ?? 'Could not connect Facebook. Please try again.')
-    if (outcome || error) {
-      for (const key of ['facebook', 'state_id', 'error']) url.searchParams.delete(key)
-      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash)
-    }
-  }, [administrator]) // Callback is consumed once, including under StrictMode.
-  const pages = useQuery({ queryKey: ['social', 'pending-pages', stateID], queryFn: () => client.pendingFacebookPages(stateID), enabled: !!stateID && administrator, retry: false })
-  const connect = useMutation({ mutationFn: () => client.connectFacebook(), onSuccess: ({ authorize_url }) => {
-    const safe = facebookAuthorizeURL(authorize_url)
-    if (safe) { setRedirecting(true); window.location.assign(safe) }
-    else toast.error('The server returned an invalid Facebook authorization URL.')
-  }, onError: () => toast.error('Could not start Facebook connection.') })
-  const select = useMutation({ mutationFn: (page_id: string) => client.selectFacebookPage({ state_id: stateID, page_id }), onSuccess: () => { setStateID(''); void refresh(); toast.success('Facebook Page connected') }, onError: () => toast.error('Could not select this Page. Try connecting again if the selection expired.') })
-  const disconnect = useMutation({ mutationFn: () => client.disconnectFacebook(), onSuccess: () => { setDisconnectOpen(false); void refresh(); toast.success('Facebook Page disconnected') }, onError: () => toast.error('Could not disconnect Facebook.') })
   if (me.isPending) return <Skeleton className="h-48 w-full" />
   if (!administrator) return <p className="p-6 text-sm text-muted-foreground">Social publishing is available to administrators only.</p>
   return <section className="flex min-w-0 flex-col gap-6">
     <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><Badge variant="outline" className="mb-2"><Share2 />Facebook Page</Badge><h1 className="font-heading text-2xl font-semibold tracking-tight">Social publishing</h1><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Prepare original Sinhala stories, review every image and caption, then publish to your Page.</p></div><CreateSocialPost onCreated={() => setTab(0)} /></div>
     {status.isPending ? <Skeleton className="h-48 w-full" /> : status.isError ? <Card><CardContent className="space-y-3"><p role="alert">Could not load social publishing.</p><Button variant="outline" onClick={() => void status.refetch()}>Try again</Button></CardContent></Card> : <>
-      <Connection status={status.data} phase={redirecting ? 'redirecting' : connect.isPending ? 'starting' : 'idle'} onConnect={() => { if (!connect.isPending && !redirecting) connect.mutate() }} onDisconnect={() => setDisconnectOpen(true)} />
+      <Connection status={status.data} />
       <Settings settings={status.data.settings} next={status.data.next_publish_eligible_at} />
       <Card><CardHeader><CardTitle>Publishing queue</CardTitle><CardDescription>Review the source evidence and keep the source credits in every caption. Captions never contain a link; the card shows the website name. Updates refresh every 30 seconds while this page is visible.</CardDescription></CardHeader><CardContent className="space-y-5">
         <div role="tablist" aria-label="Post status" className="flex flex-wrap gap-2">{tabs.map((item, i) => <Button key={item.label} role="tab" id={`social-tab-${i}`} aria-controls="social-panel" aria-selected={tab === i} tabIndex={tab === i ? 0 : -1} onKeyDown={(event) => {
@@ -90,19 +52,19 @@ export function SocialPage() {
         <div id="social-panel" role="tabpanel" aria-labelledby={`social-tab-${tab}`} className="space-y-4">{tabs[tab]!.statuses.map((key) => <Queue key={key} status={key} />)}</div>
       </CardContent></Card>
     </>}
-    <Dialog open={!!stateID} onOpenChange={(open) => { if (!open && !select.isPending) setStateID('') }}><DialogContent><DialogHeader><DialogTitle>Choose a Facebook Page</DialogTitle><DialogDescription>Select the Page to publish to. This selection expires after ten minutes.</DialogDescription></DialogHeader>{pages.isPending ? <Skeleton className="h-24" /> : pages.isError ? <p role="alert" className="text-sm">Could not load Pages. Close this dialog and connect Facebook again.</p> : <div className="space-y-2">{(pages.data?.items ?? []).map((page) => <Button key={page.id} variant="outline" className="h-auto w-full justify-start py-3" disabled={select.isPending} aria-busy={select.isPending && select.variables === page.id} onClick={() => select.mutate(page.id)}>{page.picture ? <img src={page.picture} alt="" className="size-10 rounded-full" /> : <Share2 />}<span className="min-w-0 truncate">{page.name}</span>{select.isPending && select.variables === page.id ? <><Loader2 className="ms-auto animate-spin" /><span className="text-xs text-muted-foreground">Connecting…</span></> : null}</Button>)}{!pages.data?.items?.length ? <p>No eligible Pages found. Connect again with Page content permissions.</p> : null}</div>}</DialogContent></Dialog>
-    <Dialog open={disconnectOpen} onOpenChange={setDisconnectOpen}><DialogContent><DialogHeader><DialogTitle>Disconnect Facebook Page?</DialogTitle><DialogDescription>This removes the saved Page token and pending connections. Queued posts remain, but publishing requires reconnecting.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setDisconnectOpen(false)}>Cancel</Button><Button variant="destructive" disabled={disconnect.isPending} onClick={() => disconnect.mutate()}>{disconnect.isPending ? 'Disconnecting…' : 'Disconnect'}</Button></DialogFooter></DialogContent></Dialog>
   </section>
 }
 
-function Connection({ status, phase, onConnect, onDisconnect }: { status: SocialStatus; phase: 'idle' | 'starting' | 'redirecting'; onConnect: () => void; onDisconnect: () => void }) {
-  const busy = phase !== 'idle'
-  const account = status.account
-  return <Card><CardHeader><CardTitle className="flex items-center gap-2"><Share2 className="size-5" />Page connection</CardTitle><CardDescription>Connect the owner's Page through Facebook Login for Business.</CardDescription></CardHeader><CardContent className="space-y-4">
-    <div className="flex flex-wrap items-center gap-3">{account?.picture ? <img src={account.picture} className="size-12 rounded-full" alt="Facebook Page" /> : null}<div><p className="font-medium">{account?.page_name || 'No Page connected'}</p>{account ? <p className="text-xs text-muted-foreground">Connected {formatDateTime(account.connected_at)}</p> : null}</div><Badge variant={status.connected ? 'default' : 'secondary'}>{status.connected ? 'Connected' : account?.status === 'needs_reconnect' ? 'Needs reconnect' : 'Disconnected'}</Badge><Badge variant="outline">{status.configured ? 'Configured' : 'Not configured'}</Badge></div>
-    {account?.last_error ? <p role="alert" className="break-words rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm">{account.last_error}</p> : null}
-    {!status.configured ? <div className="space-y-2 rounded-xl border bg-muted/40 p-4 text-sm"><p className="font-medium">Set up Facebook publishing on the server</p><p className="text-muted-foreground">Required environment variables:</p><div className="flex flex-wrap gap-2">{['SNAP_META_APP_ID', 'SNAP_META_APP_SECRET', 'SNAP_SOCIAL_TOKEN_KEY'].map((name) => <code key={name} className="break-all rounded-md border bg-background px-2 py-1 text-xs">{name}</code>)}</div><p className="text-muted-foreground">Callback configuration: <code className="break-all">SNAP_META_REDIRECT_URL</code></p><a href="https://github.com/prabhavalabs/lanka-news-paper/blob/feature/facebook-page-publishing/docs/social-publishing.md" target="_blank" rel="noreferrer" className="inline-block underline underline-offset-4">Read docs/social-publishing.md</a></div> : null}
-    <div className="flex flex-wrap items-center gap-2"><Button onClick={onConnect} disabled={!status.configured || busy} aria-busy={busy}>{busy ? <Loader2 className="animate-spin" /> : <Share2 />}{phase === 'starting' ? 'Starting connection…' : phase === 'redirecting' ? 'Opening Facebook…' : account ? 'Reconnect Facebook Page' : 'Connect Facebook Page'}</Button>{account ? <Button variant="outline" onClick={onDisconnect} disabled={busy}>Disconnect</Button> : null}{busy ? <p role="status" className="text-sm text-muted-foreground">{phase === 'starting' ? 'Preparing a secure Facebook login…' : 'Taking you to Facebook. Keep this tab open.'}</p> : null}</div>
+// Posts reach the Facebook Page through Loomcast; this card shows whether Loomcast can take them.
+function Connection({ status }: { status: SocialStatus }) {
+  const channel = status.channel
+  const state = !status.configured ? 'Not configured' : status.ready ? 'Ready' : 'Needs attention'
+  return <Card><CardHeader><CardTitle className="flex items-center gap-2"><Share2 className="size-5" />Publishing through Loomcast</CardTitle><CardDescription>Loomcast posts each approved card on the Facebook Page about two minutes after it is handed over. The Page connection itself is managed in Loomcast.</CardDescription></CardHeader><CardContent className="space-y-4">
+    <div className="flex flex-wrap items-center gap-3"><div className="min-w-0"><p className="font-medium">{channel?.name || 'No Facebook channel'}</p>{channel ? <p className="text-xs text-muted-foreground">Facebook · {channel.access} access{channel.dry_run ? ' · dry run' : ''}{channel.requires_approval ? ' · requires approval' : ''}</p> : null}</div><Badge variant={status.ready ? 'default' : 'secondary'}>{state}</Badge></div>
+    {status.problem ? <p role="alert" className="break-words rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm">{status.problem}</p> : null}
+    {status.warning ? <p role="status" className="break-words rounded-xl border bg-muted/40 p-3 text-sm">{status.warning}</p> : null}
+    {status.publish_retry_at && new Date(status.publish_retry_at) > new Date() ? <p role="status" className="text-sm text-muted-foreground">Loomcast asked us to wait; publishing resumes at {formatDateTime(status.publish_retry_at)}.</p> : null}
+    {!status.configured ? <div className="space-y-2 rounded-xl border bg-muted/40 p-4 text-sm"><p className="font-medium">Connect Loomcast on the server</p><p className="text-muted-foreground">In Loomcast, open Settings → API clients, create a client and grant the Thulawa News Facebook channel at publish access. Then set:</p><div className="flex flex-wrap gap-2">{['SNAP_LOOMCAST_API_KEY'].map((name) => <code key={name} className="break-all rounded-md border bg-background px-2 py-1 text-xs">{name}</code>)}</div><p className="text-muted-foreground">Set <code className="break-all">SNAP_LOOMCAST_CHANNEL_ID</code> as well only if the client is granted more than one Facebook channel.</p></div> : null}
   </CardContent></Card>
 }
 
@@ -184,7 +146,7 @@ function PostCard({ post }: { post: SocialPost }) {
       {post.last_error ? <p role="alert" className="break-words rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm">{post.last_error}</p> : null}
       <div className="flex flex-wrap gap-2">{['pending_review', 'approved'].includes(post.status) ? <Button size="sm" disabled={mutation.isPending} onClick={() => open('approve')}>{post.status === 'approved' ? 'Reschedule' : 'Approve'}</Button> : null}{editable ? <><Button size="sm" variant="outline" disabled={mutation.isPending} onClick={() => open('edit')}>Edit</Button><Button size="sm" variant="outline" disabled={mutation.isPending} onClick={() => mutation.mutate('render')}><RefreshCw />{mutation.isPending && mutation.variables === 'render' ? 'Rendering…' : 'Re-render image'}</Button><Button size="sm" variant="outline" disabled={mutation.isPending} onClick={() => mutation.mutate('review')}>{mutation.isPending && mutation.variables === 'review' ? <Loader2 className="animate-spin" /> : <ShieldCheck />}{mutation.isPending && mutation.variables === 'review' ? 'Reviewing…' : 'Run AI review'}</Button><Button size="sm" variant="outline" disabled={mutation.isPending} onClick={() => open('reject')}>Reject</Button></> : null}{['failed', 'needs_attention'].includes(post.status) ? <Button size="sm" variant="outline" onClick={() => open('retry')} disabled={mutation.isPending}>Retry</Button> : null}{permalink ? <Button size="sm" variant="outline" nativeButton={false} render={<a href={permalink} target="_blank" rel="noreferrer" />}>View on Facebook</Button> : null}</div>
     </div>
-    <Dialog open={!!action} onOpenChange={(value) => { if (!value && !mutation.isPending) setAction(null) }}><DialogContent className="max-h-[90dvh] overflow-y-auto" showCloseButton={!mutation.isPending}><DialogHeader><DialogTitle>{action === 'edit' ? 'Edit social post' : action === 'approve' ? 'Approve social post' : action === 'retry' ? 'Retry social post?' : 'Reject social post?'}</DialogTitle><DialogDescription>{action === 'edit' ? 'Saving re-renders the image. Caption is the complete Facebook text: retain the source credits and any hashtags you want published. Saving clears the AI review; run it again before approving.' : action === 'approve' ? 'Publish as soon as eligible or choose an earliest delivery time. Connection, enabled settings, quiet hours and caps still apply.' : action === 'retry' ? 'Check the actual Facebook Page before retrying to avoid a duplicate post.' : 'This removes the post from the publishing queue and retains its review history.'}</DialogDescription></DialogHeader>
+    <Dialog open={!!action} onOpenChange={(value) => { if (!value && !mutation.isPending) setAction(null) }}><DialogContent className="max-h-[90dvh] overflow-y-auto" showCloseButton={!mutation.isPending}><DialogHeader><DialogTitle>{action === 'edit' ? 'Edit social post' : action === 'approve' ? 'Approve social post' : action === 'retry' ? 'Retry social post?' : 'Reject social post?'}</DialogTitle><DialogDescription>{action === 'edit' ? 'Saving re-renders the image. Caption is the complete Facebook text: retain the source credits and any hashtags you want published. Saving clears the AI review; run it again before approving.' : action === 'approve' ? 'Publish as soon as eligible or choose an earliest delivery time. Connection, enabled settings, quiet hours and caps still apply.' : action === 'retry' ? 'Retrying withdraws the earlier copy from Loomcast first. Check the Facebook Page as well, to avoid a duplicate post.' : 'This removes the post from the publishing queue and retains its review history.'}</DialogDescription></DialogHeader>
       <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (action) mutation.mutate(action) }}>
         {action === 'edit' ? <>{Object.entries(socialTextLimits).map(([key, limit]) => {
           const field = key as keyof typeof socialTextLimits

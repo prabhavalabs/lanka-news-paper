@@ -100,20 +100,8 @@ func NewRouter(dependencies Dependencies) http.Handler {
 		protected.HandleFunc(route, storylines.admin)
 	}
 	socialAdmin := socialHandler{service: dependencies.Social}
-	callbackLimiter := &loginLimiter{}
-	mux.HandleFunc("GET /api/admin/social/facebook/callback", func(w http.ResponseWriter, request *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		if !callbackLimiter.Allow(time.Now()) {
-			http.Redirect(w, request, "/social?error=rate_limited", http.StatusSeeOther)
-			return
-		}
-		socialAdmin.callback(w, request)
-	})
 	for _, route := range []string{
 		"GET /api/admin/social/status", "GET /api/admin/social/settings", "POST /api/admin/social/settings",
-		"POST /api/admin/social/facebook/connect",
-		"GET /api/admin/social/facebook/pending-pages", "POST /api/admin/social/facebook/select", "POST /api/admin/social/facebook/disconnect",
 		"GET /api/admin/social/posts", "POST /api/admin/social/posts", "GET /api/admin/social/posts/{id}",
 		"PATCH /api/admin/social/posts/{id}", "POST /api/admin/social/posts/{id}/{action}", "POST /api/admin/social/run-selection",
 		"GET /api/admin/social/channels", "GET /api/admin/social/content",

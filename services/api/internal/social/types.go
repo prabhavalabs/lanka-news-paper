@@ -10,8 +10,7 @@ var (
 	ErrInvalid          = errors.New("invalid social publishing request")
 	ErrNotFound         = errors.New("social publishing item not found")
 	ErrConflict         = errors.New("social publishing item has changed or is already queued")
-	ErrNotConfigured    = errors.New("Facebook Page publishing is not configured")
-	ErrOAuthState       = errors.New("Facebook connection expired or was already used; connect again")
+	ErrNotConfigured    = errors.New("Facebook publishing through Loomcast is not configured")
 	ErrModelUnavailable = errors.New("social editorial model is unavailable")
 )
 
@@ -39,22 +38,20 @@ type Spectrum struct {
 	Right  int `json:"right"`
 }
 
-type Account struct {
-	ID             string     `json:"id"`
-	PageID         string     `json:"page_id"`
-	PageName       string     `json:"page_name"`
-	Picture        string     `json:"picture"`
-	Status         string     `json:"status"`
-	ConnectedAt    time.Time  `json:"connected_at"`
-	LastVerifiedAt *time.Time `json:"last_verified_at"`
-	TokenExpiresAt *time.Time `json:"token_expires_at"`
-	LastError      *string    `json:"last_error"`
+// PublishChannel is the Loomcast channel posts go out on: the Thulawa News Facebook Page.
+type PublishChannel struct {
+	ID               string `json:"id"`
+	Platform         string `json:"platform"`
+	Name             string `json:"name"`
+	Status           string `json:"status"`
+	Access           string `json:"access"`
+	DryRun           bool   `json:"dry_run"`
+	RequiresApproval bool   `json:"requires_approval"`
 }
 
 type Post struct {
 	Storyline            *StorylineInfo `json:"storyline,omitempty"`
 	ID                   string         `json:"id"`
-	AccountID            *string        `json:"account_id"`
 	SubjectKind          string         `json:"subject_kind"`
 	EventID              *string        `json:"event_id"`
 	ArticleID            *string        `json:"article_id"`
@@ -83,6 +80,8 @@ type Post struct {
 	PublishedAt          *time.Time     `json:"published_at"`
 	FBPostID             *string        `json:"fb_post_id"`
 	FBPermalink          *string        `json:"fb_permalink"`
+	LoomcastPostID       *string        `json:"loomcast_post_id"`
+	HandedOffAt          *time.Time     `json:"handed_off_at"`
 	Attempts             int            `json:"attempts"`
 	LastError            *string        `json:"last_error"`
 	LLMCallID            *int64         `json:"llm_call_id"`
@@ -125,9 +124,14 @@ type PostList struct {
 }
 
 type Status struct {
-	Configured            bool           `json:"configured"`
-	Connected             bool           `json:"connected"`
-	Account               *Account       `json:"account"`
+	// Configured means a Loomcast API key is set; Ready means posts can go out now.
+	Configured bool            `json:"configured"`
+	Ready      bool            `json:"ready"`
+	Channel    *PublishChannel `json:"channel"`
+	// Problem says why posts cannot go out; Warning flags a setup that still publishes.
+	Problem               string         `json:"problem,omitempty"`
+	Warning               string         `json:"warning,omitempty"`
+	PublishRetryAt        *time.Time     `json:"publish_retry_at"`
 	Settings              Settings       `json:"settings"`
 	Counts                map[string]int `json:"counts"`
 	NextPublishEligibleAt *time.Time     `json:"next_publish_eligible_at"`

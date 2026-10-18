@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,24 +13,15 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/media"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social/card"
-	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social/meta"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social/loomcast"
 )
-
-type graphClient interface {
-	AuthorizeURL(string) string
-	ExchangeCode(context.Context, string) (meta.Token, error)
-	ExchangeLongLived(context.Context, string) (meta.Token, error)
-	ListPages(context.Context, string) ([]meta.Page, error)
-	DebugToken(context.Context, string) (meta.TokenInfo, error)
-	PublishPhoto(context.Context, string, string, []byte, string) (meta.Photo, error)
-	Permalink(context.Context, string, string) (string, error)
-}
 
 type Service struct {
 	store            *Store
 	config           config.SocialConfig
-	graph            graphClient
-	cipher           *tokenCipher
+	loomcast         loomcastClient
+	channelMu        sync.Mutex
+	channelCache     channelLookup
 	model            llm.Completer
 	renderer         card.Renderer
 	media            *media.Store
@@ -42,9 +34,8 @@ func NewService(store *Store, configuration config.SocialConfig, model llm.Compl
 	if now == nil {
 		now = time.Now
 	}
-	cipher, _ := newTokenCipher(configuration.TokenKey)
-	graph := meta.NewClient(meta.Config{AppID: configuration.AppID, AppSecret: configuration.AppSecret, RedirectURL: configuration.RedirectURL, LoginConfigID: configuration.LoginConfigID, Version: configuration.GraphVersion}, nil)
-	return &Service{store: store, config: configuration, graph: graph, cipher: cipher, model: model, renderer: renderer, media: mediaStore, now: now}
+	client := loomcast.NewClient(loomcast.Config{BaseURL: configuration.LoomcastURL, APIKey: configuration.LoomcastAPIKey}, nil)
+	return &Service{store: store, config: configuration, loomcast: client, model: model, renderer: renderer, media: mediaStore, now: now}
 }
 
 func (service *Service) Store() *Store { return service.store }
@@ -81,9 +72,6 @@ const (
 func (service *Service) Select(ctx context.Context, trigger string) error {
 	if trigger != TriggerRealtime {
 		trigger = TriggerScheduled
-	}
-	if err := service.clearExpiredStates(ctx); err != nil {
-		return err
 	}
 	settings, err := service.store.GetSettings(ctx)
 	if err != nil {
@@ -295,6 +283,11 @@ func (service *Service) insertPost(ctx context.Context, candidate Candidate, ite
 }
 
 func (service *Service) Transition(ctx context.Context, id, action string, actor uuid.UUID, scheduled *time.Time, confirm bool) (Post, error) {
+	if action == "retry" {
+		if err := service.withdrawFromLoomcast(ctx, id); err != nil {
+			return Post{}, err
+		}
+	}
 	p, err := service.store.transition(ctx, id, action, actor, scheduled, confirm, service.now())
 	if err != nil {
 		return p, err
@@ -305,4 +298,22 @@ func (service *Service) Transition(ctx context.Context, id, action string, actor
 		}
 	}
 	return p, nil
+}
+
+// withdrawFromLoomcast cancels a post's Loomcast copy before an editor retries it, so a retry
+// can never publish the same story twice. A copy already out stops the retry.
+func (service *Service) withdrawFromLoomcast(ctx context.Context, id string) error {
+	p, err := service.store.GetPost(ctx, id)
+	if err != nil || p.LoomcastPostID == nil || !service.config.Configured() {
+		return err
+	}
+	_, err = service.loomcast.Cancel(ctx, *p.LoomcastPostID)
+	var apiError *loomcast.APIError
+	switch {
+	case err == nil, errors.As(err, &apiError) && apiError.Status == 404:
+		return nil
+	case errors.As(err, &apiError) && apiError.Status == 409:
+		return fmt.Errorf("%w: Loomcast has already published or is publishing this post; check the Page", ErrConflict)
+	}
+	return fmt.Errorf("withdraw the earlier Loomcast post: %w", err)
 }

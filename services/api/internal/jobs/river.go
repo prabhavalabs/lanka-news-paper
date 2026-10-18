@@ -614,7 +614,7 @@ func periodicJobDefinitions(newsletterSchedule ...river.PeriodicSchedule) []peri
 		{
 			PeriodicJobMetadata: PeriodicJobMetadata{
 				Kind: SocialPublishArgs{}.Kind(), Name: "Facebook Page publishing",
-				Description: "Publishes approved image posts within caps and quiet hours.",
+				Description: "Hands approved image posts to Loomcast within caps and quiet hours, and records what Loomcast published.",
 				Queue:       "social", Interval: 3 * time.Minute,
 			},
 			Constructor: func() (river.JobArgs, *river.InsertOpts) { return SocialPublishArgs{}, nil },

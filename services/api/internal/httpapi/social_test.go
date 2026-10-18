@@ -17,21 +17,32 @@ import (
 
 func TestSocialRoutesRequireAuthenticationAndCSRF(t *testing.T) {
 	router := NewRouter(Dependencies{})
-	for _, path := range []string{"/api/admin/social/status", "/api/admin/social/settings", "/api/admin/social/posts", "/api/admin/social/facebook/pending-pages?state_id=one"} {
+	for _, path := range []string{"/api/admin/social/status", "/api/admin/social/settings", "/api/admin/social/posts", "/api/admin/social/channels"} {
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		require.Equal(t, http.StatusUnauthorized, recorder.Code)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/admin/social/facebook/connect", strings.NewReader("{}"))
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/social/run-selection", strings.NewReader("{}"))
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusForbidden, recorder.Code)
-	request = httptest.NewRequest(http.MethodGet, "/api/admin/social/facebook/callback?code=private-code&state=state", nil)
-	recorder = httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-	require.Equal(t, http.StatusSeeOther, recorder.Code)
-	require.Equal(t, "/social?error=not_configured", recorder.Header().Get("Location"))
-	require.NotContains(t, recorder.Body.String(), "private-code")
+}
+
+// Publishing goes through Loomcast; the Meta app's login routes no longer exist.
+func TestSocialFacebookLoginRoutesAreGone(t *testing.T) {
+	router := NewRouter(Dependencies{})
+	for _, route := range []struct{ method, path string }{
+		{"GET", "/api/admin/social/facebook/callback?code=private-code&state=state"}, {"POST", "/api/admin/social/facebook/connect"},
+		{"GET", "/api/admin/social/facebook/pending-pages?state_id=one"}, {"POST", "/api/admin/social/facebook/disconnect"},
+	} {
+		request := httptest.NewRequest(route.method, route.path, strings.NewReader("{}"))
+		request.Header.Set("X-SNAP-CSRF", "1")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		require.NotEqual(t, http.StatusSeeOther, recorder.Code, route.path)
+		require.NotEqual(t, http.StatusOK, recorder.Code, route.path)
+		require.NotContains(t, recorder.Body.String(), "private-code")
+	}
 }
 
 func TestSocialHandlerRejectsRoleAndInvalidBodies(t *testing.T) {
@@ -48,34 +59,12 @@ func TestSocialHandlerRejectsRoleAndInvalidBodies(t *testing.T) {
 		handler.serve(recorder, request)
 		require.Equal(t, http.StatusBadRequest, recorder.Code)
 	}
-	request = httptest.NewRequest(http.MethodGet, "/api/admin/social/facebook/callback?code=private-code", nil)
-	request = request.WithContext(context.WithValue(request.Context(), userContextKey{}, iam.User{ID: uuid.New(), Role: "administrator"}))
-	recorder = httptest.NewRecorder()
-	handler.callback(recorder, request)
-	require.Equal(t, http.StatusSeeOther, recorder.Code)
-	require.Equal(t, "/social?error=not_configured", recorder.Header().Get("Location"))
-}
-
-func TestSocialCallbackIsRateLimitedWithoutSession(t *testing.T) {
-	router := NewRouter(Dependencies{})
-	for attempt := 0; attempt < 6; attempt++ {
-		recorder := httptest.NewRecorder()
-		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/social/facebook/callback?code=private-code&error_description=private-message", nil))
-		require.Equal(t, http.StatusSeeOther, recorder.Code)
-		location := "/social?error=not_configured"
-		if attempt == 5 {
-			location = "/social?error=rate_limited"
-		}
-		require.Equal(t, location, recorder.Header().Get("Location"))
-		require.NotContains(t, recorder.Body.String(), "private")
-	}
 }
 
 func TestSocialMutationsRequireCSRFAndSession(t *testing.T) {
 	router := NewRouter(Dependencies{})
 	for _, route := range []struct{ method, path string }{
-		{"POST", "/api/admin/social/settings"}, {"POST", "/api/admin/social/facebook/connect"},
-		{"POST", "/api/admin/social/facebook/select"}, {"POST", "/api/admin/social/facebook/disconnect"},
+		{"POST", "/api/admin/social/settings"},
 		{"POST", "/api/admin/social/posts"}, {"PATCH", "/api/admin/social/posts/one"},
 		{"POST", "/api/admin/social/posts/one/approve"}, {"POST", "/api/admin/social/posts/one/reject"},
 		{"POST", "/api/admin/social/posts/one/retry"}, {"POST", "/api/admin/social/posts/one/render"},
@@ -90,13 +79,6 @@ func TestSocialMutationsRequireCSRFAndSession(t *testing.T) {
 		router.ServeHTTP(recorder, request)
 		require.Equal(t, http.StatusUnauthorized, recorder.Code, route.path)
 	}
-}
-
-func TestSocialCallbackDoesNotForwardSensitiveReferrer(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	NewRouter(Dependencies{}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/social/facebook/callback?code=private-code&state=private-state", nil))
-	require.Equal(t, "no-referrer", recorder.Header().Get("Referrer-Policy"))
-	require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
 }
 
 func TestSessionLogoutKeepsStrictCookie(t *testing.T) {

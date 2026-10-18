@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/base64"
 	"fmt"
 	"net/mail"
 	"net/url"
@@ -224,39 +223,38 @@ func valueOrDefault(value string, fallback string) string {
 }
 
 type SocialConfig struct {
-	AppID         string
-	AppSecret     string
-	RedirectURL   string
-	LoginConfigID string
-	GraphVersion  string
-	TokenKey      []byte
-	PublicBaseURL string
-	ChromePath    string
+	// Posts reach the Facebook Page through Loomcast's machine API.
+	LoomcastURL    string
+	LoomcastAPIKey string
+	// LoomcastChannelID picks the Facebook channel when the API client is granted several.
+	LoomcastChannelID string
+	PublicBaseURL     string
+	ChromePath        string
 	// IncludeLink shows the website name (for example thulawanews.com) in the card footer.
 	// Captions never contain a URL.
 	IncludeLink bool
 }
 
 func (config SocialConfig) Configured() bool {
-	return config.AppID != "" && config.AppSecret != "" && len(config.TokenKey) == 32
+	return config.LoomcastAPIKey != ""
 }
 
+var (
+	loomcastKeyPattern = regexp.MustCompile(`^lc_api_[A-Za-z0-9]+$`)
+	uuidPattern        = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+)
+
 func loadSocialConfig(lookup LookupFunc, environment, newsletterBaseURL string) (SocialConfig, error) {
-	redirect := "http://127.0.0.1:5174/api/admin/social/facebook/callback"
-	if environment == "production" {
-		redirect = "https://admin.thulawanews.com/api/admin/social/facebook/callback"
-	}
 	base := newsletterBaseURL
 	if base == "" {
 		base = "https://thulawanews.com"
 	}
 	configured := SocialConfig{
-		AppID: strings.TrimSpace(lookup("SNAP_META_APP_ID")), AppSecret: strings.TrimSpace(lookup("SNAP_META_APP_SECRET")),
-		RedirectURL:   valueOrDefault(lookup("SNAP_META_REDIRECT_URL"), redirect),
-		LoginConfigID: strings.TrimSpace(lookup("SNAP_META_LOGIN_CONFIG_ID")),
-		GraphVersion:  valueOrDefault(lookup("SNAP_META_GRAPH_VERSION"), "v26.0"),
-		PublicBaseURL: strings.TrimRight(valueOrDefault(lookup("SNAP_SOCIAL_PUBLIC_BASE_URL"), base), "/"),
-		ChromePath:    strings.TrimSpace(lookup("SNAP_SOCIAL_CHROME_PATH")),
+		LoomcastURL:       strings.TrimRight(valueOrDefault(lookup("SNAP_LOOMCAST_URL"), "https://loomcast.prabhavalabs.com"), "/"),
+		LoomcastAPIKey:    strings.TrimSpace(lookup("SNAP_LOOMCAST_API_KEY")),
+		LoomcastChannelID: strings.ToLower(strings.TrimSpace(lookup("SNAP_LOOMCAST_CHANNEL_ID"))),
+		PublicBaseURL:     strings.TrimRight(valueOrDefault(lookup("SNAP_SOCIAL_PUBLIC_BASE_URL"), base), "/"),
+		ChromePath:        strings.TrimSpace(lookup("SNAP_SOCIAL_CHROME_PATH")),
 	}
 	if value := strings.TrimSpace(lookup("SNAP_SOCIAL_INCLUDE_LINK")); value != "" {
 		include, err := strconv.ParseBool(value)
@@ -265,14 +263,13 @@ func loadSocialConfig(lookup LookupFunc, environment, newsletterBaseURL string) 
 		}
 		configured.IncludeLink = include
 	}
-	if value := strings.TrimSpace(lookup("SNAP_SOCIAL_TOKEN_KEY")); value != "" {
-		key, err := base64.StdEncoding.DecodeString(value)
-		if err != nil || len(key) != 32 {
-			return SocialConfig{}, fmt.Errorf("SNAP_SOCIAL_TOKEN_KEY must be base64-encoded 32 bytes")
-		}
-		configured.TokenKey = key
+	if configured.LoomcastAPIKey != "" && !loomcastKeyPattern.MatchString(configured.LoomcastAPIKey) {
+		return SocialConfig{}, fmt.Errorf("SNAP_LOOMCAST_API_KEY must be a Loomcast API key starting with lc_api_")
 	}
-	for _, item := range []struct{ name, value string }{{"SNAP_META_REDIRECT_URL", configured.RedirectURL}, {"SNAP_SOCIAL_PUBLIC_BASE_URL", configured.PublicBaseURL}} {
+	if configured.LoomcastChannelID != "" && !uuidPattern.MatchString(configured.LoomcastChannelID) {
+		return SocialConfig{}, fmt.Errorf("SNAP_LOOMCAST_CHANNEL_ID must be a channel id (UUID)")
+	}
+	for _, item := range []struct{ name, value string }{{"SNAP_LOOMCAST_URL", configured.LoomcastURL}, {"SNAP_SOCIAL_PUBLIC_BASE_URL", configured.PublicBaseURL}} {
 		parsed, err := url.Parse(item.value)
 		if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 			return SocialConfig{}, fmt.Errorf("%s must be an absolute HTTP(S) URL without credentials, query or fragment", item.name)
@@ -280,9 +277,6 @@ func loadSocialConfig(lookup LookupFunc, environment, newsletterBaseURL string) 
 		if environment == "production" && parsed.Scheme != "https" {
 			return SocialConfig{}, fmt.Errorf("%s must use HTTPS in production", item.name)
 		}
-	}
-	if !regexp.MustCompile(`^v[0-9]+\.[0-9]+$`).MatchString(configured.GraphVersion) {
-		return SocialConfig{}, fmt.Errorf("SNAP_META_GRAPH_VERSION must have the form v26.0")
 	}
 	return configured, nil
 }

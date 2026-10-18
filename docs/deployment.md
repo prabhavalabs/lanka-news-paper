@@ -162,7 +162,7 @@ cp /opt/lanka-news-paper/nginx-thulawanews.final.conf /etc/nginx/sites-available
 nginx -t && systemctl reload nginx
 ```
 
-Then update `/opt/lanka-news-paper/.env`: add `https://thulawanews.com`, `https://www.thulawanews.com` and `https://admin.thulawanews.com` to `SNAP_ALLOWED_ORIGINS`, set `SNAP_NEWSLETTER_BASE_URL` and `SNAP_SOCIAL_PUBLIC_BASE_URL` to `https://thulawanews.com`, and set `SNAP_META_REDIRECT_URL=https://admin.thulawanews.com/api/admin/social/facebook/callback` after adding that redirect URI to the Meta app. Restart with `IMAGE_TAG=$(cat .deployed-image) docker compose up -d api worker web admin`.
+Then update `/opt/lanka-news-paper/.env`: add `https://thulawanews.com`, `https://www.thulawanews.com` and `https://admin.thulawanews.com` to `SNAP_ALLOWED_ORIGINS`, set `SNAP_NEWSLETTER_BASE_URL` and `SNAP_SOCIAL_PUBLIC_BASE_URL` to `https://thulawanews.com`. Restart with `IMAGE_TAG=$(cat .deployed-image) docker compose up -d api worker web admin`.
 
 ### lankanewspaper.prabhavalabs.com (previous)
 
@@ -204,17 +204,14 @@ Copy `infra/local/shared.env.example` to the repository-root `.env`, replace its
 See [Facebook Page publishing](social-publishing.md) for the new Meta Business app setup, review workflow, caps and failure recovery. These optional server variables are forwarded to API and worker:
 
 ```dotenv
-SNAP_META_APP_ID=
-SNAP_META_APP_SECRET=
-SNAP_META_REDIRECT_URL=https://admin.lankanewspaper.prabhavalabs.com/api/admin/social/facebook/callback
-SNAP_META_LOGIN_CONFIG_ID=
-SNAP_META_GRAPH_VERSION=v26.0
-SNAP_SOCIAL_TOKEN_KEY=
+SNAP_LOOMCAST_URL=https://loomcast.prabhavalabs.com
+SNAP_LOOMCAST_API_KEY=
+SNAP_LOOMCAST_CHANNEL_ID=
 SNAP_SOCIAL_PUBLIC_BASE_URL=https://lankanewspaper.prabhavalabs.com
 SNAP_SOCIAL_CHROME_PATH=/usr/bin/chromium
 SNAP_SOCIAL_CHROME_NO_SANDBOX=true
 ```
 
-Generate `SNAP_SOCIAL_TOKEN_KEY` once as base64 encoded 32 bytes and preserve it with deployment secrets. Both processes must have the same key and use shared media storage (the Compose worker now also mounts `media-data`). Chrome/Chromium and Sinhala fonts are included by the image renderer's Docker configuration. If renderer initialization fails, queue/review still work and publishing waits for a rendered image. No app configuration automatically enables selection or auto-publish; both default to off in migration 54.
+Facebook posts go out through Loomcast: set `SNAP_LOOMCAST_API_KEY` to the key of a Loomcast API client with publish access to the Thulawa News Facebook channel (see [social-publishing.md](social-publishing.md)). Both processes must have the same key and use shared media storage (the Compose worker now also mounts `media-data`). Chrome/Chromium and Sinhala fonts are included by the image renderer's Docker configuration. If renderer initialization fails, queue/review still work and publishing waits for a rendered image. No app configuration automatically enables selection or auto-publish; both default to off in migration 54.
 
 The existing admin-origin `/api/` proxy carries the OAuth callback and session cookie. Manual post creation gets the existing long-inference nginx timeout, because it invokes the editorial model. After deployment, verify the Page connection and a reviewed post through the actual Meta app; Development-mode API success does not by itself prove public post visibility.

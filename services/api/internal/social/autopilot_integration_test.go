@@ -116,9 +116,9 @@ func TestSocialPublisherPrioritisesImportantPostsIntegration(t *testing.T) {
 	routine := queue(72, "මහනුවර පාසල් ක්‍රීඩා උළෙල", true)
 	repeat := queue(95, "පුවත", false)
 	important := queue(90, "පාර්ලිමේන්තුව අයවැය සම්මත කරයි", true)
-	graph := service.graph.(*fakeGraph)
-	require.NoError(t, service.Publish(ctx))
-	require.Equal(t, 1, graph.uploads, "an important post passes the daily limit")
+	fake := service.loomcast.(*fakeLoomcast)
+	publishNow(t, service)
+	require.Equal(t, 1, fake.created, "an important post passes the daily limit")
 	for id, want := range map[string]string{important: "published", routine: "approved", repeat: "skipped"} {
 		p, err := service.store.GetPost(ctx, id)
 		require.NoError(t, err)
@@ -127,7 +127,7 @@ func TestSocialPublisherPrioritisesImportantPostsIntegration(t *testing.T) {
 	later := now.Add(3 * time.Hour)
 	service.now = func() time.Time { return later }
 	require.NoError(t, service.Publish(ctx))
-	require.Equal(t, 1, graph.uploads, "a routine post waits for tomorrow's limit")
+	require.Equal(t, 1, fake.created, "a routine post waits for tomorrow's limit")
 }
 
 func TestSocialPublisherDropsSameStoryFromAnotherOutletIntegration(t *testing.T) {
@@ -158,7 +158,7 @@ func TestSocialPublisherDropsSameStoryFromAnotherOutletIntegration(t *testing.T)
 	service.model = model
 	require.NoError(t, service.Publish(ctx))
 	require.Equal(t, 1, model.repeatCalls)
-	require.Zero(t, service.graph.(*fakeGraph).uploads)
+	require.Zero(t, service.loomcast.(*fakeLoomcast).created)
 	p, err := service.store.GetPost(ctx, waiting)
 	require.NoError(t, err)
 	require.Equal(t, "skipped", p.Status)
@@ -167,7 +167,7 @@ func TestSocialPublisherDropsSameStoryFromAnotherOutletIntegration(t *testing.T)
 	// A different story is checked once, then published.
 	other := queue("පාර්ලිමේන්තුව අයවැය සම්මත කරයි")
 	model.repeat = llm.Response{}
-	require.NoError(t, service.Publish(ctx))
+	publishNow(t, service)
 	require.Equal(t, 2, model.repeatCalls)
 	p, err = service.store.GetPost(ctx, other)
 	require.NoError(t, err)

@@ -3,7 +3,6 @@ package httpapi
 import (
 	"errors"
 	"net/http"
-	"net/url"
 	"strconv"
 	"time"
 
@@ -40,38 +39,6 @@ func (handler socialHandler) serve(w http.ResponseWriter, request *http.Request)
 			}
 			result, err = handler.service.Store().UpdateSettings(request.Context(), input, actor)
 		}
-	case "/api/admin/social/facebook/connect":
-		var input struct{}
-		if decodeJSON(request, &input) != nil {
-			writeSocialProblem(w, social.ErrInvalid)
-			return
-		}
-		var authorize string
-		authorize, err = handler.service.Connect(request.Context(), actor)
-		result = map[string]string{"authorize_url": authorize}
-	case "/api/admin/social/facebook/pending-pages":
-		var pages []social.PendingPage
-		pages, err = handler.service.PendingPages(request.Context(), request.URL.Query().Get("state_id"), actor)
-		result = map[string]any{"items": pages}
-	case "/api/admin/social/facebook/select":
-		var input struct {
-			StateID string `json:"state_id"`
-			PageID  string `json:"page_id"`
-		}
-		if decodeJSON(request, &input) != nil {
-			writeSocialProblem(w, social.ErrInvalid)
-			return
-		}
-		err = handler.service.SelectPage(request.Context(), input.StateID, input.PageID, actor)
-		result = map[string]bool{"ok": true}
-	case "/api/admin/social/facebook/disconnect":
-		var input struct{}
-		if decodeJSON(request, &input) != nil {
-			writeSocialProblem(w, social.ErrInvalid)
-			return
-		}
-		err = handler.service.Disconnect(request.Context(), actor)
-		result = map[string]bool{"ok": true}
 	case "/api/admin/social/run-selection":
 		var input struct{}
 		if decodeJSON(request, &input) != nil {
@@ -187,38 +154,6 @@ func (handler socialHandler) serve(w http.ResponseWriter, request *http.Request)
 	writeJSON(w, code, result)
 }
 
-// The OAuth state authenticates this cross-site return; Strict session cookies are absent.
-func (handler socialHandler) callback(w http.ResponseWriter, request *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	if handler.service == nil {
-		http.Redirect(w, request, "/social?error=not_configured", http.StatusSeeOther)
-		return
-	}
-	request, cancel := inferenceRequest(w, request)
-	defer cancel()
-	outcome, stateID, callbackErr := handler.service.Callback(request.Context(), request.URL.Query().Get("code"), request.URL.Query().Get("state"), request.URL.Query().Get("error"))
-	query := url.Values{}
-	if callbackErr != nil {
-		errorCode := "connection_failed"
-		if errors.Is(callbackErr, social.ErrOAuthState) {
-			errorCode = "invalid_state"
-		} else if errors.Is(callbackErr, social.ErrNotConfigured) {
-			errorCode = "not_configured"
-		} else if errors.Is(callbackErr, social.ErrInvalid) {
-			errorCode = "authorization_failed"
-		}
-		query.Set("error", errorCode)
-	} else {
-		query.Set("facebook", outcome)
-		if stateID != "" {
-			query.Set("state_id", stateID)
-		}
-	}
-	http.Redirect(w, request, "/social?"+query.Encode(), http.StatusSeeOther)
-	return
-}
-
 func writeSocialProblem(w http.ResponseWriter, err error) {
 	status, title, detail := http.StatusInternalServerError, "Social publishing failed", "Could not complete the social publishing request."
 	switch {
@@ -228,8 +163,6 @@ func writeSocialProblem(w http.ResponseWriter, err error) {
 		status, title, detail = http.StatusNotFound, "Not found", err.Error()
 	case errors.Is(err, social.ErrConflict):
 		status, title, detail = http.StatusConflict, "Queue conflict", err.Error()
-	case errors.Is(err, social.ErrOAuthState):
-		status, title, detail = http.StatusBadRequest, "Connection expired", err.Error()
 	case errors.Is(err, social.ErrNotConfigured), errors.Is(err, social.ErrModelUnavailable):
 		status, title, detail = http.StatusServiceUnavailable, "Social publishing unavailable", err.Error()
 	}

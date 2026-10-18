@@ -15,13 +15,12 @@ type Channel struct {
 }
 
 func (service *Service) Channels(ctx context.Context) ([]Channel, error) {
-	status, err := service.Status(ctx)
-	if err != nil {
-		return nil, err
-	}
 	facebook := "disconnected"
-	if status.Account != nil {
-		facebook = status.Account.Status
+	if service.config.Configured() {
+		facebook = "connected"
+		if !service.publishChannel(ctx, false).ready() {
+			facebook = "needs_attention"
+		}
 	}
 	return []Channel{
 		{Key: "facebook", Name: "Facebook Page", Available: true, Status: facebook},
@@ -100,19 +99,15 @@ func (service *Service) annotatePlans(ctx context.Context, posts []Post) error {
 	if err != nil {
 		return err
 	}
-	account, err := service.store.Account(ctx)
-	if err != nil {
-		return err
-	}
-	connected := service.config.Configured() && account != nil && account.Status == "connected"
+	connected := service.publishChannel(ctx, false).ready()
 	estimates := map[string]time.Time{}
 	if settings.Enabled && connected {
 		history, err := service.store.publishHistory(ctx, now)
 		if err != nil {
 			return err
 		}
-		var retryAt *time.Time
-		if err = service.store.pool.QueryRow(ctx, `SELECT (SELECT publish_retry_at FROM social_accounts WHERE status='connected')`).Scan(&retryAt); err != nil {
+		retryAt, err := service.store.publishRetryAt(ctx, service.store.pool)
+		if err != nil {
 			return err
 		}
 		rows, err := service.store.pool.Query(ctx, `SELECT id::text,COALESCE(scheduled_for,$1) FROM social_posts WHERE status='approved'
@@ -160,13 +155,17 @@ func planFor(p Post, settings Settings, connected bool, estimates map[string]tim
 	case "published":
 		return PublishPlan{State: "published", At: p.PublishedAt, Note: "Published on the Page."}
 	case "publishing":
-		return PublishPlan{State: "publishing", Note: "Uploading to Facebook now."}
+		note := "Handed to Loomcast, which posts it on the Facebook Page at about this time."
+		if lastError != "" {
+			note += " " + lastError + "."
+		}
+		return PublishPlan{State: "publishing", At: p.HandedOffAt, Estimated: true, Note: note}
 	case "approved":
 		if !settings.Enabled {
 			return PublishPlan{State: "paused", Note: "Approved, but publishing is turned off in the settings. It goes out after publishing is enabled."}
 		}
 		if !connected {
-			return PublishPlan{State: "paused", Note: "Approved, but no Facebook Page is connected. It goes out after the Page is connected."}
+			return PublishPlan{State: "paused", Note: "Approved, but publishing through Loomcast is not ready. The Social page says what to fix; it goes out after that."}
 		}
 		if at, ok := estimates[p.ID]; ok {
 			return PublishPlan{State: "scheduled", At: &at, Estimated: true, Note: "Expected time: the next free slot after the hourly and daily limits, the minimum gap and quiet hours. Breaking news and the most important stories go first and may pass the daily limit."}
