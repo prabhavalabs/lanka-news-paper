@@ -125,3 +125,10 @@ func TestEditorialRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {
 		require.ErrorIs(t, err, ErrModelUnavailable)
 	}
 }
+
+func TestPromptsAskForCaptionsFacebookShowsWhole(t *testing.T) {
+	for _, prompt := range []string{editorialPrompt, revisionPrompt} {
+		require.Contains(t, prompt, captionJoinerGuidance)
+	}
+	require.Contains(t, captionJoinerGuidance, "Never misspell")
+}
