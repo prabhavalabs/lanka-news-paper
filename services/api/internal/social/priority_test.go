@@ -57,7 +57,7 @@ func TestRepeatsPublished(t *testing.T) {
 func TestCaptionForReviewDropsOwnLink(t *testing.T) {
 	p := Post{LinkURL: "https://thulawanews.com/e/1", Caption: BuildCaption("පුවත.", []string{"Hiru News"}, "https://thulawanews.com/e/1", []string{"දුම්රිය"})}
 	require.NotContains(t, captionForReview(p), "thulawanews.com")
-	require.Contains(t, captionForReview(p), "මූලාශ්‍ර: Hiru News\n\n#දුම්රිය")
+	require.Contains(t, captionForReview(p), "වාර්තා කළේ: Hiru News\n\n#දුම්රිය")
 }
 
 func TestPlanFor(t *testing.T) {
@@ -156,7 +156,7 @@ func TestBreakingStorylineUsesNormalOverlap(t *testing.T) {
 }
 
 func TestLimitCaptionKeepsLineBreaks(t *testing.T) {
-	caption := "පුවත.\n\nමූලාශ්‍ර: Hiru News"
+	caption := "පුවත.\n\nවාර්තා කළේ: Hiru News"
 	require.Equal(t, caption, limitCaption(caption))
 	long := strings.Repeat("අ", maxCaptionRunes+50)
 	require.Equal(t, maxCaptionRunes, utf8.RuneCountInString(limitCaption(long)))

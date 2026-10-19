@@ -13,8 +13,8 @@ import (
 
 func TestCaptionCreditsAndHashtags(t *testing.T) {
 	caption := BuildCaption("පුවත මෙන්න.", []string{"A", "B"}, "https://news.invalid/e/one", []string{"#News", "පුවත්", "bad tag", "News", "Extra"})
-	require.Equal(t, "පුවත මෙන්න.\n\nමූලාශ්‍ර: A, B\n\nhttps://news.invalid/e/one\n\n#News #පුවත් #Extra", caption)
-	require.Equal(t, "පුවත මෙන්න.\n\nමූලාශ්‍ර: A, B\n\n#News", BuildCaption("පුවත මෙන්න.", []string{"A", "B"}, "", []string{"News"}))
+	require.Equal(t, "පුවත මෙන්න.\n\nවාර්තා කළේ: A, B\n\nhttps://news.invalid/e/one\n\n#News #පුවත් #Extra", caption)
+	require.Equal(t, "පුවත මෙන්න.\n\nවාර්තා කළේ: A, B\n\n#News", BuildCaption("පුවත මෙන්න.", []string{"A", "B"}, "", []string{"News"}))
 }
 
 func TestEditorialValidation(t *testing.T) {

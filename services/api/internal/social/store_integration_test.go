@@ -887,7 +887,7 @@ func TestSocialReviewGateIntegration(t *testing.T) {
 		require.Equal(t, 1, p.ReviewRevisions)
 		require.Equal(t, "මාතර සිද්ධිය", p.HeadlineSI)
 		require.Contains(t, p.Caption, "පොලිසිය පවසන පරිදි")
-		require.Contains(t, p.Caption, "මූලාශ්‍ර:")
+		require.Contains(t, p.Caption, "වාර්තා කළේ:")
 		require.NotContains(t, p.Caption, "https://")
 	})
 	settings.RealtimeEnabled = false
