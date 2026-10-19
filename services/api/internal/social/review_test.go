@@ -34,3 +34,9 @@ func TestValidateReviewClampsAndCleans(t *testing.T) {
 	require.Equal(t, "major", result.Issues[0].Severity, "unknown severities are treated as major")
 	require.False(t, approvable(result, 0))
 }
+
+func TestCaptionBodyReadsBothCreditLabels(t *testing.T) {
+	require.Equal(t, "පුවත.", captionBody(BuildCaption("පුවත.", []string{"Hiru News"}, "", nil)))
+	require.Equal(t, "පුවත.", captionBody("පුවත.\n\nමූලාශ්‍ර: Hiru News"))
+	require.NotContains(t, sourceCreditLabel, "\u200d")
+}

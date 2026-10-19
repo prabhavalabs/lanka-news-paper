@@ -110,8 +110,15 @@ func containsSinhala(value string) bool {
 	return false
 }
 
+// sourceCreditLabel starts the caption's source credit line. It has no zero-width joiner:
+// Facebook's website splits joined Sinhala letters such as ්‍ර apart, and this line is ours.
+const sourceCreditLabel = "වාර්තා කළේ: "
+
+// legacySourceCreditLabel started the credit line on posts written before October 2026.
+const legacySourceCreditLabel = "මූලාශ්‍ර: "
+
 func BuildCaption(caption string, sources []string, link string, hashtags []string) string {
-	parts := []string{strings.TrimSpace(caption), "මූලාශ්‍ර: " + strings.Join(sources, ", ")}
+	parts := []string{strings.TrimSpace(caption), sourceCreditLabel + strings.Join(sources, ", ")}
 	if link != "" {
 		parts = append(parts, link)
 	}

@@ -24,7 +24,7 @@ Check:
 3. Neutrality: no opinion, loaded or emotive words, sensationalism, clickbait, or favouring any party, politician, religion or ethnic group.
 4. Language: natural, professional newspaper Sinhala with correct spelling and grammar. Public figures and officials take respectful titles; suspects and accused persons are named plainly without honorifics.
 5. Safety and law: no defamation, hate speech, graphic violence, identification of minors or victims of sexual crimes, or content that could prejudice an ongoing court case.
-6. Completeness: the headline reflects the story fairly, the caption keeps the source credit line "මූලාශ්‍ර: ..." and speaks to readers, never about the drafting process.
+6. Completeness: the headline reflects the story fairly, the caption keeps the source credit line "වාර්තා කළේ: ..." and speaks to readers, never about the drafting process.
 7. Repetition: you also receive recent_posts, the posts already published or queued on the Page in the last 48 hours. Set repeats_recent_post=true when this post reports the same story or event as one of them without a major new development (such as an arrest, a verdict or an official decision). The same incident reported by another outlet, in other words, or with a different or updated figure (such as a death toll) is a repeat; a revised figure is a new development only when the earlier post is more than 12 hours old and the scale has changed markedly. A different story of the same kind (another accident, another court case) is not a repeat. Repetition is not a text problem: do not list it as an issue.
 For a trending storyline, a genuine new development (a protest reaching its destination, a memorandum handed over, a court outcome, an official response) is an update, not a repeat of the saga. Still reject updates that add nothing new, and same-storyline updates within the supplied storyline_cooldown_hours cooldown or while another update is queued. Breaking posts on either side are exempt from storyline spacing; judge them only on whether they repeat a development. Storyline IDs, breaking flags and times are supplied for this purpose.
 The Thulawa News website is shown on the image by the system; never raise an issue about a missing or unverified link or URL.
@@ -323,8 +323,10 @@ func revisable(result reviewResult, minScore int) bool {
 
 // captionBody returns the written part of a caption, without the source credits and hashtags.
 func captionBody(caption string) string {
-	if i := strings.Index(caption, "\n\nමූලාශ්‍ර:"); i >= 0 {
-		return strings.TrimSpace(caption[:i])
+	for _, label := range []string{sourceCreditLabel, legacySourceCreditLabel} {
+		if i := strings.Index(caption, "\n\n"+label); i >= 0 {
+			return strings.TrimSpace(caption[:i])
+		}
 	}
 	return strings.TrimSpace(caption)
 }
