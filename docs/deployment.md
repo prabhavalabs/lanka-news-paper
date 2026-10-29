@@ -10,8 +10,7 @@ The pipeline targets about two minutes. Go tests run in parallel with the releas
 
 - `/opt/lanka-news-paper/.env`: production secrets, stored only on the VPS.
 - `lanka-news-paper_media-data`: local upload fallback volume.
-- `lanka-news-paper_postgres-data`: PostgreSQL data volume.
-- `127.0.0.1:15432`: PostgreSQL, reachable only through an authenticated SSH tunnel.
+- PostgreSQL: the `lanka_news` database on the host's shared server (`platform-postgres` on the external `platform` Docker network, `127.0.0.1:5432` on the host), backed up nightly with every other app. Reachable only through an authenticated SSH tunnel.
 - `127.0.0.1:18173`: public web container.
 - `127.0.0.1:18174`: admin container.
 - `127.0.0.1:18090`: API health/debug port.
@@ -191,7 +190,7 @@ Until the application has end users, a local API may use the deployed database a
 
 ```sh
 ssh -N -o ExitOnForwardFailure=yes \
-  -L 127.0.0.1:55433:127.0.0.1:15432 \
+  -L 127.0.0.1:55433:127.0.0.1:5432 \
   <production-user>@178.104.111.17
 ```
 
