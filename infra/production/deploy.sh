@@ -10,7 +10,6 @@ cd "$(dirname "$0")"
 export IMAGE_TAG="$1"
 
 docker compose pull
-docker compose up -d postgres
 docker compose --profile tools run --rm migrate
 docker compose up -d --remove-orphans --wait
 
