@@ -29,6 +29,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/reels"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/registry"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/retention"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
@@ -176,6 +177,10 @@ func run(logger *slog.Logger) error {
 			LogRetention:      retention.NewStore(pool, nil),
 			RunLogCleanup:     func(ctx context.Context) error { return jobs.EnqueueLogCleanup(ctx, producer) },
 			RebuildEdition:    func(ctx context.Context) error { return jobs.EnqueueEditionBuild(ctx, producer) },
+			Reels:             reels.NewStore(pool),
+			EnqueueReel: func(ctx context.Context, reelID string, rerender bool) error {
+				return jobs.EnqueueReelBuild(ctx, producer, reelID, rerender)
+			},
 			RunContentBackfill: func(ctx context.Context) error {
 				return jobs.EnqueueContentBackfill(ctx, producer)
 			},

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/politics"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/reels"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social/card"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/storyline"
@@ -108,7 +110,17 @@ func run(logger *slog.Logger) error {
 	poller := ingest.NewPoller(pool, logger, clusters)
 	frontPage := frontpage.NewService(frontpage.NewStore(pool), time.Now)
 	frontPage.SetDesk(frontpage.Desk{Model: model, Illustrator: codexClient, Media: mediaStore, ImageModel: imageModel()})
-	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news, newsletterService, adminAnalysis, jobs.Extras{Social: socialService, FrontPage: frontPage, Storylines: storyline.NewService(storyline.NewStore(pool), model)})
+	reelService := reels.NewService(reels.Config{
+		Store: reels.NewStore(pool), Storylines: storyline.NewStore(pool), News: news, Model: model,
+		Illustrator: codexClient, ImageModel: imageModel(), Media: mediaStore,
+		Library:  reels.Library{Dir: reelMusicDirectory()},
+		Renderer: reels.Renderer{ChromePath: loaded.Social.ChromePath, NoSandbox: chromeNoSandbox()},
+		Logger:   logger,
+	})
+	if err := reelService.Ready(); err != nil {
+		logger.Warn("reel drafts unavailable on this worker", "error", err)
+	}
+	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news, newsletterService, adminAnalysis, jobs.Extras{Social: socialService, FrontPage: frontPage, Storylines: storyline.NewService(storyline.NewStore(pool), model), Reels: reelService})
 	if err != nil {
 		return err
 	}
@@ -144,6 +156,20 @@ func run(logger *slog.Logger) error {
 	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), loaded.ShutdownTimeout)
 	defer cancelShutdown()
 	return client.Stop(shutdownContext)
+}
+
+// reelMusicDirectory holds the licensed Reel soundtracks (mounted read-only in production).
+func reelMusicDirectory() string {
+	if directory := strings.TrimSpace(os.Getenv("SNAP_REEL_MUSIC_DIR")); directory != "" {
+		return directory
+	}
+	return ".data/reel-music"
+}
+
+// chromeNoSandbox matches the social card renderer: containers running Chrome need --no-sandbox.
+func chromeNoSandbox() bool {
+	enabled, _ := strconv.ParseBool(os.Getenv("SNAP_SOCIAL_CHROME_NO_SANDBOX"))
+	return enabled || os.Getuid() == 0
 }
 
 // imageModel is the Codex model that drives the built-in image tool for illustrations.

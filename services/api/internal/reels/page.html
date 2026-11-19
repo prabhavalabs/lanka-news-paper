@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="si">
+<head>
+<meta charset="utf-8">
+<style>
+{{.Fonts}}
+:root { --navy:#0d1b36; --navy2:#14233f; --gold:#d4a82c; --red:#e0102e; --fb:#1877f2; --love:#f0284a; }
+* { box-sizing:border-box; margin:0; padding:0; }
+html, body { width:1080px; height:1920px; overflow:hidden; background:var(--navy); }
+body { position:relative; font-family:'Yaldevi Colombo','Noto Sans Sinhala',sans-serif; color:#fff; }
+
+#stage { position:absolute; left:-30px; top:-30px; width:1140px; height:1290px; overflow:hidden; }
+.shot { position:absolute; inset:0; opacity:0; }
+.shot img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform-origin:50% 40%;
+  filter:saturate(.82) contrast(1.1) brightness(.9); }
+.credit { position:absolute; right:58px; bottom:520px; padding:8px 16px; border-radius:10px; background:rgba(0,0,0,.55);
+  font:600 24px 'Yaldevi Colombo','Noto Sans Sinhala',sans-serif; color:#f3f3f3; letter-spacing:.2px; }
+#shade { position:absolute; inset:0; background:
+  linear-gradient(180deg, rgba(13,27,54,.55) 0%, rgba(13,27,54,0) 16%, rgba(13,27,54,0) 44%, rgba(13,27,54,.86) 64%, var(--navy) 80%); }
+#leak { position:absolute; width:900px; height:900px; left:-300px; top:-200px; border-radius:50%;
+  background:radial-gradient(circle, rgba(255,196,90,.32) 0%, rgba(255,160,60,0) 65%); mix-blend-mode:screen; }
+#flash { position:absolute; inset:0; background:#fff; opacity:0; }
+#seam { position:absolute; left:0; right:0; top:1150px; height:200px; background:var(--navy); }
+
+#brand { position:absolute; left:48px; top:118px; height:84px; width:236px; border-radius:42px; background:#fff;
+  box-shadow:0 8px 30px rgba(0,0,0,.35); overflow:hidden; }
+#brand i { position:absolute; left:14px; top:6px; height:72px; width:179px;
+  background:url('{{.Masthead}}') no-repeat 0 0 / auto 72px; }
+#live { position:absolute; right:48px; top:132px; padding:10px 20px; border-radius:12px; background:var(--red);
+  font:600 30px 'Yaldevi Colombo',sans-serif; display:flex; align-items:center; gap:12px; }
+#live b { width:16px; height:16px; border-radius:50%; background:#fff; display:block; }
+
+#panel { position:absolute; left:44px; right:44px; top:770px; }
+.tag { display:inline-block; padding:10px 26px 14px; background:var(--red); color:#fff; border-radius:8px;
+  font:600 46px 'Yaldevi Colombo',sans-serif; transform:rotate(-2deg); box-shadow:0 10px 30px rgba(224,16,46,.45); }
+.headline { margin-top:22px; }
+.line { display:table; position:relative; overflow:hidden; margin:0 0 12px; padding:6px 22px 14px; border-radius:8px;
+  font:400 92px/1.12 'AF Sandarenu','Noto Sans Sinhala',sans-serif; white-space:nowrap; box-shadow:0 10px 30px rgba(0,0,0,.35); }
+.line:nth-child(1) { background:#fff; color:var(--navy); }
+.line:nth-child(2) { background:var(--gold); color:var(--navy); }
+.line:nth-child(3) { background:var(--navy2); color:#fff; border:3px solid var(--gold); }
+.shine { position:absolute; top:-20%; bottom:-20%; width:140px; left:-200px;
+  background:linear-gradient(100deg, rgba(255,255,255,0), rgba(255,255,255,.75), rgba(255,255,255,0)); }
+
+#facts { position:relative; height:200px; margin-top:20px; }
+.fact { position:absolute; inset:0; display:flex; align-items:center; gap:22px; padding:14px 26px 14px 18px;
+  background:rgba(255,255,255,.08); border-left:8px solid var(--gold); border-radius:14px; opacity:0; }
+.fact .n { flex:none; width:78px; height:78px; border-radius:50%; background:var(--gold); color:var(--navy);
+  font:600 44px/78px 'Yaldevi Colombo',sans-serif; text-align:center; }
+.fact .t { font:600 44px/1.3 'Yaldevi Colombo','Noto Sans Sinhala',sans-serif; }
+.fact .of { position:absolute; right:18px; top:10px; font:600 22px 'Yaldevi Colombo',sans-serif; color:rgba(255,255,255,.55); }
+
+.question { margin-top:26px; font:600 58px/1.22 'Yaldevi Colombo','Noto Sans Sinhala',sans-serif; color:var(--gold);
+  text-align:center; text-wrap:balance; text-shadow:0 4px 18px rgba(0,0,0,.5); }
+.cta { display:flex; justify-content:center; gap:30px; margin-top:24px; }
+.btn { display:flex; align-items:center; justify-content:center; gap:20px; width:420px; height:128px; border-radius:30px;
+  font:600 58px 'Yaldevi Colombo','Noto Sans Sinhala',sans-serif; color:#fff; box-shadow:0 14px 34px rgba(0,0,0,.45);
+  border:4px solid rgba(255,255,255,.9); }
+.btn svg { width:66px; height:66px; flex:none; }
+.btn.no { background:var(--fb); }
+.btn.yes { background:var(--love); }
+.btn.solo { width:880px; background:var(--fb); font-size:50px; }
+.hint { margin-top:18px; text-align:center; font:600 28px 'Yaldevi Colombo','Noto Sans Sinhala',sans-serif; color:rgba(255,255,255,.75); }
+</style>
+</head>
+<body>
+<div id="stage">
+  {{range $i, $s := .Shots}}<div class="shot" id="shot{{$i}}"><img src="{{$s.URL}}" alt=""><div class="credit">{{$s.Credit}}</div></div>{{end}}
+  <div id="leak"></div>
+  <div id="shade"></div>
+</div>
+<div id="seam"></div>
+<div id="brand"><i></i></div>
+{{if ne .Script.Tag .Kicker}}<div id="live"><b></b>{{.Script.Tag}}</div>{{end}}
+<div id="panel">
+  <div class="tag">{{.Kicker}}</div>
+  <div class="headline">{{range .Script.Headline}}<div class="line">{{.}}<span class="shine"></span></div>{{end}}</div>
+  <div id="facts">{{range $i, $f := .Script.Facts}}<div class="fact"><div class="n">{{inc $i}}</div><div class="t">{{$f}}</div><div class="of">{{inc $i}}/{{len $.Script.Facts}}</div></div>{{end}}</div>
+  <div class="question">{{.Script.Question}}</div>
+  {{if eq .CTA "poll"}}
+  <div class="cta">
+    <div class="btn no"><svg viewBox="0 0 24 24" fill="#fff"><path d="M2 21h3.5V9H2v12zm19.4-10.3c0-1.1-.9-2-2-2h-5.6l.9-4.3.03-.3c0-.4-.17-.8-.44-1.06L13.2 2 7.6 7.6c-.36.36-.6.86-.6 1.4v10c0 1.1.9 2 2 2h8.5c.83 0 1.54-.5 1.84-1.22l3-7.05c.1-.23.15-.48.15-.73v-1.3z"/></svg>{{.Script.NoLabel}}</div>
+    <div class="btn yes"><svg viewBox="0 0 24 24" fill="#fff"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>{{.Script.YesLabel}}</div>
+  </div>
+  <div class="hint">ඔබේ පිළිතුර Reaction එකෙන් දෙන්න</div>
+  {{else}}
+  <div class="cta"><div class="btn solo"><svg viewBox="0 0 24 24" fill="#fff"><path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z"/></svg>ඔබේ අදහස කමෙන්ට් කරන්න</div></div>
+  <div class="hint">තවත් සමතුලිත පුවත් සඳහා තුලාව Follow කරන්න</div>
+  {{end}}
+</div>
+<script>
+const D = {{.Duration}} * 1000;
+const anims = [];
+function A(el, frames, opts) { if (!el) return; const a = el.animate(frames, Object.assign({ fill: 'both' }, opts)); a.pause(); anims.push(a); }
+
+// Shrink any text that overflows its box, keeping one line for headline bars and the question.
+function fit() {
+  const max = 992;
+  document.querySelectorAll('.line').forEach(el => {
+    let size = parseFloat(getComputedStyle(el).fontSize);
+    while (el.getBoundingClientRect().width > max && size > 30) { size -= 2; el.style.fontSize = size + 'px'; }
+  });
+  document.querySelectorAll('.fact .t').forEach(el => {
+    let size = 44;
+    while (el.scrollHeight > 172 && size > 30) { size -= 2; el.style.fontSize = size + 'px'; }
+  });
+  const q = document.querySelector('.question');
+  let qs = 58;
+  while (q.scrollHeight > 150 && qs > 34) { qs -= 2; q.style.fontSize = qs + 'px'; }
+}
+
+function build() {
+  const shots = [...document.querySelectorAll('.shot')];
+  const seg = D / shots.length, xf = 600;
+  shots.forEach((shot, i) => {
+    const start = i * seg, img = shot.querySelector('img');
+    const end = i === shots.length - 1 ? D : start + seg + xf;
+    // Each shot fades in over the one before it and stays underneath the next.
+    if (i === 0) shot.style.opacity = 1;
+    else A(shot, [{ opacity: 0 }, { opacity: 1 }], { delay: start, duration: xf, easing: 'ease-out' });
+    // Slow push-in, alternating drift; the opening shot punches in from wide.
+    const dx = i % 2 ? -40 : 40;
+    const from = i === 0 ? 'scale(1.32) translate(0,0)' : `scale(1.04) translate(${-dx}px,0)`;
+    A(img, [{ transform: from, offset: 0 }, ...(i === 0 ? [{ transform: 'scale(1.08) translate(0,0)', offset: 450 / (end - start) }] : []),
+      { transform: `scale(1.18) translate(${dx}px,-20px)`, offset: 1 }], { delay: start, duration: end - start, easing: 'linear' });
+  });
+  A(document.getElementById('flash'), [{ opacity: .85 }, { opacity: 0 }], { duration: 380, easing: 'ease-out' });
+  A(document.getElementById('stage'), [
+    { transform: 'translate(0,0)' }, { transform: 'translate(-14px,8px)' }, { transform: 'translate(12px,-10px)' },
+    { transform: 'translate(-8px,6px)' }, { transform: 'translate(0,0)' }], { duration: 420 });
+  A(document.getElementById('leak'), [{ transform: 'translate(0,0)', opacity: .9 }, { transform: 'translate(700px,300px)', opacity: .5 },
+    { transform: 'translate(200px,650px)', opacity: .9 }], { duration: D, easing: 'ease-in-out' });
+
+  A(document.getElementById('brand'), [{ transform: 'translateX(-320px)' }, { transform: 'translateX(0)' }], { delay: 150, duration: 450, easing: 'cubic-bezier(.2,1.4,.4,1)' });
+  A(document.getElementById('live'), [{ transform: 'translateX(400px)' }, { transform: 'translateX(0)' }], { delay: 250, duration: 450, easing: 'cubic-bezier(.2,1.4,.4,1)' });
+  A(document.querySelector('#live b'), [{ opacity: 1 }, { opacity: .15 }, { opacity: 1 }], { duration: 900, iterations: Infinity });
+  A(document.querySelector('.tag'), [{ transform: 'rotate(-2deg) scale(2.4)', opacity: 0 }, { transform: 'rotate(-2deg) scale(1)', opacity: 1 }],
+    { delay: 120, duration: 320, easing: 'cubic-bezier(.3,1.5,.5,1)' });
+  document.querySelectorAll('.line').forEach((el, i) => {
+    A(el, [{ transform: `translateX(${i % 2 ? 1100 : -1100}px)` }, { transform: 'translateX(0)' }],
+      { delay: 300 + i * 140, duration: 420, easing: 'cubic-bezier(.2,1.25,.4,1)' });
+    const shine = el.querySelector('.shine');
+    A(shine, [{ left: '-200px' }, { left: '110%' }], { delay: 1300 + i * 120, duration: 700, easing: 'ease-in-out' });
+  });
+  const facts = [...document.querySelectorAll('.fact')];
+  const f0 = 1500, fs = (D - f0) / facts.length;
+  facts.forEach((el, i) => {
+    // One timeline per fact: hidden, rise in, hold, lift out before the next (the last one stays).
+    const on = f0 + i * fs, off = f0 + (i + 1) * fs - 300;
+    const frames = [{ opacity: 0, transform: 'translateY(40px)', offset: 0 },
+      { opacity: 0, transform: 'translateY(40px)', offset: on / D },
+      { opacity: 1, transform: 'translateY(0)', offset: (on + 380) / D }];
+    if (i < facts.length - 1) frames.push({ opacity: 1, transform: 'translateY(0)', offset: off / D },
+      { opacity: 0, transform: 'translateY(-30px)', offset: (off + 300) / D });
+    frames.push({ opacity: frames[frames.length - 1].opacity, transform: frames[frames.length - 1].transform, offset: 1 });
+    A(el, frames, { duration: D, easing: 'linear' });
+    A(el.querySelector('.n'), [{ transform: 'scale(0) rotate(-180deg)' }, { transform: 'scale(1) rotate(0)' }],
+      { delay: f0 + i * fs + 120, duration: 420, easing: 'cubic-bezier(.3,1.6,.5,1)' });
+  });
+  A(document.querySelector('.question'), [{ opacity: 0, transform: 'translateY(30px)' }, { opacity: 1, transform: 'translateY(0)' }],
+    { delay: 750, duration: 400, easing: 'ease-out' });
+  document.querySelectorAll('.btn').forEach((el, i) => {
+    A(el, [{ transform: 'scale(0)' }, { transform: 'scale(1.12)', offset: .7 }, { transform: 'scale(1)' }],
+      { delay: 950 + i * 160, duration: 420, easing: 'ease-out' });
+  });
+  document.querySelectorAll('.btn svg').forEach((el, i) => {
+    A(el, [{ transform: 'scale(1)' }, { transform: 'scale(1.22)' }, { transform: 'scale(1)' }],
+      { delay: 1600 + i * 500, duration: 1000, iterations: Infinity, easing: 'ease-in-out' });
+  });
+  A(document.querySelector('.hint'), [{ opacity: 0 }, { opacity: 1 }], { delay: 1400, duration: 400 });
+}
+
+window.seek = t => { for (const a of anims) a.currentTime = t; return new Promise(r => requestAnimationFrame(() => r(true))); };
+window.prepare = async () => {
+  await document.fonts.ready;
+  await Promise.all([...document.images].map(i => i.decode().catch(() => {})));
+  fit(); build(); return true;
+};
+</script>
+<div id="flash"></div>
+</body>
+</html>

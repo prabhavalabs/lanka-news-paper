@@ -26,6 +26,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/newsletter"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/pipeline"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/reels"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/retention"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/storyline"
@@ -620,6 +621,14 @@ func periodicJobDefinitions(newsletterSchedule ...river.PeriodicSchedule) []peri
 			Constructor: func() (river.JobArgs, *river.InsertOpts) { return SocialPublishArgs{}, nil },
 		},
 		{PeriodicJobMetadata: PeriodicJobMetadata{Kind: StorylinesRefreshArgs{}.Kind(), Name: "Running storylines", Description: "Groups ongoing news sagas and refreshes their trend scores.", Queue: "storylines", Interval: 15 * time.Minute}, Constructor: func() (river.JobArgs, *river.InsertOpts) { return StorylinesRefreshArgs{}, nil }},
+		{
+			PeriodicJobMetadata: PeriodicJobMetadata{
+				Kind: ReelBuildArgs{}.Kind(), Name: "Facebook Reel drafts",
+				Description: "Every six hours (Colombo 00:00, 06:00, 12:00, 18:00) picks a trending storyline, weighs Google Trends, and renders a Reel draft for review.",
+				Queue:       reelsQueue, Interval: 6 * time.Hour, Schedule: reelSchedule(),
+			},
+			Constructor: func() (river.JobArgs, *river.InsertOpts) { return ReelBuildArgs{}, nil },
+		},
 	}
 }
 
@@ -667,6 +676,7 @@ func QueueCatalog() []QueueMetadata {
 		{Name: "social", MaxWorkers: 1},
 		{Name: "storylines", MaxWorkers: 1},
 		{Name: editionQueue, MaxWorkers: 1},
+		{Name: reelsQueue, MaxWorkers: 1},
 	}
 }
 
@@ -706,6 +716,7 @@ type Extras struct {
 	Storylines *storyline.Service
 	Social     *social.Service
 	FrontPage  *frontpage.Service
+	Reels      *reels.Service
 }
 
 func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, pipelineStore *pipeline.Store, contentStore *content.Store, news *publish.Store, newsletterService *newsletter.Service, adminAnalysis *adminanalysis.Service, extras Extras) (*river.Client[pgx.Tx], error) {
@@ -715,6 +726,7 @@ func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, p
 	river.AddWorker(workers, &EditionBuildWorker{FrontPage: extras.FrontPage})
 	river.AddWorker(workers, &SocialSelectionWorker{Social: socialService})
 	river.AddWorker(workers, &SocialPublishWorker{Social: socialService})
+	river.AddWorker(workers, &ReelBuildWorker{Reels: extras.Reels})
 	dispatcher := &PipelineDispatchWorker{Pipeline: pipelineStore}
 	contentBackfill := &ArticleContentBackfillWorker{Content: contentStore}
 	adminDispatcher := &AdminAnalysisBackfillDispatchWorker{Analysis: adminAnalysis}
