@@ -4,6 +4,7 @@ import { Check, Clapperboard, Copy, Download, LoaderCircle, Music2, Pencil, Refr
 import { useState } from 'react'
 import { toast } from 'sonner'
 
+import { TrendRadarPanel } from '@/components/trend-radar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -80,7 +81,7 @@ export function ReelsPage() {
           <Badge variant="outline" className="mb-2"><Clapperboard /> Facebook Reels</Badge>
           <h1 className="font-heading text-2xl font-semibold tracking-tight">Reel drafts</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Every six hours (Colombo 00:00, 06:00, 12:00, 18:00) the server picks a trending story, weighs what Sri Lankans are searching on Google, and renders a 14-second reel with a debate question. Nothing is posted until you approve it, download it and post it on the Page.
+            Every six hours (Colombo 00:00, 06:00, 12:00, 18:00) the server takes the top ready topic on the trend radar below and renders a 14-second reel with a debate question. Nothing is posted until you approve it, download it and post it on the Page.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -90,6 +91,8 @@ export function ReelsPage() {
           </Button>
         </div>
       </div>
+
+      <TrendRadarPanel making={create.isPending} onMakeReel={(storylineID) => create.mutate(storylineID)} />
 
       {reels.isPending ? <Skeleton className="h-96 w-full" /> : reels.isError ? (
         <Card><CardContent className="space-y-3"><p role="alert">Could not load reel drafts.</p><Button variant="outline" onClick={() => { void reels.refetch() }}>Try again</Button></CardContent></Card>
@@ -212,7 +215,7 @@ function ReelCard({ reel, acting, onAction, onSaveCaption, onEdit }: {
         <CardTitle lang="si" className="mt-2 leading-relaxed">{reel.storyline_title || reel.title || 'Choosing a trending story…'}</CardTitle>
         {reel.trend.reason ? (
           <CardDescription className="leading-relaxed">
-            Trend score {reel.trend.score}{reel.trend.google_trends.length ? ` · Google searches: ${reel.trend.google_trends.join(', ')}` : ''} · {reel.trend.reason}
+            {reel.trend.radar_rank ? `Radar #${reel.trend.radar_rank} · ` : ''}Score {reel.trend.score}{reel.trend.google_trends.length ? ` · Google searches: ${reel.trend.google_trends.join(', ')}` : ''}{reel.trend.youtube?.length ? ` · ${reel.trend.youtube.length} YouTube video${reel.trend.youtube.length > 1 ? 's' : ''} ahead of normal` : ''} · {reel.trend.reason}
           </CardDescription>
         ) : null}
       </CardHeader>
