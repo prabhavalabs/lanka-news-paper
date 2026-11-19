@@ -22,7 +22,10 @@ func TestCodexLogPaths(t *testing.T) {
 func TestPeriodicJobCatalog(t *testing.T) {
 	catalog := PeriodicJobCatalog()
 
-	require.Len(t, catalog, 10)
+	require.Len(t, catalog, 11)
+	require.Equal(t, "reels.build", catalog[10].Kind)
+	require.Equal(t, 6*time.Hour, catalog[10].Interval)
+	require.NotNil(t, catalog[10].Schedule)
 	require.Equal(t, "ingest.poll", catalog[0].Kind)
 	require.Equal(t, time.Minute, catalog[0].Interval)
 	require.True(t, catalog[0].RunOnStart)
@@ -81,8 +84,9 @@ func TestQueueCatalog(t *testing.T) {
 	t.Setenv("SNAP_ADMIN_ANALYSIS_WORKERS", "")
 	catalog := QueueCatalog()
 
-	require.Len(t, catalog, 8)
+	require.Len(t, catalog, 9)
 	require.Equal(t, QueueMetadata{Name: "edition", MaxWorkers: 1}, catalog[7])
+	require.Equal(t, QueueMetadata{Name: "reels", MaxWorkers: 1}, catalog[8])
 	require.Equal(t, "default", catalog[0].Name)
 	require.Equal(t, 2, catalog[0].MaxWorkers)
 	require.Equal(t, "analysis", catalog[1].Name)

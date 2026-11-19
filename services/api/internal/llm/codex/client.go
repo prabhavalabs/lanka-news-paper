@@ -356,9 +356,12 @@ func parseJSONL(output string) (Result, error) {
 	return result, nil
 }
 
+// benignWarning reports Codex diagnostics that do not stop the turn: unknown config keys, and
+// the notice that installed skills exceeded the skills context budget and were left out.
 func benignWarning(message string) bool {
 	lower := strings.ToLower(message)
-	return strings.Contains(lower, "unrecognized config") || strings.Contains(lower, "unknown config key")
+	return strings.Contains(lower, "unrecognized config") || strings.Contains(lower, "unknown config key") ||
+		strings.Contains(lower, "skills context budget")
 }
 
 // Codex emits these diagnostics in stderr, error events and failed turns:

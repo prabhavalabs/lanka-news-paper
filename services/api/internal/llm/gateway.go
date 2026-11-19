@@ -424,12 +424,21 @@ var taskDefinitions = map[string]struct{ name, purpose string }{
 		name:    "Morning newsletter",
 		purpose: "Prepares the last-24-hours email edition from approved published stories.",
 	},
+	"reel_story_pick": {
+		name:    "Reel story pick",
+		purpose: "Ranks trending storylines for the next Facebook Reel using Google Trends search interest in Sri Lanka.",
+	},
+	"reel_script": {
+		name:    "Reel script",
+		purpose: "Writes the Sinhala on-screen script, debate question and post text for a Facebook Reel.",
+	},
 }
 
 var orderedTasks = []string{
 	"article_analysis", "content_cleaning", "article_summary", "classify", "storyline_grouping", "event_matching", "event_synthesis",
 	"narration_framing", "admin_article_analysis", "watch_tower_retrieval",
 	"watch_tower_answer", "newsletter_editorial", "social_post_editorial", "social_post_review",
+	"reel_story_pick", "reel_script",
 }
 
 func (gateway *Gateway) ListProfiles(ctx context.Context) ([]TaskProfile, error) {
@@ -439,7 +448,8 @@ func (gateway *Gateway) ListProfiles(ctx context.Context) ([]TaskProfile, error)
 		WHERE task IN (
 		  'article_analysis', 'content_cleaning', 'article_summary', 'classify', 'storyline_grouping', 'event_matching', 'event_synthesis',
 		  'narration_framing', 'admin_article_analysis', 'watch_tower_retrieval',
-		  'watch_tower_answer', 'newsletter_editorial', 'social_post_editorial', 'social_post_review'
+		  'watch_tower_answer', 'newsletter_editorial', 'social_post_editorial', 'social_post_review',
+		  'reel_story_pick', 'reel_script'
 		)
 		  AND provider_id = 'codex_cli'
 		ORDER BY task

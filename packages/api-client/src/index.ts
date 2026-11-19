@@ -1143,6 +1143,24 @@ export type SocialPostList = { items: SocialPost[]; next_cursor: string };
 export type SocialEditInput = Pick<SocialPost, "headline_si" | "summary_si" | "caption" | "hashtags">;
 export type SocialCreateInput = { event_id: string; article_id?: never } | { article_id: string; event_id?: never };
 
+export type ReelStatus = "queued" | "generating" | "ready" | "approved" | "rejected" | "posted" | "failed";
+export type ReelQuestion = { question: string; yes_label: string; no_label: string; expected_yes_percent: number };
+export type ReelScript = {
+  tag: string; headline: string[]; facts: string[]; questions: ReelQuestion[]; question: string; yes_label: string; no_label: string;
+  caption: string; hashtags: string[]; image_prompts: string[]; people: string[]; photo_queries: string[];
+};
+export type ReelPhoto = { key: string; mime: string; kind: "photo" | "ai"; credit: string; license?: string; source_url?: string };
+export type Reel = {
+  id: string; storyline_id: string | null; event_id: string | null; trigger: "schedule" | "manual"; status: ReelStatus;
+  title: string; storyline_title: string; script: ReelScript; caption: string;
+  assets: { photos: ReelPhoto[]; music?: { file: string; title: string; start: number; generated?: boolean } };
+  trend: { score: number; google_trends: string[]; reason: string };
+  has_video: boolean; error: string | null; requested_by: string | null; reviewed_by: string | null;
+  reviewed_at: string | null; rendered_at: string | null; created_at: string; updated_at: string;
+};
+export type ReelEditInput = Partial<Pick<ReelScript, "tag" | "headline" | "facts" | "question" | "yes_label" | "no_label">> & { caption?: string };
+export type ReelAction = "approve" | "reject" | "posted" | "reopen" | "rerender" | "regenerate";
+
 export function createClient(baseUrl = "") {
   const url = (path: string) => `${baseUrl}${path}`;
   return {
@@ -1575,6 +1593,11 @@ export function createClient(baseUrl = "") {
     reviewSocialPost: (id: string) => request<SocialPost>(url(`/api/admin/social/posts/${encodeURIComponent(id)}/review`), { method: "POST", body: "{}" }),
     socialChannels: () => request<{ items: SocialChannel[] }>(url("/api/admin/social/channels")),
     socialContent: (params: { from: string; to: string; channel?: string; status?: SocialPostStatus }) => request<SocialContentList>(url(withQuery("/api/admin/social/content", params))),
+    reels: () => request<{ items: Reel[] }>(url("/api/admin/reels")),
+    createReel: (body: { storyline_id?: string } = {}) => request<Reel>(url("/api/admin/reels"), { method: "POST", body: JSON.stringify(body) }),
+    editReel: (id: string, body: ReelEditInput) => request<Reel>(url(`/api/admin/reels/${encodeURIComponent(id)}`), { method: "PATCH", body: JSON.stringify(body) }),
+    reelAction: (id: string, action: ReelAction) => request<Reel>(url(`/api/admin/reels/${encodeURIComponent(id)}/${action}`), { method: "POST", body: "{}" }),
+    reelFileURL: (id: string, kind: "video" | "cover", download = false) => url(`/api/admin/reels/${encodeURIComponent(id)}/files/${kind}${download ? "?download=1" : ""}`),
     runSocialSelection: () => request<{ ok: boolean }>(url("/api/admin/social/run-selection"), { method: "POST", body: "{}" }),
     agentWorkflows: () =>
       request<{ items: AgentWorkflow[] }>(url("/api/admin/workflows")),

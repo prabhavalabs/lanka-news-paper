@@ -108,6 +108,8 @@ func TestCompletionArgumentsAndIsolatedFiles(t *testing.T) {
 func TestJSONLFailuresAndWarnings(t *testing.T) {
 	_, err := parseJSONL(`{"type":"item.completed","item":{"type":"error","message":"Unrecognized config key: obsolete"}}` + "\n" + successfulEvents)
 	require.NoError(t, err)
+	_, err = parseJSONL(`{"type":"item.completed","item":{"type":"error","message":"Exceeded skills context budget. All skill descriptions were removed and 18 additional skills were not included in the model-visible skills list."}}` + "\n" + successfulEvents)
+	require.NoError(t, err)
 	for _, test := range []struct {
 		output string
 		kind   error

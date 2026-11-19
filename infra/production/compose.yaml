@@ -81,10 +81,14 @@ services:
     image: ghcr.io/prabhavalabs/lanka-news-paper-api:${IMAGE_TAG:?set IMAGE_TAG}
     entrypoint: ["/app/worker"]
     restart: unless-stopped
-    environment: *app-environment
+    environment:
+      <<: *app-environment
+      SNAP_REEL_MUSIC_DIR: /data/reel-music
     volumes:
       - codex-data:/data/codex
       - media-data:/data/media
+      # Licensed Reel soundtracks and tracks.json, copied to the server by hand (never committed).
+      - ./reel-music:/data/reel-music:ro
     networks: [default, platform]
     mem_limit: 2g
     cpus: 4

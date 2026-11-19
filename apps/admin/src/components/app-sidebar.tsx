@@ -1,6 +1,7 @@
 import * as React from 'react'
 import {
   CalendarDaysIcon,
+  ClapperboardIcon,
   FeatherIcon,
   LayoutTemplateIcon,
   LayoutDashboardIcon,
@@ -53,6 +54,7 @@ const administratorNavigation: NavItem[] = [
   { title: 'Mailing list', url: '/mailing-list', icon: MailIcon },
   { title: 'Trending', url: '/trending', icon: SparklesIcon },
   { title: 'Social publishing', url: '/social', icon: Share2Icon },
+  { title: 'Reels', url: '/reels', icon: ClapperboardIcon },
   { title: 'Content calendar', url: '/social/content', icon: CalendarDaysIcon },
   { title: 'Brand kit', url: '/brand', icon: PaletteIcon },
   { title: 'Settings', url: '/settings', icon: SettingsIcon },

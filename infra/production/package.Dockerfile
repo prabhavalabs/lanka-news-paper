@@ -6,7 +6,7 @@ FROM alpine:3.22 AS api
 
 ARG CODEX_CLI_VERSION=0.162.1
 
-RUN apk add --no-cache ca-certificates nodejs npm su-exec tzdata chromium font-noto-sinhala \
+RUN apk add --no-cache ca-certificates nodejs npm su-exec tzdata chromium ffmpeg font-noto-sinhala \
     && npm install --global "@openai/codex@${CODEX_CLI_VERSION}" \
     && npm cache clean --force \
     && addgroup -S app \
