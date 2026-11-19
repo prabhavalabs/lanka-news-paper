@@ -46,6 +46,7 @@ export const router = createBrowserRouter([
       { path: 'watch-tower', lazy: lazyPage(() => import('./pages/watch-tower-page'), 'WatchTowerPage') },
       { path: 'trending', lazy: lazyPage(() => import('./pages/trending-page'), 'TrendingPage') },
       { path: 'social', lazy: lazyPage(() => import('./pages/social-page'), 'SocialPage') },
+      { path: 'reels', lazy: lazyPage(() => import('./pages/reels-page'), 'ReelsPage') },
       { path: 'mailing-list', lazy: lazyPage(() => import('./pages/mailing-list-page'), 'MailingListPage') },
       { path: 'social/content', lazy: lazyPage(() => import('./pages/content-calendar-page'), 'ContentCalendarPage') },
       { path: 'front-page', lazy: lazyPage(() => import('./pages/front-page-page'), 'FrontPagePage') },
