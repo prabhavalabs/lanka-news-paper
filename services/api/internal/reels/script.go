@@ -143,13 +143,16 @@ func buildCaption(script Script, photos []Photo) string {
 	var caption strings.Builder
 	caption.WriteString(strings.TrimSpace(script.Caption) + "\n\n")
 	fmt.Fprintf(&caption, "🗳️ %s\n❤️ %s   👍 %s\nඇයි කියලත් comment එකකින් කියන්න 👇\n\n", script.Question, script.YesLabel, script.NoLabel)
-	tags := make([]string, 0, len(script.Hashtags)+2)
-	for _, tag := range script.Hashtags {
-		if tag = strings.ReplaceAll(strings.TrimPrefix(strings.TrimSpace(tag), "#"), " ", ""); tag != "" {
+	var tags []string
+	seen := map[string]bool{}
+	for _, tag := range append(append([]string{}, script.Hashtags...), "තුලාව", "ThulawaNews") {
+		tag = strings.ReplaceAll(strings.TrimPrefix(strings.TrimSpace(tag), "#"), " ", "")
+		if key := strings.ToLower(tag); tag != "" && !seen[key] {
+			seen[key] = true
 			tags = append(tags, "#"+tag)
 		}
 	}
-	caption.WriteString(strings.Join(append(tags, "#තුලාව", "#ThulawaNews"), " ") + "\n\n")
+	caption.WriteString(strings.Join(tags, " ") + "\n\n")
 	var credits []string
 	ai := false
 	for _, photo := range photos {

@@ -50,6 +50,9 @@ func TestBuildCaptionCreditsPhotosAndAI(t *testing.T) {
 		[]Photo{{Kind: "photo", Credit: "Jane / Wikimedia Commons (CC0)"}, {Kind: "ai", Credit: aiCredit}})
 	require.Contains(t, caption, "🗳️ Q?")
 	require.Contains(t, caption, "#Courts #ශ්‍රීලංකා #තුලාව #ThulawaNews")
+	again := buildCaption(Script{Caption: "x", Hashtags: []string{"තුලාව", "#thulawanews", "Courts"}}, nil)
+	require.Equal(t, 1, strings.Count(again, "#තුලාව"))
+	require.True(t, strings.HasSuffix(again, "#තුලාව #thulawanews #Courts"), again)
 	require.Contains(t, caption, "ඡායාරූප: Jane / Wikimedia Commons (CC0) · සමහර රූප AI මගින් නිර්මිත නිදර්ශන වේ")
 }
 
@@ -93,8 +96,10 @@ func TestPlainLabelKeepsSinhalaJoiners(t *testing.T) {
 
 func TestCommonsImagesAcceptNumericMetadataAndFilterLicences(t *testing.T) {
 	data := `{"query":{"pages":{
-	 "1":{"title":"File:Free.jpg","imageinfo":[{"thumburl":"https://x/free.jpg","width":1800,"mime":"image/jpeg","extmetadata":{"LicenseShortName":{"value":"CC BY 2.0"},"Artist":{"value":"<a href=\"u\">Jane</a> Doe"},"Copyrighted":{"value":true},"ImageWidth":{"value":1800}}}]},
-	 "2":{"title":"File:ShareAlike.jpg","imageinfo":[{"thumburl":"https://x/sa.jpg","width":1800,"mime":"image/jpeg","extmetadata":{"LicenseShortName":{"value":"CC BY-SA 4.0"}}}]},
+	 "1":{"title":"File:Free.jpg","imageinfo":[{"thumburl":"https://x/free.jpg","width":1800,"height":1200,"mime":"image/jpeg","extmetadata":{"LicenseShortName":{"value":"CC BY 2.0"},"Artist":{"value":"<a href=\"u\">Jane</a> Doe"},"Copyrighted":{"value":true},"ImageWidth":{"value":1800},"DateTimeOriginal":{"value":"2019-03-02"}}}]},
+	 "2":{"title":"File:ShareAlike.jpg","imageinfo":[{"thumburl":"https://x/sa.jpg","width":1800,"height":1200,"mime":"image/jpeg","extmetadata":{"LicenseShortName":{"value":"CC BY-SA 4.0"}}}]},
+	 "4":{"title":"File:Old.jpg","imageinfo":[{"thumburl":"https://x/old.jpg","width":1800,"height":1200,"mime":"image/jpeg","extmetadata":{"LicenseShortName":{"value":"Public domain"},"DateTimeOriginal":{"value":"circa 1880"}}}]},
+	 "5":{"title":"File:Panorama.jpg","imageinfo":[{"thumburl":"https://x/pano.jpg","width":4000,"height":1000,"mime":"image/jpeg","extmetadata":{"LicenseShortName":{"value":"CC0"}}}]},
 	 "3":{"title":"File:Tiny.png","imageinfo":[{"thumburl":"https://x/tiny.png","width":300,"mime":"image/png","extmetadata":{"LicenseShortName":{"value":"CC0"}}}]}}}}`
 	var response imageInfoResponse
 	require.NoError(t, json.Unmarshal([]byte(data), &response))
