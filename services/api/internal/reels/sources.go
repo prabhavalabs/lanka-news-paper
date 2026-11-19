@@ -100,6 +100,19 @@ var reusableLicense = regexp.MustCompile(`(?i)^(cc0( 1\.0)?|public domain|pdm( 1
 
 var tags = regexp.MustCompile(`<[^>]+>`)
 
+// A reel is a 9:16 crop, so very wide panoramas end up as sky; skip them.
+func usableShape(width, height int) bool {
+	return height > 0 && float64(width)/float64(height) <= 1.8
+}
+
+var yearPattern = regexp.MustCompile(`\b(1[89]\d\d|20\d\d)\b`)
+
+// archival reports photos taken before 1990: old prints rarely show today's place or object.
+func archival(taken string) bool {
+	match := yearPattern.FindString(plainText(taken, 200))
+	return match != "" && match < "1990"
+}
+
 func plainText(value string, limit int) string {
 	text := strings.Join(strings.Fields(html.UnescapeString(tags.ReplaceAllString(value, " "))), " ")
 	if runes := []rune(text); len(runes) > limit {
@@ -116,6 +129,7 @@ type imageInfoResponse struct {
 				ThumbURL    string `json:"thumburl"`
 				URL         string `json:"url"`
 				Width       int    `json:"width"`
+				Height      int    `json:"height"`
 				Mime        string `json:"mime"`
 				ExtMetadata map[string]struct {
 					Value metadataValue `json:"value"`
@@ -150,7 +164,8 @@ func (response imageInfoResponse) images() []commonsImage {
 			continue
 		}
 		license := plainText(string(info.ExtMetadata["LicenseShortName"].Value), 40)
-		if !reusableLicense.MatchString(license) || info.Width < 600 {
+		if !reusableLicense.MatchString(license) || info.Width < 600 || !usableShape(info.Width, info.Height) ||
+			archival(string(info.ExtMetadata["DateTimeOriginal"].Value)) {
 			continue
 		}
 		address := info.ThumbURL
