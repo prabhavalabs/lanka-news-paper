@@ -30,6 +30,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social/card"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/storyline"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/trends"
 )
 
 func main() {
@@ -110,17 +111,24 @@ func run(logger *slog.Logger) error {
 	poller := ingest.NewPoller(pool, logger, clusters)
 	frontPage := frontpage.NewService(frontpage.NewStore(pool), time.Now)
 	frontPage.SetDesk(frontpage.Desk{Model: model, Illustrator: codexClient, Media: mediaStore, ImageModel: imageModel()})
+	radar := trends.NewRadar(trends.Config{
+		Store: trends.NewStore(pool), Storylines: storyline.NewStore(pool), Model: model,
+		YouTube: trends.YouTube{Key: strings.TrimSpace(os.Getenv("SNAP_YOUTUBE_API_KEY"))}, Logger: logger,
+	})
+	if os.Getenv("SNAP_YOUTUBE_API_KEY") == "" {
+		logger.Warn("trend radar runs without YouTube signals: SNAP_YOUTUBE_API_KEY is not set")
+	}
 	reelService := reels.NewService(reels.Config{
 		Store: reels.NewStore(pool), Storylines: storyline.NewStore(pool), News: news, Model: model,
 		Illustrator: codexClient, ImageModel: imageModel(), Media: mediaStore,
 		Library:  reels.Library{Dir: reelMusicDirectory()},
 		Renderer: reels.Renderer{ChromePath: loaded.Social.ChromePath, NoSandbox: chromeNoSandbox()},
-		Logger:   logger,
+		Logger:   logger, Radar: radar,
 	})
 	if err := reelService.Ready(); err != nil {
 		logger.Warn("reel drafts unavailable on this worker", "error", err)
 	}
-	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news, newsletterService, adminAnalysis, jobs.Extras{Social: socialService, FrontPage: frontPage, Storylines: storyline.NewService(storyline.NewStore(pool), model), Reels: reelService})
+	client, err := jobs.NewClient(pool, logger, poller, pipelineStore, contentStore, news, newsletterService, adminAnalysis, jobs.Extras{Social: socialService, FrontPage: frontPage, Storylines: storyline.NewService(storyline.NewStore(pool), model), Reels: reelService, Trends: radar})
 	if err != nil {
 		return err
 	}

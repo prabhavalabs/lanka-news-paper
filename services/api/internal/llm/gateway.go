@@ -22,7 +22,8 @@ type Request struct {
 	Input            string
 	JSONSchema       map[string]any
 	DisableReasoning bool
-	MaxTokens        int // Retained for callers; Codex has no output-token limit option.
+	WebSearch        bool // Live web search; only research tasks set it.
+	MaxTokens        int  // Retained for callers; Codex has no output-token limit option.
 	ArticleID        string
 	PipelineRunID    string
 	PipelineStepID   string
@@ -165,7 +166,7 @@ func (gateway *Gateway) callProvider(ctx context.Context, profile providerProfil
 	}
 	result, err := gateway.client.Complete(ctx, codex.CallOptions{
 		Model: profile.model, ReasoningEffort: effort, System: request.System, Input: request.Input,
-		JSONSchema: request.JSONSchema, Timeout: time.Duration(profile.timeout) * time.Second, BeforeRun: gateway.providerBlockError,
+		JSONSchema: request.JSONSchema, WebSearch: request.WebSearch, Timeout: time.Duration(profile.timeout) * time.Second, BeforeRun: gateway.providerBlockError,
 	})
 	if err != nil && result.InputTokens == 0 && result.OutputTokens == 0 {
 		return providerResult{Text: result.Text}, err
@@ -432,13 +433,21 @@ var taskDefinitions = map[string]struct{ name, purpose string }{
 		name:    "Reel script",
 		purpose: "Writes the Sinhala on-screen script, debate question and post text for a Facebook Reel.",
 	},
+	"trend_research": {
+		name:    "Trend research",
+		purpose: "Searches the live web for what people in Sri Lanka are discussing in the last 24 hours.",
+	},
+	"trend_radar": {
+		name:    "Trend radar",
+		purpose: "Groups YouTube, Google Trends, web research and storylines into ranked topics for Reels.",
+	},
 }
 
 var orderedTasks = []string{
 	"article_analysis", "content_cleaning", "article_summary", "classify", "storyline_grouping", "event_matching", "event_synthesis",
 	"narration_framing", "admin_article_analysis", "watch_tower_retrieval",
 	"watch_tower_answer", "newsletter_editorial", "social_post_editorial", "social_post_review",
-	"reel_story_pick", "reel_script",
+	"reel_story_pick", "reel_script", "trend_research", "trend_radar",
 }
 
 func (gateway *Gateway) ListProfiles(ctx context.Context) ([]TaskProfile, error) {
@@ -449,7 +458,7 @@ func (gateway *Gateway) ListProfiles(ctx context.Context) ([]TaskProfile, error)
 		  'article_analysis', 'content_cleaning', 'article_summary', 'classify', 'storyline_grouping', 'event_matching', 'event_synthesis',
 		  'narration_framing', 'admin_article_analysis', 'watch_tower_retrieval',
 		  'watch_tower_answer', 'newsletter_editorial', 'social_post_editorial', 'social_post_review',
-		  'reel_story_pick', 'reel_script'
+		  'reel_story_pick', 'reel_script', 'trend_research', 'trend_radar'
 		)
 		  AND provider_id = 'codex_cli'
 		ORDER BY task

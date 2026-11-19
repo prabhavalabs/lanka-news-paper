@@ -19,6 +19,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/retention"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/storyline"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/trends"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/watchtower"
 )
 
@@ -44,6 +45,8 @@ type Dependencies struct {
 	Registry                    *registry.Store
 	Reels                       *reels.Store
 	EnqueueReel                 func(context.Context, string, bool) error
+	Trends                      *trends.Store
+	EnqueueTrendRadar           func(context.Context) error
 	RunPipeline                 func(context.Context, string, string) error
 	RunContentBackfill          func(context.Context) error
 	RunLogCleanup               func(context.Context) error
@@ -118,6 +121,9 @@ func NewRouter(dependencies Dependencies) http.Handler {
 	protected.HandleFunc("PATCH /api/admin/reels/{id}", reelsAdmin.edit)
 	protected.HandleFunc("POST /api/admin/reels/{id}/{action}", reelsAdmin.action)
 	protected.HandleFunc("GET /api/admin/reels/{id}/files/{kind}", reelsAdmin.file)
+	trendsAdmin := trendsHandler{store: dependencies.Trends, enqueue: dependencies.EnqueueTrendRadar}
+	protected.HandleFunc("GET /api/admin/trends/radar", trendsAdmin.radar)
+	protected.HandleFunc("POST /api/admin/trends/radar", trendsAdmin.radar)
 	protected.HandleFunc("GET /api/admin/me", auth.me)
 	protected.HandleFunc("GET /api/admin/front-page", frontPage.adminFrontPage)
 	protected.HandleFunc("PUT /api/admin/front-page", frontPage.adminFrontPage)

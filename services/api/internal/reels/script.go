@@ -8,6 +8,7 @@ import (
 	"unicode"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/trends"
 )
 
 const scriptPrompt = `You write the on-screen script for a 14 second vertical Facebook Reel for Thulawa News (තුලාව), a balanced Sinhala news outlet in Sri Lanka. The reel shows images with a bold headline, three key facts and a debate question that viewers answer with a Like (👍) or a Love (❤️) reaction.
@@ -216,11 +217,11 @@ type ranked struct {
 
 // rankStories asks the model to order the candidates by expected interest; an empty result means
 // none is suitable. Unknown ids in the answer are ignored.
-func rankStories(ctx context.Context, model completer, candidates []candidate, trends []googleTrend) ([]ranked, error) {
+func rankStories(ctx context.Context, model completer, candidates []candidate, google []trends.GoogleTrend) ([]ranked, error) {
 	for i := range candidates {
 		candidates[i].Key = fmt.Sprintf("c%d", i+1)
 	}
-	data, _ := json.Marshal(map[string]any{"candidates": candidates, "google_trends_sri_lanka": trends})
+	data, _ := json.Marshal(map[string]any{"candidates": candidates, "google_trends_sri_lanka": google})
 	response, err := model.Complete(ctx, llm.Request{Task: "reel_story_pick", System: pickPrompt, Input: string(data), JSONSchema: pickSchema()})
 	if err != nil {
 		return nil, err
