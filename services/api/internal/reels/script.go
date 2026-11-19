@@ -5,11 +5,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/trends"
 )
+
+var colombo = func() *time.Location {
+	location, err := time.LoadLocation("Asia/Colombo")
+	if err != nil {
+		return time.FixedZone("Asia/Colombo", 5*3600+1800)
+	}
+	return location
+}()
 
 const scriptPrompt = `You write the on-screen script for a 14 second vertical Facebook Reel for Thulawa News (තුලාව), a balanced Sinhala news outlet in Sri Lanka. The reel shows images with a bold headline, three key facts and a debate question that viewers answer with a Like (👍) or a Love (❤️) reaction.
 
@@ -18,6 +27,7 @@ Write all viewer-facing text in natural, everyday Sinhala as Sri Lankans speak a
 Rules:
 - Use only facts stated in the reports provided. Never add numbers, dates, names or claims that are not there. Where reports disagree, leave the point out.
 - Each on-screen fact must be reported by at least two different outlets (the cross-source summary says which outlets report what). Leave out anything only one outlet reports, however newsworthy.
+- Lead with the most recent development the reports confirm. Never present an older score, figure or status as the current one: say when it applied (for example "පළමු ඉනිමේදී" or "ඊයේ"). The attention context explains why the story matters today but is not a source of facts.
 - Someone charged or in court is accused, not guilty. Say "චෝදනා", never imply guilt, and never insult anyone.
 - tag: 2-3 words that label the story, for example "අධිකරණ පුවත" or "ආර්ථික පුවත".
 - headline: 2 or 3 short punchy lines that hook the viewer in one glance; each line at most 22 characters.
@@ -61,6 +71,8 @@ func scriptSchema() map[string]any {
 // storyInput is what the script writer reads: the storyline, its latest development and reports.
 type storyInput struct {
 	Title, Summary, LatestTitle, LatestSummary, Analysis string
+	LatestAt                                             time.Time
+	Attention                                            string // why people are discussing it now (from the trend radar)
 	Reports                                              []report
 	Earlier                                              []string
 }
@@ -69,7 +81,15 @@ type report struct{ Source, Headline, Excerpt string }
 
 func (input storyInput) text() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Storyline: %s\nStoryline summary: %s\n\nLatest development: %s\n%s\n\n", input.Title, input.Summary, input.LatestTitle, input.LatestSummary)
+	fmt.Fprintf(&b, "Storyline: %s\nStoryline summary: %s\n\n", input.Title, input.Summary)
+	if input.Attention != "" {
+		fmt.Fprintf(&b, "Why people are paying attention now (context only, not a source of facts): %s\n\n", input.Attention)
+	}
+	latest := ""
+	if !input.LatestAt.IsZero() {
+		latest = " (reported " + input.LatestAt.In(colombo).Format("2 January 15:04") + " Sri Lanka time)"
+	}
+	fmt.Fprintf(&b, "Latest development%s: %s\n%s\n\n", latest, input.LatestTitle, input.LatestSummary)
 	if input.Analysis != "" {
 		fmt.Fprintf(&b, "Cross-source summary of the latest development:\n%s\n\n", input.Analysis)
 	}

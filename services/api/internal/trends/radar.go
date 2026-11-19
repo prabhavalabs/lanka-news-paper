@@ -57,16 +57,21 @@ func (radar *Radar) Store() *Store { return radar.config.Store }
 
 // StorySignal is a newsroom storyline offered to the radar.
 type StorySignal struct {
-	Key          string  `json:"key"`
-	ID           string  `json:"id"`
-	Title        string  `json:"title"`
-	Latest       string  `json:"latest_development"`
-	Score        int     `json:"trend_score"`
-	Sources      int     `json:"outlets"`
-	Articles24h  int     `json:"articles_24h"`
-	Acceleration float64 `json:"acceleration_vs_30_day_baseline"`
-	Trending     bool    `json:"trending"`
+	Key          string    `json:"key"`
+	ID           string    `json:"id"`
+	Title        string    `json:"title"`
+	Latest       string    `json:"latest_development"`
+	Score        int       `json:"trend_score"`
+	Sources      int       `json:"outlets"`
+	Articles24h  int       `json:"articles_24h"`
+	Acceleration float64   `json:"acceleration_vs_30_day_baseline"`
+	Trending     bool      `json:"trending"`
+	LatestAt     time.Time `json:"latest_development_at"`
 }
+
+// staleAfter is how old our latest coverage of a topic may be for it to become a reel: older
+// coverage would tell an outdated version of a story people are discussing today.
+const staleAfter = 18 * time.Hour
 
 // Fresh returns the latest ready run when it is younger than maxAge, otherwise runs a new pass.
 func (radar *Radar) Fresh(ctx context.Context, maxAge time.Duration) (Run, error) {
@@ -142,7 +147,7 @@ func (radar *Radar) rank(ctx context.Context) ([]Topic, []WebTopic, map[string]i
 	if err != nil {
 		return nil, nil, signals, err
 	}
-	return scoreTopics(groups, stories, google, videos, research), research, signals, nil
+	return scoreTopics(groups, stories, google, videos, research, time.Now()), research, signals, nil
 }
 
 // stories offers the storylines active in the last two days, strongest first.
@@ -158,7 +163,8 @@ func (radar *Radar) stories(ctx context.Context) ([]StorySignal, error) {
 			continue
 		}
 		stories = append(stories, StorySignal{ID: s.ID, Title: s.Title, Latest: s.LatestEvent.Title, Score: s.Score,
-			Sources: s.SourceCount, Articles24h: s.Metrics.Articles24h, Acceleration: math.Round(s.Metrics.Acceleration*10) / 10, Trending: s.Trending})
+			Sources: s.SourceCount, Articles24h: s.Metrics.Articles24h, Acceleration: math.Round(s.Metrics.Acceleration*10) / 10, Trending: s.Trending,
+			LatestAt: s.LatestEvent.Time})
 	}
 	sort.SliceStable(stories, func(i, j int) bool { return stories[i].Score > stories[j].Score })
 	return stories[:min(len(stories), 20)], nil
@@ -288,7 +294,7 @@ func searches(traffic string) float64 {
 // scoreTopics resolves each group's keys to its evidence and scores it in code, so every rank can
 // be explained: YouTube (how far ahead of normal and how many views), search volume, web research
 // (rising topics count more), newsroom coverage, and a bonus when independent sources agree.
-func scoreTopics(groups []group, stories []StorySignal, google []GoogleTrend, videos []VideoSignal, research []WebTopic) []Topic {
+func scoreTopics(groups []group, stories []StorySignal, google []GoogleTrend, videos []VideoSignal, research []WebTopic, now time.Time) []Topic {
 	storyByKey := map[string]StorySignal{}
 	for _, s := range stories {
 		storyByKey[s.Key] = s
@@ -373,8 +379,11 @@ func scoreTopics(groups []group, stories []StorySignal, google []GoogleTrend, vi
 		switch {
 		case !g.Suitable:
 			topic.Status = "skip"
-		case topic.Evidence.Storyline != nil && topic.Evidence.Storyline.Sources >= 2:
+		case topic.Evidence.Storyline != nil && topic.Evidence.Storyline.Sources >= 2 && now.Sub(topic.Evidence.Storyline.LatestAt) <= staleAfter:
 			topic.Status = "ready"
+		case topic.Evidence.Storyline != nil && topic.Evidence.Storyline.Sources >= 2:
+			topic.Status = "watch"
+			topic.Reason += fmt.Sprintf(" Our latest coverage is %d hours old, so it waits for a newer report.", int(now.Sub(topic.Evidence.Storyline.LatestAt).Hours()))
 		default:
 			topic.Status = "watch"
 		}

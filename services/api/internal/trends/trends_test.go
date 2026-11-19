@@ -2,6 +2,7 @@ package trends
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -48,7 +49,12 @@ func TestStrongestVideosKeepsChartAndOutliers(t *testing.T) {
 }
 
 func TestScoreTopicsResolvesEvidenceAndStatus(t *testing.T) {
-	stories := []StorySignal{{Key: "s1", ID: "story-court", Score: 160, Sources: 8, Acceleration: 2}, {Key: "s2", ID: "story-solo", Score: 40, Sources: 1}}
+	now := time.Date(2026, 11, 19, 20, 0, 0, 0, time.UTC)
+	stories := []StorySignal{
+		{Key: "s1", ID: "story-court", Score: 160, Sources: 8, Acceleration: 2, LatestAt: now.Add(-2 * time.Hour)},
+		{Key: "s2", ID: "story-solo", Score: 40, Sources: 1, LatestAt: now.Add(-time.Hour)},
+		{Key: "s3", ID: "story-old", Score: 90, Sources: 5, LatestAt: now.Add(-26 * time.Hour)},
+	}
 	google := []GoogleTrend{{Key: "g1", Query: "namal", Traffic: "5000+"}}
 	videos := []VideoSignal{{Key: "y1", ID: "v1", Outlier: 4, Views: 300_000}}
 	research := []WebTopic{{Key: "w1", Momentum: "rising", Evidence: []Link{{URL: "https://example.lk"}}}, {Key: "w2", Momentum: "steady"}}
@@ -58,8 +64,9 @@ func TestScoreTopicsResolvesEvidenceAndStatus(t *testing.T) {
 		{TitleEN: "Viral clip", Web: []string{"w1", "w9"}, Suitable: true},
 		{TitleEN: "Solo", Storyline: "s2", Suitable: true},
 		{TitleEN: "Nothing", Suitable: true},
-	}, stories, google, videos, research)
-	require.Len(t, topics, 3, "a reused key and a topic with no signal are dropped")
+		{TitleEN: "Yesterday's match", Storyline: "s3", Suitable: true},
+	}, stories, google, videos, research, now)
+	require.Len(t, topics, 4, "a reused key and a topic with no signal are dropped")
 	require.Equal(t, "Court", topics[0].TitleEN)
 	require.Equal(t, 1, topics[0].Rank)
 	require.Equal(t, "ready", topics[0].Status)
@@ -69,5 +76,6 @@ func TestScoreTopicsResolvesEvidenceAndStatus(t *testing.T) {
 	for _, topic := range topics {
 		statuses[topic.TitleEN] = topic.Status
 	}
-	require.Equal(t, map[string]string{"Court": "ready", "Fire": "skip", "Solo": "watch"}, statuses, "single-outlet storylines wait on the watch list")
+	require.Equal(t, map[string]string{"Court": "ready", "Fire": "skip", "Solo": "watch", "Yesterday's match": "watch"}, statuses,
+		"single-outlet and stale storylines wait on the watch list")
 }

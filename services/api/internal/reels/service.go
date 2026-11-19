@@ -145,7 +145,13 @@ func (service *Service) build(ctx context.Context, id string, rerender bool) err
 	if err != nil {
 		return fmt.Errorf("load latest event: %w", err)
 	}
-	input := storyInput{Title: story.Title, Summary: story.Summary, LatestTitle: story.LatestEvent.Title}
+	input := storyInput{Title: story.Title, Summary: story.Summary, LatestTitle: story.LatestEvent.Title,
+		LatestAt: story.LatestEvent.Time, Attention: attention(reel.Trend)}
+	if reel.Trend.Reason == "" && storylineID != "" {
+		if refreshed, err := store.Get(ctx, id); err == nil {
+			input.Attention = attention(refreshed.Trend)
+		}
+	}
 	if story.LatestEvent.Summary != nil {
 		input.LatestSummary = *story.LatestEvent.Summary
 	}
@@ -350,6 +356,11 @@ func (service *Service) gatherImages(ctx context.Context, id string, script Scri
 		go func(i int, prompt string) {
 			defer wait.Done()
 			data, err := service.config.Illustrator.GenerateImage(ctx, service.config.ImageModel, imageStyle+prompt, 8*time.Minute)
+			if err != nil && ctx.Err() == nil {
+				// Codex sometimes finishes without an image; one retry usually succeeds.
+				logger.InfoContext(ctx, "retrying reel image", "image", i+1, "error", err)
+				data, err = service.config.Illustrator.GenerateImage(ctx, service.config.ImageModel, imageStyle+prompt, 8*time.Minute)
+			}
 			if err != nil {
 				logger.WarnContext(ctx, "reel image generation failed", "image", i+1, "error", err)
 				return
@@ -377,6 +388,21 @@ func (service *Service) gatherImages(ctx context.Context, id string, script Scri
 		return nil, fmt.Errorf("no images: no reusable photo was found and image generation failed")
 	}
 	return photos, nil
+}
+
+// attention describes why people are discussing the story now, from the trend that chose it.
+func attention(trend Trend) string {
+	parts := []string{}
+	if trend.Topic != "" {
+		parts = append(parts, trend.Topic+".")
+	}
+	if trend.Reason != "" {
+		parts = append(parts, trend.Reason)
+	}
+	if len(trend.GoogleTrends) > 0 {
+		parts = append(parts, "Rising Google searches in Sri Lanka: "+strings.Join(trend.GoogleTrends, ", ")+".")
+	}
+	return strings.Join(parts, " ")
 }
 
 func extension(mime string) string {
