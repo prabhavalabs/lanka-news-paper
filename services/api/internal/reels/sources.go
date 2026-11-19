@@ -3,7 +3,6 @@ package reels
 import (
 	"context"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
 	"html"
 	"io"
@@ -32,51 +31,6 @@ func fetch(ctx context.Context, client *http.Client, address string, limit int64
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, limit))
 	return data, response.Header.Get("Content-Type"), err
-}
-
-// googleTrend is one Google Trends search rising in Sri Lanka, with the news Google links to it.
-type googleTrend struct {
-	Query   string   `json:"search"`
-	Traffic string   `json:"approx_searches"`
-	News    []string `json:"news_headlines"`
-}
-
-const googleTrendsURL = "https://trends.google.com/trending/rss?geo=LK"
-
-func googleTrends(ctx context.Context, client *http.Client) ([]googleTrend, error) {
-	data, _, err := fetch(ctx, client, googleTrendsURL, 2<<20)
-	if err != nil {
-		return nil, err
-	}
-	return parseGoogleTrends(data)
-}
-
-func parseGoogleTrends(data []byte) ([]googleTrend, error) {
-	var feed struct {
-		Items []struct {
-			Title   string `xml:"title"`
-			Traffic string `xml:"approx_traffic"`
-			News    []struct {
-				Title string `xml:"news_item_title"`
-			} `xml:"news_item"`
-		} `xml:"channel>item"`
-	}
-	if err := xml.Unmarshal(data, &feed); err != nil {
-		return nil, fmt.Errorf("parse Google Trends feed: %w", err)
-	}
-	trends := make([]googleTrend, 0, len(feed.Items))
-	for _, item := range feed.Items {
-		trend := googleTrend{Query: strings.TrimSpace(item.Title), Traffic: strings.TrimSpace(item.Traffic)}
-		for _, news := range item.News {
-			if title := strings.TrimSpace(html.UnescapeString(news.Title)); title != "" && len(trend.News) < 3 {
-				trend.News = append(trend.News, title)
-			}
-		}
-		if trend.Query != "" {
-			trends = append(trends, trend)
-		}
-	}
-	return trends, nil
 }
 
 // commonsImage is a Wikimedia Commons file we may reuse: public domain, CC0 or CC BY.

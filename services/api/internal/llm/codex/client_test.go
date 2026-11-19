@@ -377,3 +377,20 @@ func TestCompletionRejectsUnconfiguredModelsBeforeSpawning(t *testing.T) {
 	_, err := client.Complete(context.Background(), CallOptions{Model: "model-a", ReasoningEffort: `high" --config malicious`})
 	require.Error(t, err)
 }
+
+func TestCompletionEnablesWebSearchOnlyWhenAsked(t *testing.T) {
+	runner := fakeRunner{run: func(_ context.Context, args []string, _, directory string) (string, string, error) {
+		if args[0] == "login" {
+			return "Logged in using ChatGPT", "", nil
+		}
+		require.Contains(t, args, `web_search="live"`)
+		require.NotContains(t, args, `web_search="disabled"`)
+		require.Contains(t, strings.Join(args, "\n"), "--disable\nshell_tool")
+		data, err := os.ReadFile(filepath.Join(directory, "instructions.txt"))
+		require.NoError(t, err)
+		require.Contains(t, string(data), "You may use web search; do not use any other tool.")
+		return successfulEvents, "", nil
+	}}
+	_, err := NewClient(runner).Complete(context.Background(), CallOptions{Model: "gpt-6-luna", System: "research", Input: "today", WebSearch: true})
+	require.NoError(t, err)
+}

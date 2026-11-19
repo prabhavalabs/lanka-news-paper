@@ -1154,9 +1154,30 @@ export type Reel = {
   id: string; storyline_id: string | null; event_id: string | null; trigger: "schedule" | "manual"; status: ReelStatus;
   title: string; storyline_title: string; script: ReelScript; caption: string;
   assets: { photos: ReelPhoto[]; music?: { file: string; title: string; start: number; generated?: boolean } };
-  trend: { score: number; google_trends: string[]; reason: string };
+  trend: { score: number; google_trends: string[]; reason: string; topic?: string; youtube?: string[]; web?: string[]; radar_rank?: number };
   has_video: boolean; error: string | null; requested_by: string | null; reviewed_by: string | null;
   reviewed_at: string | null; rendered_at: string | null; created_at: string; updated_at: string;
+};
+export type TrendVideo = {
+  key: string; id: string; title: string; channel: string; views: number; age_hours: number;
+  channel_median_views: number; outlier: number; chart_rank?: number; url: string;
+};
+export type TrendWebTopic = {
+  title_en: string; title_si: string; category: string; why: string; momentum: "rising" | "steady" | "fading";
+  evidence: { title: string; url: string }[];
+};
+export type TrendTopic = {
+  id: string; rank: number; title_si: string; title_en: string; category: string; storyline_id: string | null;
+  status: "ready" | "watch" | "skip"; score: number; reason: string;
+  components: { youtube: number; search: number; web: number; coverage: number; agreement: number };
+  evidence: {
+    youtube: TrendVideo[]; google: { search: string; approx_searches: string; news_headlines: string[] }[]; web: TrendWebTopic[];
+    storyline?: { id: string; title: string; trend_score: number; outlets: number; articles_24h: number; acceleration_vs_30_day_baseline: number };
+  };
+};
+export type TrendRun = {
+  id: string; status: "running" | "ready" | "failed"; research: TrendWebTopic[]; signals: Record<string, number>;
+  error: string | null; created_at: string; finished_at: string | null; topics: TrendTopic[];
 };
 export type ReelEditInput = Partial<Pick<ReelScript, "tag" | "headline" | "facts" | "question" | "yes_label" | "no_label">> & { caption?: string };
 export type ReelAction = "approve" | "reject" | "posted" | "reopen" | "rerender" | "regenerate";
@@ -1597,6 +1618,8 @@ export function createClient(baseUrl = "") {
     createReel: (body: { storyline_id?: string } = {}) => request<Reel>(url("/api/admin/reels"), { method: "POST", body: JSON.stringify(body) }),
     editReel: (id: string, body: ReelEditInput) => request<Reel>(url(`/api/admin/reels/${encodeURIComponent(id)}`), { method: "PATCH", body: JSON.stringify(body) }),
     reelAction: (id: string, action: ReelAction) => request<Reel>(url(`/api/admin/reels/${encodeURIComponent(id)}/${action}`), { method: "POST", body: "{}" }),
+    trendRadar: () => request<{ run: TrendRun | null }>(url("/api/admin/trends/radar")),
+    refreshTrendRadar: () => request<{ ok: boolean }>(url("/api/admin/trends/radar"), { method: "POST", body: "{}" }),
     reelFileURL: (id: string, kind: "video" | "cover", download = false) => url(`/api/admin/reels/${encodeURIComponent(id)}/files/${kind}${download ? "?download=1" : ""}`),
     runSocialSelection: () => request<{ ok: boolean }>(url("/api/admin/social/run-selection"), { method: "POST", body: "{}" }),
     agentWorkflows: () =>

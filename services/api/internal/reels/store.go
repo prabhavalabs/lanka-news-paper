@@ -80,6 +80,10 @@ type Trend struct {
 	Score        int      `json:"score"`
 	GoogleTrends []string `json:"google_trends"`
 	Reason       string   `json:"reason"`
+	Topic        string   `json:"topic,omitempty"`
+	YouTube      []string `json:"youtube,omitempty"`
+	Web          []string `json:"web,omitempty"`
+	Rank         int      `json:"radar_rank,omitempty"`
 }
 
 type Reel struct {

@@ -35,6 +35,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social/card"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/storyline"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/trends"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/watchtower"
 )
 
@@ -181,6 +182,8 @@ func run(logger *slog.Logger) error {
 			EnqueueReel: func(ctx context.Context, reelID string, rerender bool) error {
 				return jobs.EnqueueReelBuild(ctx, producer, reelID, rerender)
 			},
+			Trends:            trends.NewStore(pool),
+			EnqueueTrendRadar: func(ctx context.Context) error { return jobs.EnqueueTrendRadar(ctx, producer) },
 			RunContentBackfill: func(ctx context.Context) error {
 				return jobs.EnqueueContentBackfill(ctx, producer)
 			},

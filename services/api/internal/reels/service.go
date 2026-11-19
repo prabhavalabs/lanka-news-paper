@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/media"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/publish"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/storyline"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/trends"
 )
 
 // ErrNothingToReel means no trending storyline is suitable or new enough for a reel right now.
@@ -44,6 +46,8 @@ type Config struct {
 	Renderer    Renderer
 	HTTP        *http.Client
 	Logger      *slog.Logger
+	// Radar, when set, chooses the story from YouTube, Google, web research and coverage signals.
+	Radar *trends.Radar
 }
 
 type Service struct{ config Config }
@@ -183,6 +187,72 @@ func (service *Service) build(ctx context.Context, id string, rerender bool) err
 // pick chooses the storyline for the next reel from the public trending list, skipping stories
 // reeled recently without a new development, and lets the model rank the rest against Google Trends.
 func (service *Service) pick(ctx context.Context) (string, Trend, error) {
+	if service.config.Radar != nil {
+		storylineID, trend, err := service.pickFromRadar(ctx)
+		if err == nil || errors.Is(err, ErrNothingToReel) {
+			return storylineID, trend, err
+		}
+		service.config.Logger.WarnContext(ctx, "trend radar unavailable; ranking trending storylines instead", "error", err)
+	}
+	return service.pickFromStorylines(ctx)
+}
+
+// pickFromRadar takes the highest-ranked ready radar topic whose storyline is public and has no
+// reel for its latest development. A radar run younger than 90 minutes is reused.
+func (service *Service) pickFromRadar(ctx context.Context) (string, Trend, error) {
+	run, err := service.config.Radar.Fresh(ctx, 90*time.Minute)
+	if err != nil {
+		return "", Trend{}, err
+	}
+	recent, err := service.config.Store.recentStories(ctx, repeatWindow)
+	if err != nil {
+		return "", Trend{}, err
+	}
+	now := time.Now()
+	for _, topic := range run.Topics {
+		if topic.Status != "ready" || topic.StorylineID == nil {
+			continue
+		}
+		story, err := service.config.Storylines.Get(ctx, *topic.StorylineID, false)
+		if err != nil || story.LatestEvent == nil {
+			continue
+		}
+		if last, ok := recent[story.ID]; ok && (last.eventID == story.LatestEvent.ID || now.Sub(last.at) < repeatGap) {
+			continue
+		}
+		return story.ID, radarTrend(topic), nil
+	}
+	return "", Trend{}, ErrNothingToReel
+}
+
+func radarTrend(topic trends.Topic) Trend {
+	trend := Trend{Score: int(math.Round(topic.Score)), GoogleTrends: []string{}, Reason: topic.Reason, Topic: topic.TitleEN, Rank: topic.Rank}
+	for _, g := range topic.Evidence.Google {
+		trend.GoogleTrends = append(trend.GoogleTrends, g.Query)
+	}
+	for _, v := range topic.Evidence.YouTube {
+		trend.YouTube = append(trend.YouTube, fmt.Sprintf("%s (%s, %s views, %.1f× usual) %s", v.Title, v.Channel, compact(v.Views), v.Outlier, v.URL))
+	}
+	for _, w := range topic.Evidence.Web {
+		for _, link := range w.Evidence {
+			trend.Web = append(trend.Web, link.URL)
+		}
+	}
+	return trend
+}
+
+func compact(n int64) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1_000:
+		return fmt.Sprintf("%.0fk", float64(n)/1e3)
+	}
+	return fmt.Sprint(n)
+}
+
+// pickFromStorylines is the fallback: public trending storylines ranked against Google Trends.
+func (service *Service) pickFromStorylines(ctx context.Context) (string, Trend, error) {
 	trending, err := service.config.Storylines.List(ctx, false)
 	if err != nil {
 		return "", Trend{}, fmt.Errorf("list trending storylines: %w", err)
@@ -209,11 +279,11 @@ func (service *Service) pick(ctx context.Context) (string, Trend, error) {
 		return "", Trend{}, ErrNothingToReel
 	}
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].Score > candidates[j].Score })
-	trends, err := googleTrends(ctx, service.config.HTTP)
+	google, err := trends.FetchGoogleTrends(ctx, service.config.HTTP)
 	if err != nil {
 		service.config.Logger.WarnContext(ctx, "Google Trends unavailable for reel pick", "error", err)
 	}
-	ranking, err := rankStories(ctx, service.config.Model, candidates, trends)
+	ranking, err := rankStories(ctx, service.config.Model, candidates, google)
 	if err != nil {
 		service.config.Logger.WarnContext(ctx, "reel story ranking failed; using trend score", "error", err)
 		return candidates[0].ID, Trend{Score: candidates[0].Score, GoogleTrends: []string{}, Reason: "Highest coverage trend score (AI ranking unavailable)."}, nil

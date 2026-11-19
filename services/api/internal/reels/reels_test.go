@@ -11,18 +11,9 @@ import (
 	"time"
 
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/trends"
 	"github.com/stretchr/testify/require"
 )
-
-func TestParseGoogleTrends(t *testing.T) {
-	feed := `<?xml version="1.0"?><rss xmlns:ht="https://trends.google.com/trending/rss"><channel>
-	<item><title>namal rajapaksa</title><ht:approx_traffic>2000+</ht:approx_traffic>
-	<ht:news_item><ht:news_item_title>Namal &amp; the Airbus case</ht:news_item_title></ht:news_item></item>
-	<item><title> </title></item></channel></rss>`
-	trends, err := parseGoogleTrends([]byte(feed))
-	require.NoError(t, err)
-	require.Equal(t, []googleTrend{{Query: "namal rajapaksa", Traffic: "2000+", News: []string{"Namal & the Airbus case"}}}, trends)
-}
 
 func TestReusableLicence(t *testing.T) {
 	for _, licence := range []string{"CC0", "Public domain", "CC BY 2.0", "CC BY 4.0", "cc by 3.0"} {
@@ -136,7 +127,7 @@ func TestCommonsLookupLive(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, object)
 	t.Logf("object: %s %s", object.Title, object.Credit())
-	trends, err := googleTrends(context.Background(), client)
+	google, err := trends.FetchGoogleTrends(context.Background(), client)
 	require.NoError(t, err)
-	require.NotEmpty(t, trends)
+	require.NotEmpty(t, google)
 }

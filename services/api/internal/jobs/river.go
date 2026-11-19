@@ -30,6 +30,7 @@ import (
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/retention"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/social"
 	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/storyline"
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/trends"
 )
 
 type PollArgs struct{}
@@ -629,6 +630,14 @@ func periodicJobDefinitions(newsletterSchedule ...river.PeriodicSchedule) []peri
 			},
 			Constructor: func() (river.JobArgs, *river.InsertOpts) { return ReelBuildArgs{}, nil },
 		},
+		{
+			PeriodicJobMetadata: PeriodicJobMetadata{
+				Kind: TrendsCollectArgs{}.Kind(), Name: "YouTube trend signals",
+				Description: "Refreshes view counts of recent videos on watched Sri Lankan news channels and YouTube's Sri Lanka chart, for the trend radar.",
+				Queue:       trendsQueue, Interval: time.Hour, RunOnStart: true,
+			},
+			Constructor: func() (river.JobArgs, *river.InsertOpts) { return TrendsCollectArgs{}, nil },
+		},
 	}
 }
 
@@ -677,6 +686,7 @@ func QueueCatalog() []QueueMetadata {
 		{Name: "storylines", MaxWorkers: 1},
 		{Name: editionQueue, MaxWorkers: 1},
 		{Name: reelsQueue, MaxWorkers: 1},
+		{Name: trendsQueue, MaxWorkers: 1},
 	}
 }
 
@@ -717,6 +727,7 @@ type Extras struct {
 	Social     *social.Service
 	FrontPage  *frontpage.Service
 	Reels      *reels.Service
+	Trends     *trends.Radar
 }
 
 func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, pipelineStore *pipeline.Store, contentStore *content.Store, news *publish.Store, newsletterService *newsletter.Service, adminAnalysis *adminanalysis.Service, extras Extras) (*river.Client[pgx.Tx], error) {
@@ -727,6 +738,8 @@ func NewClient(pool *pgxpool.Pool, logger *slog.Logger, poller *ingest.Poller, p
 	river.AddWorker(workers, &SocialSelectionWorker{Social: socialService})
 	river.AddWorker(workers, &SocialPublishWorker{Social: socialService})
 	river.AddWorker(workers, &ReelBuildWorker{Reels: extras.Reels})
+	river.AddWorker(workers, &TrendsCollectWorker{Radar: extras.Trends})
+	river.AddWorker(workers, &TrendsRadarWorker{Radar: extras.Trends})
 	dispatcher := &PipelineDispatchWorker{Pipeline: pipelineStore}
 	contentBackfill := &ArticleContentBackfillWorker{Content: contentStore}
 	adminDispatcher := &AdminAnalysisBackfillDispatchWorker{Analysis: adminAnalysis}
