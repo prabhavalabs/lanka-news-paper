@@ -178,15 +178,15 @@ Rank the candidates, best first, and leave out any that are unsuitable:
 - Leave out stories centred on deaths, disasters, accidents, violent crime against private individuals, children, or anything where a Like/Love reaction poll would be insensitive.
 - Leave out stories whose only development is trivial.
 
-For each ranked storyline give the matched Google searches (exact search terms, empty if none) and a one-sentence reason in English.`
+For each ranked storyline give its key exactly as given (c1, c2, ...), the matched Google searches for that storyline only (exact search terms, empty if none) and a one-sentence reason in English about that storyline.`
 
 func pickSchema() map[string]any {
 	return map[string]any{
 		"type": "object", "additionalProperties": false, "required": []string{"ranking"},
 		"properties": map[string]any{"ranking": map[string]any{"type": "array", "maxItems": 10, "items": map[string]any{
-			"type": "object", "additionalProperties": false, "required": []string{"storyline_id", "google_trends", "reason"},
+			"type": "object", "additionalProperties": false, "required": []string{"key", "google_trends", "reason"},
 			"properties": map[string]any{
-				"storyline_id":  map[string]any{"type": "string"},
+				"key":           map[string]any{"type": "string", "maxLength": 4},
 				"google_trends": map[string]any{"type": "array", "maxItems": 5, "items": map[string]any{"type": "string", "maxLength": 80}},
 				"reason":        map[string]any{"type": "string", "maxLength": 300},
 			},
@@ -195,7 +195,8 @@ func pickSchema() map[string]any {
 }
 
 type candidate struct {
-	ID          string `json:"storyline_id"`
+	Key         string `json:"key"`
+	ID          string `json:"-"`
 	Title       string `json:"title"`
 	Summary     string `json:"summary"`
 	Latest      string `json:"latest_development"`
@@ -204,7 +205,8 @@ type candidate struct {
 }
 
 type ranked struct {
-	StorylineID  string   `json:"storyline_id"`
+	Key          string   `json:"key"`
+	StorylineID  string   `json:"-"`
 	GoogleTrends []string `json:"google_trends"`
 	Reason       string   `json:"reason"`
 }
@@ -212,6 +214,9 @@ type ranked struct {
 // rankStories asks the model to order the candidates by expected interest; an empty result means
 // none is suitable. Unknown ids in the answer are ignored.
 func rankStories(ctx context.Context, model completer, candidates []candidate, trends []googleTrend) ([]ranked, error) {
+	for i := range candidates {
+		candidates[i].Key = fmt.Sprintf("c%d", i+1)
+	}
 	data, _ := json.Marshal(map[string]any{"candidates": candidates, "google_trends_sri_lanka": trends})
 	response, err := model.Complete(ctx, llm.Request{Task: "reel_story_pick", System: pickPrompt, Input: string(data), JSONSchema: pickSchema()})
 	if err != nil {
@@ -226,15 +231,18 @@ func rankStories(ctx context.Context, model completer, candidates []candidate, t
 	if err := json.Unmarshal([]byte(response.Text), &result); err != nil {
 		return nil, fmt.Errorf("decode story ranking: %w", err)
 	}
-	known := make(map[string]bool, len(candidates))
-	for _, c := range candidates {
-		known[c.ID] = true
+	// Candidates carry short keys (c1, c2, ...): models confuse long UUIDs and attach one
+	// storyline's reasoning to another's id.
+	byKey := make(map[string]string, len(candidates))
+	for i := range candidates {
+		byKey[candidates[i].Key] = candidates[i].ID
 	}
 	ordered := make([]ranked, 0, len(result.Ranking))
 	for _, item := range result.Ranking {
-		if known[item.StorylineID] {
+		if id, ok := byKey[strings.TrimSpace(item.Key)]; ok {
+			item.StorylineID = id
 			ordered = append(ordered, item)
-			known[item.StorylineID] = false
+			delete(byKey, strings.TrimSpace(item.Key))
 		}
 	}
 	return ordered, nil

@@ -1,11 +1,16 @@
 package reels
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/nipuntheekshana/lanka-news-paper/services/api/internal/llm"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,4 +89,49 @@ func TestValidScriptLimits(t *testing.T) {
 
 func TestPlainLabelKeepsSinhalaJoiners(t *testing.T) {
 	require.Equal(t, "ශ්‍රී", plainLabel("ශ්‍රී ❤️"))
+}
+
+func TestCommonsImagesAcceptNumericMetadataAndFilterLicences(t *testing.T) {
+	data := `{"query":{"pages":{
+	 "1":{"title":"File:Free.jpg","imageinfo":[{"thumburl":"https://x/free.jpg","width":1800,"mime":"image/jpeg","extmetadata":{"LicenseShortName":{"value":"CC BY 2.0"},"Artist":{"value":"<a href=\"u\">Jane</a> Doe"},"Copyrighted":{"value":true},"ImageWidth":{"value":1800}}}]},
+	 "2":{"title":"File:ShareAlike.jpg","imageinfo":[{"thumburl":"https://x/sa.jpg","width":1800,"mime":"image/jpeg","extmetadata":{"LicenseShortName":{"value":"CC BY-SA 4.0"}}}]},
+	 "3":{"title":"File:Tiny.png","imageinfo":[{"thumburl":"https://x/tiny.png","width":300,"mime":"image/png","extmetadata":{"LicenseShortName":{"value":"CC0"}}}]}}}}`
+	var response imageInfoResponse
+	require.NoError(t, json.Unmarshal([]byte(data), &response))
+	images := response.images()
+	require.Len(t, images, 1)
+	require.Equal(t, "Jane Doe / Wikimedia Commons (CC BY 2.0)", images[0].Credit())
+}
+
+type fakeModel struct{ text string }
+
+func (model fakeModel) Complete(context.Context, llm.Request) (llm.Response, error) {
+	return llm.Response{Text: model.text}, nil
+}
+
+func TestRankStoriesMapsShortKeysToStorylines(t *testing.T) {
+	candidates := []candidate{{ID: "uuid-fire"}, {ID: "uuid-court"}}
+	ranking, err := rankStories(context.Background(), fakeModel{`{"ranking":[{"key":"c2","google_trends":["namal"],"reason":"court"},{"key":"c9","google_trends":[],"reason":"unknown"},{"key":"c2","google_trends":[],"reason":"duplicate"}]}`}, candidates, nil)
+	require.NoError(t, err)
+	require.Len(t, ranking, 1)
+	require.Equal(t, "uuid-court", ranking[0].StorylineID)
+	require.Equal(t, "court", ranking[0].Reason)
+}
+
+func TestCommonsLookupLive(t *testing.T) {
+	if os.Getenv("SNAP_REEL_NETWORK_TEST") != "1" {
+		t.Skip("SNAP_REEL_NETWORK_TEST is not set")
+	}
+	client := &http.Client{Timeout: 20 * time.Second}
+	person, err := personPhoto(context.Background(), client, "Namal Rajapaksa")
+	require.NoError(t, err)
+	require.NotNil(t, person)
+	t.Logf("person: %s %s", person.Title, person.Credit())
+	object, err := searchPhoto(context.Background(), client, "SriLankan Airlines aircraft")
+	require.NoError(t, err)
+	require.NotNil(t, object)
+	t.Logf("object: %s %s", object.Title, object.Credit())
+	trends, err := googleTrends(context.Background(), client)
+	require.NoError(t, err)
+	require.NotEmpty(t, trends)
 }
