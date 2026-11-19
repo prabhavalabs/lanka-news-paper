@@ -64,7 +64,7 @@ func TestRadarLive(t *testing.T) {
 	}
 	groups, err := mergeSignals(ctx, model, nil, google, videos, research)
 	require.NoError(t, err)
-	topics := scoreTopics(groups, nil, google, videos, research)
+	topics := scoreTopics(groups, nil, google, videos, research, time.Now())
 	require.NotEmpty(t, topics)
 	for _, topic := range topics {
 		t.Logf("#%d %5.1f %-5s %-13s yt=%.0f search=%.0f web=%.0f agree=%.0f | %s | %s", topic.Rank, topic.Score, topic.Status, topic.Category,
