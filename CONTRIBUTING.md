@@ -28,7 +28,8 @@ Commits follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/
 - A breaking change adds `!` after the type or scope and a `BREAKING CHANGE:` footer.
 - No `Co-authored-by` trailers or tool-generated signatures or footers.
 
-Enable the repository hook once per clone so `git commit` rejects malformed messages:
+Enable the repository hooks once per clone, so `git commit` rejects malformed messages and
+`git push` runs the full checks:
 
 ```sh
 git config core.hooksPath .githooks
@@ -38,7 +39,7 @@ git config core.hooksPath .githooks
 
 - The PR title follows the same Conventional Commits format; it becomes the squash-merge commit.
 - The description says what changed, why, and how it was verified (tests, local run, screenshots).
-- Keep a PR to one concern. Squash-merge; the PR checks must pass first.
+- Keep a PR to one concern. Squash-merge only after `pnpm check` passes locally.
 - No co-author credits or tool-generated signatures in titles, descriptions or comments.
 
 ## What to commit
@@ -50,9 +51,14 @@ commit; ignore rules do not protect files that are already tracked.
 
 ## Checks before a PR
 
+GitHub Actions runs no tests: merging to `main` only builds and deploys. Every check runs locally,
+and the pre-push hook runs them on each push:
+
 ```sh
-pnpm api:vet && pnpm api:test
-pnpm typecheck && pnpm build
+pnpm check
 ```
+
+It checks the branch's commit messages, runs `go vet` and the Go tests, typechecks and tests the
+front-ends, and compiles the release binaries and bundles.
 
 Database integration tests run when `SNAP_TEST_DATABASE_URL` points at a migrated test database.
