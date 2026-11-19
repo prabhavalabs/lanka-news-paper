@@ -118,11 +118,25 @@ type imageInfoResponse struct {
 				Width       int    `json:"width"`
 				Mime        string `json:"mime"`
 				ExtMetadata map[string]struct {
-					Value string `json:"value"`
+					Value metadataValue `json:"value"`
 				} `json:"extmetadata"`
 			} `json:"imageinfo"`
 		} `json:"pages"`
 	} `json:"query"`
+}
+
+// metadataValue accepts Commons extmetadata values, which are usually strings but sometimes
+// numbers or booleans (for example "Copyrighted" or image dimensions).
+type metadataValue string
+
+func (value *metadataValue) UnmarshalJSON(data []byte) error {
+	var text string
+	if json.Unmarshal(data, &text) == nil {
+		*value = metadataValue(text)
+		return nil
+	}
+	*value = metadataValue(strings.Trim(string(data), `"`))
+	return nil
 }
 
 func (response imageInfoResponse) images() []commonsImage {
@@ -135,7 +149,7 @@ func (response imageInfoResponse) images() []commonsImage {
 		if info.Mime != "image/jpeg" && info.Mime != "image/png" {
 			continue
 		}
-		license := plainText(info.ExtMetadata["LicenseShortName"].Value, 40)
+		license := plainText(string(info.ExtMetadata["LicenseShortName"].Value), 40)
 		if !reusableLicense.MatchString(license) || info.Width < 600 {
 			continue
 		}
@@ -145,7 +159,7 @@ func (response imageInfoResponse) images() []commonsImage {
 		}
 		images = append(images, commonsImage{
 			Title: page.Title, URL: address, License: license, Width: info.Width,
-			Artist: plainText(info.ExtMetadata["Artist"].Value, 60),
+			Artist: plainText(string(info.ExtMetadata["Artist"].Value), 60),
 		})
 	}
 	return images
